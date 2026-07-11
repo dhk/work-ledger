@@ -1,0 +1,18 @@
+[project]
+name = "work-ledger"
+version = "0.1.0"
+description = "Lightweight, near-real-time Claude Code usage/cost tracker for individuals"
+requires-python = ">=3.10"
+dependencies = [
+    "rich>=13.0",
+]
+
+[project.scripts]
+work-ledger = "work_ledger.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["work_ledger"]
