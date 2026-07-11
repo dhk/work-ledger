@@ -61,6 +61,10 @@ from before this fix should be treated as inflated.
 
 ## Chapters (semantic grouping)
 
+See `docs/example-session.md` for real, checked-in output from a live run
+(not a mockup) — the terminal table, the `--json` shape, and notes on how
+to read it.
+
 `work-ledger chapters` answers a different question than the rest of the
 tool: not "what did this prompt/call cost" but "what did this *initiative*
 cost" — e.g. "Build the v1 dashboard," "Fix the double-counting bug." That
