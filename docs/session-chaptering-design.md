@@ -70,16 +70,18 @@ transcript.py (existing, untouched)
         │
         ▼
 chapters.py (new)
-  1. Build a compact "outline input": for every Turn, its prompt snippet;
-     for every Unit within it, its label (text snippet / "Skill: X" /
-     "Subagent: Y") and cost. This is already-extracted short text, not
-     full message content — keeps the summarization call's own input small.
+  1. Build a compact "outline input": for every Turn, its prompt_id and
+     prompt snippet; for every Unit within it, its label (text snippet /
+     "Skill: X" / "Subagent: Y") and cost. This is already-extracted short
+     text, not full message content — keeps the summarization call's own
+     input small.
   2. Send that compact outline to a single batched call to a cheap/fast
-     model (Haiku) with a fixed prompt (see below), asking for chapter/
-     section boundaries + short titles as JSON, referencing turns/units by
-     an index rather than re-emitting their content.
-  3. Parse the JSON response into Chapter/Section objects that reference
-     the existing Turn/Unit objects (no new cost data invented here - cost
+     model (Haiku 4.5) using enforced structured output (see below), asking
+     for chapter/section boundaries + short titles, referencing turns by
+     their stable `prompt_id` rather than re-emitting their content.
+  3. Validate the response partitions turns correctly (see Validation
+     below), then build Chapter/Section objects that reference the
+     existing Turn/Unit objects (no new cost data invented here — cost
      rollup for a chapter/section is a pure sum over the Turns/Units it
      contains).
         │
@@ -96,7 +98,7 @@ cli.py: new subcommand `work-ledger chapters [--transcript PATH]`
 @dataclass
 class Section:
     title: str
-    turn_indices: list[int]   # indices into the ordered turn list
+    prompt_ids: list[str]   # Turn.prompt_id values, not positional indices
 
 @dataclass
 class Chapter:
@@ -104,46 +106,86 @@ class Chapter:
     sections: list[Section]
 
     @property
-    def turn_indices(self) -> list[int]:
-        return [i for s in self.sections for i in s.turn_indices]
+    def prompt_ids(self) -> list[str]:
+        return [pid for s in self.sections for pid in s.prompt_ids]
 ```
+
+Turns are referenced by `Turn.prompt_id` (already the dict key in
+`TranscriptTailer.turns`), not by position in the ordered turn list.
+Indices would tie chapter data to a specific enumeration snapshot and
+complicate caching (see Open Questions); `prompt_id` is already stable and
+free.
 
 Cost/token rollups for a `Chapter`/`Section` are computed by summing the
 `cost_usd`/`input_tokens`/`output_tokens` of the referenced `Turn` objects
 (which already sum their own `Unit`s) — no separate cost fields stored on
 Chapter/Section, so there is exactly one source of truth for cost
-(`Unit.own_*` / `Unit.subagent_*`) and no way for the two layers to drift
-apart.
+(`Unit.own_*` / `Unit.subagent_*`).
 
 ### The summarization call
 
 - **Model**: Haiku 4.5 — cheapest tier, and this is a summarization/
   classification task over a few KB of already-short text, well within its
-  capability.
-- **Input**: numbered list of turns, each turn showing its prompt snippet and
-  the labels (not full text) of its units, e.g.:
+  capability. Haiku 4.5 supports enforced structured output (confirmed).
+- **Input**: numbered list of turns, each turn showing its `prompt_id`,
+  timestamp, and prompt snippet, plus the labels (not full text) of its
+  units, e.g.:
   ```
-  [0] (12:03) "How do we track how much our work is costing us..."
+  [cdd6a46d...] (12:03) "How do we track how much our work is costing us..."
       units: text, text, Skill: dataviz, text
-  [1] (12:05) "Write a design doc. Then ask the sub agent to review"
+  [a1b2c3d4...] (12:05) "Write a design doc. Then ask the sub agent to review"
       units: text, Bash, Write, text
   ...
   ```
-- **Output**: strict JSON — a list of chapters, each with a title and a list
-  of sections, each section listing the turn indices it covers. Validate
-  indices are in range and cover every turn exactly once (any turn not
-  assigned falls back into an "Unsorted" chapter rather than silently
-  dropped — mirrors the existing "unknown-model cost shows `?`, never
-  silently 0" philosophy already in `pricing.py`).
-- **Cost of the pass itself**: outline input is small (a few hundred bytes
-  per turn); for a 50-turn session this is roughly 5-15K input tokens and a
-  few hundred output tokens — at Haiku rates, well under $0.05 per session.
-  The CLI should print this cost alongside the chapter output ("chaptering
-  this session cost $0.0031") so the tool's own overhead stays visible,
-  consistent with the project's cost-transparency goal.
-- **Failure mode**: if the call fails or returns invalid JSON, fall back to
-  one chapter ("Unsorted") containing every turn, and say so explicitly —
-  never fail silently or block the rest of the tool.
+- **Output enforcement**: use `output_config: {"format": {"type":
+  "json_schema", "schema": ...}}` (Python: `client.messages.parse()` with a
+  Pydantic model) rather than a prompted "return JSON" convention. This is
+  a real, current Claude API mechanism (confirmed against the `claude-api`
+  skill, supported on Haiku 4.5) that constrains the response to validate
+  against the schema server-side, which eliminates most of the
+  index-hallucination / malformed-output failure modes a prompted
+  convention would leave to chance — parsing/repair logic stays a fallback
+  for the remaining cases (refusal, `max_tokens` truncation), not the first
+  line of defense. Schema: a list of chapters, each with a `title` and a
+  list of sections, each section listing the `prompt_id`s it covers.
+  Caveats to carry into implementation: schemas with recursive structure
+  aren't supported (not needed here — this schema is flat), first use of a
+  new schema shape has a one-time compilation-cost latency hit (cached 24h
+  after), and `stop_reason: "refusal"` or `"max_tokens"` both mean the
+  response may not conform — handle both before assuming the shape is
+  valid.
+- **Validation (partition correctness)**: schema enforcement guarantees
+  well-formed JSON, but not that every turn is covered exactly once — the
+  model could still legitimately assign the same `prompt_id` to two
+  sections (one initiative's work plausibly touching the same turn as
+  another) or omit one. After parsing, explicitly check every `prompt_id`
+  in the transcript appears in exactly one section:
+  - **Missing** turns fall back into an "Unsorted" chapter rather than
+    being silently dropped — mirrors the existing "unknown-model cost
+    shows `?`, never silently 0" philosophy already in `pricing.py`.
+  - **Duplicate** turns (assigned to more than one section) keep only the
+    first assignment encountered and drop the rest, logging which
+    chapter(s) lost the turn — this is the fix for the double-counting gap
+    the review caught: without it, a turn assigned to two chapters would
+    have its cost summed twice, silently inflating the visible total above
+    the real session cost.
+- **Cost of the pass itself**: the outline input is small (a few hundred
+  bytes per turn) but the actual request also carries model/schema
+  instruction overhead on top of that — budget mentally for "outline size
+  plus a few hundred to ~1-2K tokens of fixed scaffolding," not outline
+  size alone. For a 50-turn session this totals roughly 5-15K input
+  tokens; output tokens scale with turn count (every turn's `prompt_id`
+  must be enumerated at least once in the response), so a much longer
+  session sees proportionally more output tokens even though the total
+  stays cheap in absolute terms (well under $0.05 for a 50-turn session at
+  Haiku rates). The CLI should print this cost alongside the chapter
+  output ("chaptering this session cost $0.0031") so the tool's own
+  overhead stays visible, consistent with the project's cost-transparency
+  goal.
+- **Failure mode**: if the call fails, returns `stop_reason: "refusal"`, or
+  hits `"max_tokens"` before completing, fall back to one chapter
+  ("Unsorted") containing every turn, and say so explicitly — never fail
+  silently or block the rest of the tool.
 
 ## CLI surface
 
@@ -201,5 +243,16 @@ Chapters — session 0daf9882... ($5.42 total, chaptering cost $0.0031)
    turns don't change, should results be cached to disk (e.g. next to the
    transcript) so re-running `work-ledger chapters` on the same transcript
    doesn't re-pay for the Haiku call? Leaning yes — simple JSON cache
-   keyed on transcript path + byte offset chaptered so far, invalidated
-   only when new turns are appended.
+   keyed on transcript path + the set of `prompt_id`s chaptered so far,
+   invalidated only when new turns are appended.
+4. Caching vs. non-determinism: chapter boundaries and titles for the same
+   transcript can vary run-to-run (this is a subjective judgment call, not
+   just decoding noise, so pinning it away isn't straightforward). If new
+   turns are appended after a cached chaptering run, does the cached
+   prefix's chapter boundaries stay frozen forever — meaning the last
+   chapter can never be revised even if later turns make clear it was
+   actually a continuation of an earlier one — or does the whole session
+   get re-chaptered on every run, repaying cost and potentially changing
+   titles the user already saw? No answer yet; needs one before the
+   caching design in (3) above can be finalized, since the cache key
+   depends on which behavior is chosen.
