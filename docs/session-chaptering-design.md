@@ -239,20 +239,21 @@ Chapters — session 0daf9882... ($5.42 total, chaptering cost $0.0031)
    (e.g. `--detail --chapter "Fix usage double-counting bug"`)? Leaning
    toward a separate command for now (simpler), revisit if the two views
    feel like they want to merge.
-3. Caching: since chaptering costs real money and a finished session's
-   turns don't change, should results be cached to disk (e.g. next to the
-   transcript) so re-running `work-ledger chapters` on the same transcript
-   doesn't re-pay for the Haiku call? Leaning yes — simple JSON cache
-   keyed on transcript path + the set of `prompt_id`s chaptered so far,
-   invalidated only when new turns are appended.
-4. Caching vs. non-determinism: chapter boundaries and titles for the same
-   transcript can vary run-to-run (this is a subjective judgment call, not
-   just decoding noise, so pinning it away isn't straightforward). If new
-   turns are appended after a cached chaptering run, does the cached
-   prefix's chapter boundaries stay frozen forever — meaning the last
-   chapter can never be revised even if later turns make clear it was
-   actually a continuation of an earlier one — or does the whole session
-   get re-chaptered on every run, repaying cost and potentially changing
-   titles the user already saw? No answer yet; needs one before the
-   caching design in (3) above can be finalized, since the cache key
-   depends on which behavior is chosen.
+3. **Decided: caching, frozen prefix.** Chaptering results are cached to
+   disk (e.g. next to the transcript), keyed on transcript path + the set
+   of `prompt_id`s chaptered so far. Cached chapter boundaries and titles
+   are **frozen once written** — re-running `work-ledger chapters` on a
+   session that has grown new turns since the last run only chapters the
+   new turns (appending new chapters/sections, or extending the last one
+   if the new turns are clearly its continuation), never revises or
+   retitles a chapter that was already cached, and never re-pays for
+   turns already chaptered. This accepts a known tradeoff: a chapter
+   frozen early from a partial/ambiguous view of the session can't later
+   be corrected once more turns reveal what it actually was — e.g. a
+   chapter titled "Exploring X" might, with hindsight, obviously have been
+   the first half of "Building Y," but the freeze means it stays
+   "Exploring X." Chosen deliberately for now (simpler, cheaper, stable
+   titles the user won't see change out from under them) with the
+   explicit plan to revisit if that staleness turns out to matter in
+   practice — see the Non-goals framing at the top: this is a first pass,
+   not a final answer.
