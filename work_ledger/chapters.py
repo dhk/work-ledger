@@ -26,7 +26,13 @@ from work_ledger.pricing import estimate_cost_usd
 from work_ledger.transcript import TranscriptTailer, Turn
 
 CHAPTER_MODEL = "claude-haiku-4-5"
-MAX_TOKENS = 4096
+# 16000 is the safe non-streaming ceiling for this API (higher risks HTTP
+# timeouts without switching to streaming). Output scales with turn count
+# (every prompt_id must be enumerated at least once), so a very long
+# retroactively-chaptered session can still hit this - it falls back to
+# "Unsorted" for whatever's left over rather than crashing (see
+# get_chapters), but the result is worse than a shorter session's.
+MAX_TOKENS = 16000
 UNSORTED_TITLE = "Unsorted"
 
 SYSTEM_PROMPT = """You group a coding session's prompts into a small number of \

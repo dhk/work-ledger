@@ -48,6 +48,13 @@ def find_active_transcript() -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
+def find_all_transcripts() -> list[Path]:
+    """Return every session transcript found, newest (by mtime) first."""
+    if not TRANSCRIPTS_ROOT.is_dir():
+        return []
+    return sorted(TRANSCRIPTS_ROOT.glob("*/*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+
 def _shorten(text: str, max_len: int = 60) -> str:
     text = " ".join(text.split())  # collapse whitespace/newlines
     if len(text) > max_len:

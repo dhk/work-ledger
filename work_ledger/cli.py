@@ -11,6 +11,7 @@ same per-unit rendering for drill-down (`chapters --detail`).
 import argparse
 import sys
 import time
+from datetime import date, datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -19,7 +20,7 @@ from rich.table import Table
 from rich.text import Text
 
 from work_ledger.chapters import Chapter, get_chapters
-from work_ledger.transcript import Turn, TranscriptTailer, find_active_transcript
+from work_ledger.transcript import Turn, TranscriptTailer, find_active_transcript, find_all_transcripts
 
 POLL_INTERVAL_S = 1.0
 
@@ -280,6 +281,109 @@ def run_chapters(transcript_path=None, detail: bool = False, only: str | None = 
     )
 
 
+def _parse_date_arg(value: str, flag: str) -> date:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        print(f"error: {flag} must be YYYY-MM-DD, got {value!r}", file=sys.stderr)
+        sys.exit(2)
+
+
+def _in_date_range(path: Path, since: date | None, until: date | None) -> bool:
+    """Filter by the transcript file's mtime - an approximation of when the
+    session happened, not its exact start/end (see README). Cheap: doesn't
+    require opening the file."""
+    if since is None and until is None:
+        return True
+    mtime_date = datetime.fromtimestamp(path.stat().st_mtime).date()
+    if since and mtime_date < since:
+        return False
+    if until and mtime_date > until:
+        return False
+    return True
+
+
+def run_chapters_all(since: date | None = None, until: date | None = None, as_json: bool = False):
+    console = Console()
+    transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
+    if not transcripts:
+        range_note = " in that date range" if (since or until) else ""
+        console.print(f"[red]No session transcripts found{range_note}.[/red]")
+        sys.exit(1)
+
+    console.print(f"[dim]Chaptering {len(transcripts)} session(s) found under ~/.claude/projects/ "
+                  "(retroactive - each session's own cache means already-chaptered sessions cost "
+                  "nothing to re-run).[/dim]\n")
+
+    rows = []
+    grand_total_cost = 0.0
+    grand_pass_cost = 0.0
+
+    for path in transcripts:
+        tailer = TranscriptTailer(path)
+        tailer.poll()
+        if not tailer.ordered_turns():
+            continue
+
+        result = get_chapters(tailer, path)
+        session_cost = tailer.total_cost_usd()
+        grand_total_cost += session_cost
+        grand_pass_cost += result.pass_cost_usd
+
+        if result.fallback_reason:
+            console.print(f"[yellow]{path.name}: {result.fallback_reason}[/yellow]")
+
+        top_chapter = max(result.chapters, key=lambda c: _turns_cost(c.turns(tailer)), default=None)
+        rows.append(
+            {
+                "transcript": str(path),
+                "session_date": datetime.fromtimestamp(path.stat().st_mtime).date().isoformat(),
+                "num_chapters": len(result.chapters),
+                "top_chapter": top_chapter.title if top_chapter else None,
+                "cost_usd": session_cost,
+                "unknown_model_cost": tailer.has_unknown_model(),
+            }
+        )
+
+    if as_json:
+        import json
+
+        console.print_json(json.dumps(rows))
+        return
+
+    table = Table(title="work-ledger chapters --all", expand=True)
+    table.add_column("Date", width=11)
+    table.add_column("Session", ratio=2, overflow="ellipsis")
+    table.add_column("Chapters", justify="right", width=9)
+    table.add_column("Top chapter", ratio=2, overflow="ellipsis")
+    table.add_column("Cost (est.)", justify="right", width=12)
+
+    any_unknown = False
+    for row in rows:
+        any_unknown = any_unknown or row["unknown_model_cost"]
+        cost_str = _turn_cost_str(row["cost_usd"], row["unknown_model_cost"])
+        table.add_row(
+            row["session_date"],
+            Path(row["transcript"]).stem,
+            str(row["num_chapters"]),
+            row["top_chapter"] or "",
+            cost_str,
+        )
+
+    unknown_note = " (some models unpriced)" if any_unknown else ""
+    table.add_section()
+    table.add_row(
+        "",
+        "",
+        "",
+        Text("GRAND TOTAL", style="bold"),
+        Text(f"${grand_total_cost:.4f}{unknown_note}", style="bold green"),
+    )
+    console.print(table)
+    if grand_pass_cost:
+        console.print(f"[dim]Chaptering across all sessions cost ${grand_pass_cost:.4f} this run.[/dim]")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Watch Claude Code session cost/token usage in near-real-time."
@@ -329,10 +433,43 @@ def main():
         action="store_true",
         help="Machine-readable output instead of a terminal table",
     )
+    chapters_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Chapter every session transcript found under ~/.claude/projects/, "
+        "not just the active one - for applying chaptering retroactively. "
+        "Each session's own cache still applies, so already-chaptered "
+        "sessions cost nothing to re-run. Incompatible with --transcript/--detail/--only.",
+    )
+    chapters_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="With --all: only include sessions last modified on/after this date (YYYY-MM-DD). "
+        "Approximate - based on the transcript file's mtime, not exact session start/end.",
+    )
+    chapters_parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="With --all: only include sessions last modified on/before this date (YYYY-MM-DD). "
+        "Approximate - based on the transcript file's mtime, not exact session start/end.",
+    )
 
     args = parser.parse_args()
 
     if args.command == "chapters":
+        if args.all:
+            if args.transcript or args.detail or args.only:
+                print("error: --all can't be combined with --transcript, --detail, or --only", file=sys.stderr)
+                sys.exit(2)
+            since = _parse_date_arg(args.since, "--since") if args.since else None
+            until = _parse_date_arg(args.until, "--until") if args.until else None
+            run_chapters_all(since=since, until=until, as_json=args.json)
+            return
+        if args.since or args.until:
+            print("error: --since/--until only apply with --all", file=sys.stderr)
+            sys.exit(2)
         transcript_path = Path(args.transcript) if args.transcript else None
         run_chapters(transcript_path=transcript_path, detail=args.detail, only=args.only, as_json=args.json)
         return
