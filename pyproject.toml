@@ -9,6 +9,11 @@ dependencies = [
     "pydantic>=2.0",
 ]
 
+[project.optional-dependencies]
+# Only needed for `work-ledger chapters --report --format png`. Also run
+# `playwright install chromium` once after installing this extra.
+report = ["playwright>=1.40"]
+
 [project.scripts]
 work-ledger = "work_ledger.cli:main"
 

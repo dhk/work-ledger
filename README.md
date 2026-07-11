@@ -34,6 +34,9 @@ work-ledger chapters --json             # machine-readable output
 work-ledger chapters --all              # chapter every session found under ~/.claude/projects/, retroactively
 work-ledger chapters --all --since 2026-07-01 --until 2026-07-11   # limit to a date range
 work-ledger chapters --all --json       # machine-readable, one row per session
+
+work-ledger chapters --report                          # write a visual HTML report to a file
+work-ledger chapters --report --format png --out x.png  # same, as a PNG image
 ```
 
 By default, cost/tokens are shown per prompt turn (one row per message you
@@ -111,6 +114,17 @@ this tool uses — no new cost math, just a grouping label on top.
   into the model's output cap before finishing (falls back to "Unsorted"
   for the remainder rather than crashing) — see `MAX_TOKENS` in
   `chapters.py`.
+- **`--report` generates a visual page**, matching the design of the
+  one-off chart example from
+  [issue #7](https://github.com/dhk/work-ledger/issues/7): stat tiles, a
+  per-chapter cost bar with hover-able section segments, light/dark mode.
+  `--format html` (default) has no extra dependency. `--format png`
+  screenshots that HTML via a headless browser and needs the optional
+  `report` extra: `pip install "work-ledger[report]"` followed by a
+  one-time `playwright install chromium`. Without that, `--format png`
+  fails with a clear message rather than crashing — it never silently
+  falls back to HTML. Not yet supported together with `--all` (that's a
+  different chart shape — see issue #4/#7).
 
 ## Status
 

@@ -218,7 +218,15 @@ def build_chapters_table(
     return table
 
 
-def run_chapters(transcript_path=None, detail: bool = False, only: str | None = None, as_json: bool = False):
+def run_chapters(
+    transcript_path=None,
+    detail: bool = False,
+    only: str | None = None,
+    as_json: bool = False,
+    report: bool = False,
+    report_format: str = "html",
+    report_out: str | None = None,
+):
     console = Console()
     path = transcript_path or find_active_transcript()
     if path is None:
@@ -251,6 +259,24 @@ def run_chapters(transcript_path=None, detail: bool = False, only: str | None = 
         if not chapters:
             console.print(f"[red]No chapter matching {only!r}.[/red]")
             sys.exit(1)
+
+    if report:
+        from work_ledger.report import ReportRenderError, build_report_html, render_png
+
+        out_path = Path(report_out) if report_out else Path(f"work-ledger-chapters-{path.stem}.{report_format}")
+        html = build_report_html(path.name, tailer, chapters, result.pass_cost_usd)
+
+        if report_format == "html":
+            out_path.write_text(html, encoding="utf-8")
+        else:
+            try:
+                render_png(html, out_path)
+            except ReportRenderError as e:
+                console.print(f"[red]{e}[/red]")
+                sys.exit(1)
+
+        console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
+        return
 
     if as_json:
         import json
@@ -471,6 +497,26 @@ def main():
         help="With --all: only include sessions last modified on/before this date (YYYY-MM-DD). "
         "Approximate - based on the transcript file's mtime, not exact session start/end.",
     )
+    chapters_parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Generate a visual report (HTML or PNG) to a file instead of a terminal table. "
+        "Not yet supported with --all.",
+    )
+    chapters_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["html", "png"],
+        default="html",
+        help="Report format for --report (default: html). png needs the optional "
+        "'report' extra: pip install \"work-ledger[report]\" && playwright install chromium",
+    )
+    chapters_parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output file path for --report (default: work-ledger-chapters-<session>.<format>)",
+    )
 
     args = parser.parse_args()
 
@@ -479,6 +525,9 @@ def main():
             if args.transcript or args.detail or args.only:
                 print("error: --all can't be combined with --transcript, --detail, or --only", file=sys.stderr)
                 sys.exit(2)
+            if args.report:
+                print("error: --report doesn't support --all yet (see issue #4/#7)", file=sys.stderr)
+                sys.exit(2)
             since = _parse_date_arg(args.since, "--since") if args.since else None
             until = _parse_date_arg(args.until, "--until") if args.until else None
             run_chapters_all(since=since, until=until, as_json=args.json)
@@ -486,8 +535,19 @@ def main():
         if args.since or args.until:
             print("error: --since/--until only apply with --all", file=sys.stderr)
             sys.exit(2)
+        if args.report and args.json:
+            print("error: --report and --json are mutually exclusive", file=sys.stderr)
+            sys.exit(2)
         transcript_path = Path(args.transcript) if args.transcript else None
-        run_chapters(transcript_path=transcript_path, detail=args.detail, only=args.only, as_json=args.json)
+        run_chapters(
+            transcript_path=transcript_path,
+            detail=args.detail,
+            only=args.only,
+            as_json=args.json,
+            report=args.report,
+            report_format=args.format,
+            report_out=args.out,
+        )
         return
 
     transcript_path = Path(args.transcript) if args.transcript else None
