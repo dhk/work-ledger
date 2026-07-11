@@ -18,11 +18,21 @@ from work_ledger.transcript import TranscriptTailer, find_active_transcript
 
 POLL_INTERVAL_S = 1.0
 
+UNIT_KIND_STYLE = {
+    "skill": "cyan",
+    "subagent": "magenta",
+    "text": "dim",
+}
 
-def build_table(tailer: TranscriptTailer, transcript_name: str) -> Table:
+
+def _unit_cost_str(unit) -> str:
+    return "?" if unit.unknown_model_cost and unit.cost_usd == 0 else f"${unit.cost_usd:.4f}"
+
+
+def build_table(tailer: TranscriptTailer, transcript_name: str, detail: bool = False) -> Table:
     table = Table(title=f"work-ledger — watching {transcript_name}", expand=True)
     table.add_column("Time", style="dim", width=8)
-    table.add_column("Prompt", ratio=3, overflow="ellipsis")
+    table.add_column("Prompt / task", ratio=3, overflow="ellipsis")
     table.add_column("Calls", justify="right", width=6)
     table.add_column("In tok", justify="right", width=8)
     table.add_column("Out tok", justify="right", width=8)
@@ -33,12 +43,24 @@ def build_table(tailer: TranscriptTailer, transcript_name: str) -> Table:
         cost_str = "?" if turn.unknown_model_cost and turn.cost_usd == 0 else f"${turn.cost_usd:.4f}"
         table.add_row(
             time_str,
-            turn.prompt_snippet,
+            Text(turn.prompt_snippet, style="bold"),
             str(turn.num_assistant_messages),
             f"{turn.input_tokens:,}",
             f"{turn.output_tokens:,}",
             cost_str,
         )
+        if detail:
+            for unit in turn.units:
+                style = UNIT_KIND_STYLE.get(unit.kind, "")
+                prefix = {"skill": "  ↳ ", "subagent": "  ↳ ", "text": "    "}[unit.kind]
+                table.add_row(
+                    "",
+                    Text(prefix + unit.label, style=style),
+                    "",
+                    f"{unit.input_tokens:,}",
+                    f"{unit.output_tokens:,}",
+                    _unit_cost_str(unit),
+                )
 
     total_cost = tailer.total_cost_usd()
     unknown_note = " (some models unpriced)" if tailer.has_unknown_model() else ""
@@ -54,7 +76,7 @@ def build_table(tailer: TranscriptTailer, transcript_name: str) -> Table:
     return table
 
 
-def run(transcript_path=None, once: bool = False):
+def run(transcript_path=None, once: bool = False, detail: bool = False):
     console = Console()
     path = transcript_path or find_active_transcript()
     if path is None:
@@ -72,15 +94,15 @@ def run(transcript_path=None, once: bool = False):
     tailer.poll()
 
     if once:
-        console.print(build_table(tailer, path.name))
+        console.print(build_table(tailer, path.name, detail=detail))
         return
 
-    with Live(build_table(tailer, path.name), console=console, refresh_per_second=2) as live:
+    with Live(build_table(tailer, path.name, detail=detail), console=console, refresh_per_second=2) as live:
         try:
             while True:
                 time.sleep(POLL_INTERVAL_S)
                 if tailer.poll():
-                    live.update(build_table(tailer, path.name))
+                    live.update(build_table(tailer, path.name, detail=detail))
         except KeyboardInterrupt:
             pass
 
@@ -100,12 +122,18 @@ def main():
         action="store_true",
         help="Print current totals once and exit, instead of watching live",
     )
+    parser.add_argument(
+        "--detail",
+        action="store_true",
+        help="Break each prompt down into its underlying units of work "
+        "(one row per assistant turn), flagging skill and subagent calls",
+    )
     args = parser.parse_args()
 
     from pathlib import Path
 
     transcript_path = Path(args.transcript) if args.transcript else None
-    run(transcript_path=transcript_path, once=args.once)
+    run(transcript_path=transcript_path, once=args.once, detail=args.detail)
 
 
 if __name__ == "__main__":
