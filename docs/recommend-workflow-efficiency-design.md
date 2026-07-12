@@ -46,15 +46,16 @@ rate-limited:
 }
 ```
 
-Confirmed against this project's own session transcript (5 occurrences).
-This is strictly better than `limits.py`'s current self-calibrated
-token-threshold estimate: it's the actual event, with an exact timestamp
-and reset time, parsed straight out of the transcript - no calibration,
-no guessing. This becomes the first concrete "user action" signal below
-(see Category 1), and is also worth a smaller, standalone improvement to
-`limits.py` itself independent of this doc (surfacing "you hit your limit
-N times this week, at these times" directly, alongside the existing
-rolling-window estimate).
+Confirmed against this project's own session transcript (5 raw entries -
+see Validation below for why the real count of distinct limit events is
+2, not 5). This is strictly better than `limits.py`'s current
+self-calibrated token-threshold estimate: it's the actual event, with an
+exact timestamp and reset time, parsed straight out of the transcript -
+no calibration, no guessing. This becomes the first concrete "user
+action" signal below (see Category 1), and is also worth a smaller,
+standalone improvement to `limits.py` itself independent of this doc
+(surfacing "you hit your limit N times this week, at these times"
+directly, alongside the existing rolling-window estimate).
 
 ## Goals
 
@@ -170,22 +171,106 @@ the cross-session-dependent refinements (rate-limit clustering across
 sessions, skill-candidate detection across sessions) until #3 exists -
 same "don't build ahead of the data" principle already applied to #5/#6.
 
+## Validated against a real run
+
+Before this doc merged, checked each category's premise directly against
+the transcript of the session that authored it, rather than leaving all
+four as untested assumptions. Findings materially changed two things
+(marked below) and are worth recording since they'd otherwise be
+re-discovered the hard way during implementation.
+
+- **Category 1, rate-limit hits: real, but needs dedup by reset time.**
+  5 raw `rate_limit` log entries in this session, but they collapse to
+  **2 distinct limit windows**, not 5 separate incidents: one at 23:15
+  (reset 11:40pm), and four more between 03:22-04:15 that all share the
+  same reset time (4:40am) - i.e. the same wall hit repeatedly on retry
+  before it actually reset, not four different limit events. A correct
+  implementation must group raw hits by reset timestamp before counting
+  "you hit your limit N times," or it overcounts by exactly this kind of
+  retry-storm artifact.
+- **Category 1, interruption marker: real, precise - but the detection
+  method matters more than expected.** Claude Code does write a literal
+  `[Request interrupted by user]` string into the transcript on a genuine
+  interruption - a naive full-text search found it 8 times, which looked
+  like a strong, low-noise signal. Scoping the search correctly (only
+  inside actual `type: "user"` message content, not tool inputs/outputs)
+  brought the real count down to **2**. The other 6 "hits" were the
+  detection script's own prior Bash commands and their stdout being
+  echoed back into later transcript lines and matching themselves
+  recursively - a live example of exactly the kind of false-positive risk
+  Open Question 1 (below) was worried about, just from an unexpected
+  direction. Net effect: the literal marker is real and precise, which
+  meaningfully de-risks this category versus the original assumption -
+  but any implementation must scope its search to genuine user-message
+  content specifically, never a blind substring search over the whole
+  file, or it will systematically overcount on any session where the
+  tool's own prior output happens to contain the marker text (which
+  includes, recursively, this tool's own future output about this exact
+  finding).
+- **Category 2, permission-approval fatigue: premise unconfirmed, and
+  possibly not answerable from the transcript alone.** In this session,
+  the most-repeated Bash invocations by a wide margin are structural
+  session mechanics (`cd /home/user/work-ledger` alone: 104 times) rather
+  than the kind of meaningfully-repeated, individually-risky command this
+  category is meant to target. More importantly: this transcript doesn't
+  obviously distinguish "this call required a manual approval prompt"
+  from "this call was already pre-allowed" - `permissionMode` appears
+  repeatedly but as a session-level setting, not a per-call approval
+  record. If that distinction genuinely isn't recoverable from
+  `~/.claude/projects` transcripts, this category's signal may need to
+  come from `.claude/settings.json`/`settings.local.json` instead (what's
+  actually on the allowlist today vs. what commands recur), not the
+  transcript - a materially different, currently-unbuilt data source.
+  Promoted to Open Question 5 below rather than left as an implicit
+  assumption.
+- **Category 3, skill candidates: strongly validated.** This single
+  session alone contains 10 near-identical instances of the same
+  multi-step sequence - create a branch, write/edit files, commit, push,
+  open a PR (with a template-shaped body), request a Copilot review, and
+  sometimes file a cross-referenced issue. That's exactly the shape this
+  category targets, and it recurred enough in one session to be a
+  concrete first candidate worth naming: a "ship a scoped PR" skill
+  bundling branch/commit/push/PR/review-request would have replaced a
+  meaningful chunk of this session's own repeated manual steps.
+- **Category 4, new tools: no signal either way.** This session already
+  had solid tool/MCP coverage (GitHub PR/issue tools, task tracking), so
+  it didn't surface a clear capability gap to validate against - neither
+  confirms nor undermines the category, consistent with the doc's own
+  framing of this as the hardest and most conservative of the four.
+
 ## Open questions
 
-1. **False-positive risk on "high interruption/redo rate."** Of the four
-   categories, this is the one most likely to misfire on completely normal
-   iterative work. Needs either a conservative threshold decided against
-   real sessions, or possibly dropping it from v1 entirely and starting
-   with the other three categories, which have clearer signals.
+1. **Partially resolved by validation above.** The literal
+   `[Request interrupted by user]` marker is real and precise, which
+   de-risks "high interruption/redo rate" more than originally assumed -
+   but only if detection is scoped to genuine `type: "user"` message
+   content. Remaining question: is a bare interruption count sufficient,
+   or does it need the fuzzy "short turn then long clarifying turn"
+   heuristic on top to catch cases that aren't a clean interruption but
+   are still a sign of an underspecified initial request? Leaning toward
+   shipping the precise marker-count version first and treating the
+   fuzzier heuristic as a separate, later addition rather than blocking
+   on it.
 2. Does the rate-limit-hit signal belong in `recommend`, in `limits`, or
    both? It's arguably as much a `limits.py` feature (the module already
    owns "session limit" framing) as a `recommend` one. Leaning toward:
-   surface raw hit history in `limits` (a factual report), and have
-   `recommend` reference it as one input among several for a "user
-   actions" finding - not decided.
+   surface raw hit history in `limits` (a factual report, deduped by
+   reset time per the validation above), and have `recommend` reference
+   it as one input among several for a "user actions" finding - not
+   decided.
 3. What repeat-count threshold makes a skill/tool recommendation (category
    3/4) worth surfacing rather than noise? Needs tuning against real
-   sessions, not a number to guess at up front.
+   sessions, not a number to guess at up front - though the validation
+   above suggests the threshold can be fairly low; 10 recurrences of one
+   pattern in a single session was an obvious, non-borderline case.
 4. Should recommendations from these new categories carry an estimated
    time-savings figure (turns/minutes) the way cost-based ones carry a
    dollar figure, or is "this happened N times" sufficient on its own?
+5. **New, from validation.** Can "repeated manual permission approval"
+   (category 2) actually be detected from `~/.claude/projects` transcripts
+   at all, or does it require reading `.claude/settings.json`/
+   `settings.local.json` instead (what's currently allowlisted vs. what
+   commands actually recur)? Needs checking directly against how
+   permission decisions are recorded before building this signal -
+   unlike the other three categories, this one's core premise is still
+   unconfirmed, not just untuned.
