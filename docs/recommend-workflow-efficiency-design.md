@@ -5,7 +5,9 @@ Author: written by Claude, from a design conversation with the repo owner.
 Related: `work_ledger/recommend.py` (existing, cost-only heuristics this
 extends), issue #5 (recurring-pattern/waste mining), issue #6
 (deterministic-tool substitution, blocked on #5), issue #3 (cross-session
-rollup - needed for some signals here).
+rollup - needed for some signals here), `docs/pattern-library-design.md`
+(a separate, later mechanism for matching against a shared external
+library rather than only local rules - not required for this doc).
 
 ## Problem
 
