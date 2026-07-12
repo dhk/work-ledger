@@ -69,14 +69,29 @@ needed for the read-only "pull the library" case on its own.
 PatternEntry:
   id
   title
-  description        # the mistake/pattern being described
-  fix_description     # the recommended remedy
   category            # maps to recommend's existing categories - cost /
-                       # user-actions / configuration / skill / tool -
-                       # not a new open-ended taxonomy
+                       # user-actions / configuration / new-skill /
+                       # new-tool - not a new open-ended taxonomy
+  pattern              # what recurring signal/behavior is being observed
+  use_case             # a concrete scenario where this actually showed up
+  diagnosis            # why this happens - the root cause, not a
+                       # restatement of `pattern`
+  fix                  # the concrete, actionable remedy
   recommended_count
   used_count
 ```
+
+Five content fields rather than the two ("description"/"fix") first
+drafted here - `use_case` and `diagnosis` earn their place as separate
+fields rather than folding into a longer `pattern` description: a use
+case grounds the entry in something real instead of an abstract rule, and
+an explicit diagnosis forces the fix to address a stated root cause
+rather than just the symptom - both make an entry easier to review and
+harder to submit vaguely. See `CONTRIBUTING-patterns.md` and
+`patterns/TEMPLATE.md` for the exact submission shape, and
+`.github/ISSUE_TEMPLATE/pattern-submission.yml` for the same five fields
+as a structured issue form, for raising a candidate before it's a
+finished entry.
 
 Deliberately not a generic rule-matching DSL for v1: new entries describe
 a known mistake/fix in the same shape `recommend`'s own hardcoded rules
@@ -149,8 +164,12 @@ minimal counter-increment endpoint, not a large service to operate.
   above).
 - A generic pattern-matching DSL - entries map to `recommend`'s existing
   rule categories, not a new open-ended language.
-- Content moderation tooling beyond "the repo owner reviews PRs to the
-  content repo" - no self-service submission pipeline yet.
+- **Automated moderation or acceptance.** The submission *format* is
+  defined (issue form + PR template, see Content model above) so
+  proposing an entry - by a person or by an agent instructed to - is
+  mechanical, but every entry still goes through ordinary human PR
+  review, same as any other change to this repo. No auto-merge, no
+  automated quality scoring of submissions themselves.
 
 ## Open questions
 

@@ -1,0 +1,71 @@
+name: Pattern submission
+description: Propose a mistake/pattern/fix for work-ledger's shared pattern library
+title: "[pattern]: "
+labels: ["pattern-proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See `docs/pattern-library-design.md` for the full mechanism this feeds.
+        Use this form to raise something you think is a real, recurring pattern
+        but haven't fully written up yet. If you're already confident in the
+        pattern and want to propose the finished entry directly, open a PR
+        instead - see `CONTRIBUTING-patterns.md`.
+  - type: input
+    id: title
+    attributes:
+      label: Title
+      description: Short, concrete name for this pattern.
+      placeholder: "e.g. Repeated branch -> PR -> review-request sequence"
+    validations:
+      required: true
+  - type: textarea
+    id: pattern
+    attributes:
+      label: Pattern
+      description: >-
+        What recurring signal or behavior is being observed? Be specific
+        enough that someone else could recognize the same thing in their own
+        session.
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: >-
+        A concrete scenario where this actually showed up. A real example,
+        not an abstract description.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnosis
+    attributes:
+      label: Diagnosis
+      description: >-
+        Why does this happen? The root cause - not just a restatement of the
+        pattern above.
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: Fix
+      description: >-
+        The concrete, actionable remedy - a user action, a configuration
+        change, a skill, or a tool.
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: Which of recommend's existing categories does this map to?
+      options:
+        - cost (outlier chapter cost / subagent-heavy / repeated skill invocation)
+        - user-actions
+        - configuration
+        - new-skill
+        - new-tool
+    validations:
+      required: true
