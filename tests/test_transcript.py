@@ -1,3 +1,6 @@
+import os
+import time
+
 from work_ledger.transcript import TranscriptTailer, find_active_transcript, find_all_transcripts
 
 from .conftest import assistant_lines, user_entry, write_jsonl
@@ -186,8 +189,10 @@ def test_find_active_transcript_picks_most_recent(isolated_transcripts_root):
     older = proj / "older.jsonl"
     newer = proj / "newer.jsonl"
     older.write_text("", encoding="utf-8")
-    time.sleep(0.01)
     newer.write_text("", encoding="utf-8")
+    now = time.time()
+    os.utime(older, (now - 100, now - 100))
+    os.utime(newer, (now, now))
 
     assert find_active_transcript() == newer
 
@@ -200,15 +205,15 @@ def test_find_active_transcript_none_when_no_projects_dir(tmp_path, monkeypatch)
 
 
 def test_find_all_transcripts_newest_first(isolated_transcripts_root):
-    import time
-
     proj = isolated_transcripts_root / "proj"
     proj.mkdir()
     a = proj / "a.jsonl"
     b = proj / "b.jsonl"
     a.write_text("", encoding="utf-8")
-    time.sleep(0.01)
     b.write_text("", encoding="utf-8")
+    now = time.time()
+    os.utime(a, (now - 100, now - 100))
+    os.utime(b, (now, now))
 
     result = find_all_transcripts()
     assert result == [b, a]
