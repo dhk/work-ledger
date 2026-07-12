@@ -322,7 +322,23 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
     for path in transcripts:
         tailer = TranscriptTailer(path)
         tailer.poll()
+
         if not tailer.ordered_turns():
+            # Still represent this session in the summary (a truly empty
+            # transcript is rare but real - a session that never got past
+            # its first prompt) rather than silently dropping it, which
+            # would make the "N session(s)" count above inaccurate and
+            # break the "one row per session" contract of --json.
+            rows.append(
+                {
+                    "transcript": str(path),
+                    "session_date": datetime.fromtimestamp(path.stat().st_mtime).date().isoformat(),
+                    "num_chapters": 0,
+                    "top_chapter": None,
+                    "cost_usd": 0.0,
+                    "unknown_model_cost": False,
+                }
+            )
             continue
 
         result = get_chapters(tailer, path)

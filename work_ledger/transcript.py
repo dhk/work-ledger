@@ -49,10 +49,19 @@ def find_active_transcript() -> Path | None:
 
 
 def find_all_transcripts() -> list[Path]:
-    """Return every session transcript found, newest (by mtime) first."""
+    """Return every session transcript found, newest (by mtime) first.
+    Skips any file that disappears or becomes unreadable between the glob
+    and the stat call (e.g. deleted/moved concurrently) rather than raising."""
     if not TRANSCRIPTS_ROOT.is_dir():
         return []
-    return sorted(TRANSCRIPTS_ROOT.glob("*/*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    dated = []
+    for p in TRANSCRIPTS_ROOT.glob("*/*.jsonl"):
+        try:
+            dated.append((p, p.stat().st_mtime))
+        except OSError:
+            continue
+    dated.sort(key=lambda pair: pair[1], reverse=True)
+    return [p for p, _mtime in dated]
 
 
 def _shorten(text: str, max_len: int = 60) -> str:
