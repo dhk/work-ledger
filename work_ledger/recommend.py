@@ -5,6 +5,11 @@ small number of concrete, defensible checks, not a big speculative rule
 engine. A later, corpus-relative dimension ("your bug-fix chapters cost
 more than the median across users who opted into the export corpus")
 isn't attempted here - see README's Recommendations section.
+
+These checks are all cost-based. See
+docs/recommend-workflow-efficiency-design.md for a proposed, not-yet-built
+widening of this module to workflow-efficiency signals beyond cost - user
+actions, configuration, candidate skills, and candidate tools.
 """
 
 from dataclasses import dataclass
