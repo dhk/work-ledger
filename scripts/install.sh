@@ -18,13 +18,20 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v pip3 >/dev/null 2>&1 && ! python3 -m pip --version >/dev/null 2>&1; then
-  echo "error: pip not found. Install pip for your python3 first." >&2
+if ! python3 -m pip --version >/dev/null 2>&1; then
+  echo "error: pip not found for python3. Install pip for your python3 first." >&2
   exit 1
 fi
 
+# --user fails outright inside an active virtualenv (venvs disable user
+# site-packages by default) - install into the venv itself there instead.
+PIP_INSTALL_FLAGS="--user"
+if [ -n "${VIRTUAL_ENV:-}" ]; then
+  PIP_INSTALL_FLAGS=""
+fi
+
 echo "Installing work-ledger from ${REPO_URL}..."
-python3 -m pip install --user "${REPO_URL}"
+python3 -m pip install ${PIP_INSTALL_FLAGS} "${REPO_URL}"
 
 echo
 echo "Installed. Try it:"
