@@ -18,6 +18,19 @@ including prior art already checked (OTEL-based team tools, a macOS
 rate-limit widget) and open questions on data source (session transcripts vs.
 a local OTEL sink) and real-time mechanism.
 
+## Install
+
+If you trust me, this is the fast path:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dhk/work-ledger/main/scripts/install.sh | bash
+```
+
+Reviewing a script before piping it into your shell is a reasonable
+instinct — it's right here: [`scripts/install.sh`](scripts/install.sh).
+For a slower, more explicit path (manual pip install, an editable clone,
+troubleshooting), see [INSTALL.md](INSTALL.md).
+
 ## Usage
 
 ```
