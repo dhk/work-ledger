@@ -35,6 +35,16 @@ Required, all mandatory:
 - **`category`** (frontmatter) - one of `cost`, `user-actions`,
   `configuration`, `new-skill`, `new-tool` - matches `recommend`'s
   existing categories (see `docs/recommend-workflow-efficiency-design.md`).
+- **`maps_to`** (frontmatter, optional) - the `rule_id` of the existing
+  `recommend` rule this entry enriches (currently one of
+  `outlier-chapter-cost`, `subagent-heavy-chapter`,
+  `repeated-skill-invocation` - see `work_ledger/recommend.py`). This is
+  the concrete v1 matching mechanism: `recommend` only surfaces a library
+  entry alongside a local rule that actually fired with a matching
+  `rule_id`, per `docs/pattern-library-design.md`'s "not a generic DSL"
+  non-goal. Leave empty if no existing rule covers this yet - the entry
+  still ships as documentation, it just won't be surfaced automatically
+  until a matching rule exists.
 - **Pattern** - what recurring signal is being observed, specific enough
   that someone else could recognize the same thing in their own session.
 - **Use Case** - a concrete scenario where this actually showed up, not an

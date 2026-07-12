@@ -15,9 +15,13 @@ dependencies = [
 # `playwright install chromium` once after installing this extra.
 report = ["playwright>=1.40"]
 test = ["pytest>=8.0"]
+# Only needed to run the local pattern-library MCP server
+# (`work-ledger-mcp`) - see docs/pattern-library-design.md.
+patterns = ["mcp>=1.0"]
 
 [project.scripts]
 work-ledger = "work_ledger.cli:main"
+work-ledger-mcp = "work_ledger.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

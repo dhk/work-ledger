@@ -220,3 +220,34 @@ minimal counter-increment endpoint, not a large service to operate.
    class of concern as decision 4 (both protect what the counters key
    off of), called out separately since this one is a content-review
    discipline rather than a backend design choice.
+
+## Implementation notes (v1, built)
+
+- **The concrete v1 matching mechanism**: each `PatternEntry` gets an
+  optional `maps_to` frontmatter field naming an existing `recommend.py`
+  `rule_id` (`outlier-chapter-cost`, `subagent-heavy-chapter`,
+  `repeated-skill-invocation`). `recommend` only ever surfaces a library
+  entry alongside a local rule that actually fired with the same
+  `rule_id` - filling in the "maps to recommend's existing detection
+  mechanisms with different parameters" language from the Content model
+  section above with an actual field, since the doc had deliberately left
+  the exact mechanism unspecified.
+- **Packaging gap, disclosed rather than solved**: `patterns/*.md`
+  content lives at the repo root, a sibling of the `work_ledger/` package
+  - this works today for anyone running from a checkout (how this
+  project develops and tests everything), but a real `pip install
+  work-ledger` from PyPI only installs the `work_ledger/` package, not
+  the repo root's `patterns/` directory. Shipping the bundled content as
+  proper package data (or fetching it from a published URL at runtime)
+  is real follow-up work, not solved in this pass - see `work_ledger/
+  patterns.py`'s `DEFAULT_PATTERNS_DIR` comment.
+- **No backend was deployed.** `work_ledger/pattern_client.py` implements
+  the client side (install id, opt-in flag, best-effort
+  `report_recommended`/`report_used` calls to a configurable
+  `WORK_LEDGER_PATTERN_BACKEND_URL`) and `work_ledger/mcp_server.py`
+  implements a local, runnable MCP server exposing `list_patterns`/
+  `report_recommended`/`report_used` as tools - but there is still no
+  publicly hosted counter service. Anyone using this today needs to point
+  `WORK_LEDGER_PATTERN_BACKEND_URL` at their own deployed instance;
+  without one, matching and display still work locally, reporting is
+  just a documented no-op.
