@@ -171,3 +171,7 @@ at a time); Sonnet 5 introductory pricing isn't modeled (runs a little high
 until 2026-08-31); no automated tests yet; chapter granularity for very
 short sessions is left entirely to the model's judgment (see open question
 in the design doc).
+
+## License
+
+[MIT](LICENSE)
