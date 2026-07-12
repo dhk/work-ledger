@@ -206,6 +206,47 @@ speculative rule engine — and it's entirely local. A corpus-relative
 dimension ("compared to other users' bug-fix chapters") is future work
 that depends on `export` above actually accumulating a corpus first.
 
+## Pattern library (opt-in, experimental)
+
+```
+work-ledger patterns enable            # turn on community pattern matching (off by default)
+work-ledger patterns disable
+work-ledger patterns status            # show enabled/disabled, install id, backend config
+work-ledger patterns list              # list locally-available pattern entries
+
+work-ledger recommend --mark-used <id> # confirm you applied a pattern's fix
+```
+
+A shared, versioned library of known mistakes/patterns/fixes (see
+[`docs/pattern-library-design.md`](docs/pattern-library-design.md)) that
+`recommend` can surface alongside its own local rules. **Off by default**
+— nothing changes about `recommend`'s output, and no network call ever
+happens, until you run `patterns enable`.
+
+- **Matching is rule-based, not a generic pattern DSL.** Each library
+  entry (see `patterns/*.md`, format documented in
+  [`CONTRIBUTING-patterns.md`](CONTRIBUTING-patterns.md)) optionally
+  declares `maps_to`, an existing `recommend` rule id. A library entry
+  only ever gets shown alongside a local rule that actually fired with a
+  matching id — there's no independent matching against raw transcript
+  data.
+- **Popularity is two raw counts, not a formula.** Each entry tracks how
+  many times it's been recommended and how many times someone confirmed
+  they used the fix (`--mark-used <id>`) — displayed as-is, deliberately
+  no single derived score (see the design doc's decided open questions).
+- **No hosted backend exists yet.** This project doesn't run a public
+  counter service — set `WORK_LEDGER_PATTERN_BACKEND_URL` to your own
+  deployed instance to have `recommended`/`used` counts actually update
+  anywhere. Without it, everything still works locally (matching, display,
+  `--mark-used` confirmation) — there's just nowhere to report to, which
+  is a silent no-op, never an error.
+- **A local MCP server** (`work-ledger-mcp`, needs the `patterns` extra:
+  `pip install "work-ledger[patterns]"`) exposes `list_patterns`,
+  `report_recommended`, and `report_used` as MCP tools over stdio —
+  connect it to a Claude Code session to consult known patterns live,
+  not just when `recommend` runs after the fact. Same reasoning as the
+  design doc: this is the actual argument for MCP over a static file.
+
 ## Session limits (Claude Pro/Max)
 
 ```
@@ -248,14 +289,22 @@ session-limit question. Chapters now also carry a fixed `category`
 alongside their free-text title, feeding two new, early pieces:
 `export` (an anonymized, manual, opt-in usage export — no automatic
 network call, ever) and `recommend` (a first cut at local-only, rule-based
-recommendations for a single session).
+recommendations for a single session). `recommend` can now optionally
+(opt-in, off by default) match against a shared pattern library and show
+community-sourced fixes alongside its own findings, including a local MCP
+server for live in-session matching — see "Pattern library" above; no
+publicly hosted counter backend exists yet, that part is still
+bring-your-own.
 
 Not yet done: cross-session/historical rollup (only watches one transcript
 at a time); Sonnet 5 introductory pricing isn't modeled (runs a little high
 until 2026-08-31); chapter granularity for very short sessions is left
 entirely to the model's judgment (see open question in the design doc);
 `recommend`'s corpus-relative dimension depends on `export` actually
-accumulating a corpus, which doesn't exist yet.
+accumulating a corpus, which doesn't exist yet; the pattern library has no
+hosted backend, and its bundled content only ships correctly when running
+from a repo checkout (proper PyPI packaging of `patterns/*.md` as package
+data is a follow-up).
 
 ## Development
 

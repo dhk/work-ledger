@@ -28,6 +28,8 @@ from work_ledger.limits import (
     load_threshold_tokens,
     save_threshold_tokens,
 )
+from work_ledger import pattern_client
+from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns, patterns_for_rule
 from work_ledger.recommend import generate_recommendations
 from work_ledger.transcript import Turn, TranscriptTailer, find_active_transcript, find_all_transcripts
 
@@ -571,8 +573,26 @@ def run_export(since: date | None = None, until: date | None = None, out: str | 
     )
 
 
-def run_recommend(transcript_path=None, as_json: bool = False):
+def run_recommend(transcript_path=None, as_json: bool = False, mark_used: str | None = None):
     console = Console()
+
+    if mark_used:
+        sent = pattern_client.report_event(mark_used, "used")
+        if sent:
+            console.print(f"[green]Marked {mark_used!r} as used.[/green] Thanks - this updates the shared count.")
+        elif not pattern_client.is_enabled():
+            console.print(
+                "[yellow]Not reported: the pattern library isn't enabled.[/yellow] "
+                "Run [bold]work-ledger patterns enable[/bold] first."
+            )
+        else:
+            console.print(
+                "[yellow]Not reported: no backend configured or it was unreachable.[/yellow] "
+                f"Set {pattern_client.BACKEND_URL_ENV} to report real usage - see "
+                "docs/pattern-library-design.md."
+            )
+        return
+
     path = transcript_path or find_active_transcript()
     if path is None:
         console.print(
@@ -597,11 +617,42 @@ def run_recommend(transcript_path=None, as_json: bool = False):
 
     recs = generate_recommendations(result.chapters, tailer)
 
+    # Pattern-library augmentation is entirely opt-in (work-ledger patterns
+    # enable) - until then recommend's output is unchanged from before this
+    # existed. Matching is the v1 mechanism from
+    # docs/pattern-library-design.md: a library entry only ever gets
+    # attached to a local rule that actually fired with the same rule_id,
+    # never independent matching against raw transcript data.
+    library_matches: dict[str, list] = {}
+    if pattern_client.is_enabled():
+        entries = load_patterns(DEFAULT_PATTERNS_DIR)
+        for r in recs:
+            matches = patterns_for_rule(entries, r.rule_id)
+            if matches:
+                library_matches[r.rule_id] = matches
+                for m in matches:
+                    pattern_client.report_event(m.id, "recommended")
+
     if as_json:
         import json
 
         data = [
-            {"rule_id": r.rule_id, "title": r.title, "detail": r.detail, "cost_usd": r.cost_usd}
+            {
+                "rule_id": r.rule_id,
+                "title": r.title,
+                "detail": r.detail,
+                "cost_usd": r.cost_usd,
+                "library_matches": [
+                    {
+                        "id": m.id,
+                        "title": m.title,
+                        "fix": m.fix,
+                        "recommended_count": m.recommended_count,
+                        "used_count": m.used_count,
+                    }
+                    for m in library_matches.get(r.rule_id, [])
+                ],
+            }
             for r in recs
         ]
         console.print_json(json.dumps(data))
@@ -620,9 +671,62 @@ def run_recommend(transcript_path=None, as_json: bool = False):
         detail_text = Text()
         detail_text.append(r.title, style="bold")
         detail_text.append(f"\n{r.detail}", style="dim")
+        for m in library_matches.get(r.rule_id, []):
+            detail_text.append(
+                f"\n★ Community pattern: {m.title} "
+                f"(recommended {m.recommended_count}x, used {m.used_count}x)\n  {m.fix}",
+                style="cyan",
+            )
         table.add_row(f"${r.cost_usd:.4f}", detail_text)
 
     console.print(table)
+
+
+def run_patterns(action: str):
+    console = Console()
+
+    if action == "enable":
+        pattern_client.enable()
+        console.print("[green]Pattern library enabled.[/green]")
+        console.print(
+            "[dim]`recommend` will now show matching community patterns alongside its own "
+            "findings, and report anonymous recommended/used counts if a backend is "
+            f"configured ({pattern_client.BACKEND_URL_ENV}). Without one configured, matching "
+            "still works locally - there's just nowhere to report counts to yet, since no "
+            "backend is hosted by this project (see docs/pattern-library-design.md).[/dim]"
+        )
+        return
+
+    if action == "disable":
+        pattern_client.disable()
+        console.print("[green]Pattern library disabled.[/green] `recommend` is unchanged from before it existed.")
+        return
+
+    if action == "status":
+        enabled = pattern_client.is_enabled()
+        console.print(f"Pattern library: {'[green]enabled[/green]' if enabled else '[yellow]disabled[/yellow]'}")
+        if enabled:
+            install_id = pattern_client.get_or_create_install_id()
+            console.print(f"Install id: {install_id}")
+            url = pattern_client.backend_url()
+            console.print(f"Backend: {url or '[yellow]not configured[/yellow] (' + pattern_client.BACKEND_URL_ENV + ' unset)'}")
+        return
+
+    if action == "list":
+        entries = load_patterns(DEFAULT_PATTERNS_DIR)
+        if not entries:
+            console.print(f"[dim]No pattern entries found under {DEFAULT_PATTERNS_DIR}[/dim]")
+            return
+        table = Table(title="work-ledger pattern library", expand=True)
+        table.add_column("id", ratio=2)
+        table.add_column("category", width=14)
+        table.add_column("maps_to", ratio=1)
+        table.add_column("rec.", justify="right", width=6)
+        table.add_column("used", justify="right", width=6)
+        for e in entries:
+            table.add_row(e.id, e.category, e.maps_to_rule_id or "", str(e.recommended_count), str(e.used_count))
+        console.print(table)
+        return
 
 
 def main():
@@ -787,6 +891,26 @@ def main():
         action="store_true",
         help="Machine-readable output instead of a terminal table",
     )
+    recommend_parser.add_argument(
+        "--mark-used",
+        type=str,
+        default=None,
+        metavar="ID",
+        help="Confirm you applied a pattern-library entry's fix, incrementing its shared "
+        "used count. Requires `work-ledger patterns enable` first.",
+    )
+
+    patterns_parser = subparsers.add_parser(
+        "patterns",
+        help="Manage the shared pattern library (see docs/pattern-library-design.md) - "
+        "opt-in, off by default",
+    )
+    patterns_parser.add_argument(
+        "action",
+        choices=["enable", "disable", "status", "list"],
+        help="enable/disable the pattern library, show its current status, or list "
+        "locally-available entries",
+    )
 
     args = parser.parse_args()
 
@@ -807,7 +931,11 @@ def main():
 
     if args.command == "recommend":
         transcript_path = Path(args.transcript) if args.transcript else None
-        run_recommend(transcript_path=transcript_path, as_json=args.json)
+        run_recommend(transcript_path=transcript_path, as_json=args.json, mark_used=args.mark_used)
+        return
+
+    if args.command == "patterns":
+        run_patterns(args.action)
         return
 
     if args.command == "chapters":

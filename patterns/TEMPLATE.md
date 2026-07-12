@@ -2,6 +2,7 @@
 id: <kebab-case-unique-id>
 title: <short, concrete title>
 category: <cost|user-actions|configuration|new-skill|new-tool>
+maps_to: <rule_id this enriches, e.g. outlier-chapter-cost - or leave empty>
 recommended_count: 0
 used_count: 0
 ---
