@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from work_ledger.chapters import CATEGORIES, get_chapters
+from work_ledger.chapters import CATEGORIES, DEFAULT_CATEGORY, get_chapters
 from work_ledger.transcript import TranscriptTailer, find_all_transcripts
 
 SCHEMA_VERSION = 1
@@ -81,7 +81,12 @@ def build_export_payload(since: date | None = None, until: date | None = None) -
             totals["output_tokens"] += out_tok
             totals["cost_usd"] += cost
 
-            bucket = by_category.setdefault(chapter.category, _empty_bucket())
+            # Clamp anything outside the known taxonomy into "other" rather than
+            # letting setdefault silently grow new keys - a hand-edited or
+            # otherwise unexpected cache value must not break the payload's
+            # fixed-shape guarantee (see module docstring).
+            category = chapter.category if chapter.category in CATEGORIES else DEFAULT_CATEGORY
+            bucket = by_category[category]
             bucket["chapters"] += 1
             bucket["input_tokens"] += in_tok
             bucket["output_tokens"] += out_tok

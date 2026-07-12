@@ -1,10 +1,10 @@
-"""Local-only, rule-based recommendations - no corpus, no LLM call, just
-heuristics over the same Turn/Unit/Chapter data everything else in this
-tool already computes. This is a first cut: a small number of concrete,
-defensible checks, not a big speculative rule engine. A later,
-corpus-relative dimension ("your bug-fix chapters cost more than the
-median across users who opted into the export corpus") isn't attempted
-here - see README's Recommendations section.
+"""Local-only, rule-based recommendations - no corpus, no extra API call
+beyond chaptering itself, just heuristics over the same Turn/Unit/Chapter
+data everything else in this tool already computes. This is a first cut: a
+small number of concrete, defensible checks, not a big speculative rule
+engine. A later, corpus-relative dimension ("your bug-fix chapters cost
+more than the median across users who opted into the export corpus")
+isn't attempted here - see README's Recommendations section.
 """
 
 from dataclasses import dataclass
