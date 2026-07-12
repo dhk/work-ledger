@@ -252,10 +252,29 @@ recommendations for a single session).
 
 Not yet done: cross-session/historical rollup (only watches one transcript
 at a time); Sonnet 5 introductory pricing isn't modeled (runs a little high
-until 2026-08-31); no automated tests yet; chapter granularity for very
-short sessions is left entirely to the model's judgment (see open question
-in the design doc); `recommend`'s corpus-relative dimension depends on
-`export` actually accumulating a corpus, which doesn't exist yet.
+until 2026-08-31); chapter granularity for very short sessions is left
+entirely to the model's judgment (see open question in the design doc);
+`recommend`'s corpus-relative dimension depends on `export` actually
+accumulating a corpus, which doesn't exist yet.
+
+## Development
+
+```sh
+pip install -e ".[test]"
+pytest
+```
+
+The suite is fully offline and hermetic: every test builds its own
+synthetic transcript files under a temp directory (see `tests/conftest.py`)
+rather than touching `~/.claude/projects/` or `~/.config/work-ledger/`, and
+the one call that costs real money (`chapters`' Haiku pass) is mocked at
+the `chapters._call_model` seam rather than actually invoked. Covers
+`transcript.py` (the message.id dedup fix, skill/subagent labeling,
+subagent-transcript correlation), `pricing.py`, `chapters.py` (partition
+validation, cache round-trip, the frozen-prefix/continuation-merge
+behavior, and the model-call fallback paths - refusal, malformed shape,
+exception), `export.py`, `recommend.py`, `limits.py`, and `cli.py`'s pure
+helper functions.
 
 ## License
 
