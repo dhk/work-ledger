@@ -25,12 +25,15 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from work_ledger.patterns import ID_PATTERN
+
 CONFIG_DIR = Path.home() / ".config" / "work-ledger"
 INSTALL_ID_PATH = CONFIG_DIR / "install_id"
 ENABLED_FLAG_PATH = CONFIG_DIR / "pattern_library_enabled"
 
 BACKEND_URL_ENV = "WORK_LEDGER_PATTERN_BACKEND_URL"
 REQUEST_TIMEOUT_S = 2.0
+VALID_EVENTS = ("recommended", "used")
 
 
 def get_or_create_install_id() -> str:
@@ -78,8 +81,19 @@ def backend_url() -> str | None:
 def report_event(pattern_id: str, event: str) -> bool:
     """Best-effort report of `event` ("recommended" or "used") for
     `pattern_id`. Returns whether it was actually sent - False whenever
-    the library isn't enabled, no backend is configured, or the request
-    fails for any reason. Never raises."""
+    the library isn't enabled, no backend is configured, the inputs don't
+    match the documented id/event shape, or the request fails for any
+    reason. Never raises.
+
+    `pattern_id` reaches here from user input (--mark-used) and from
+    arbitrary strings passed to the MCP tools, so it's validated against
+    the same kebab-case slug rule patterns.py enforces before it's ever
+    interpolated into a URL - an unvalidated value could otherwise contain
+    "/" and route the request somewhere unintended."""
+    if event not in VALID_EVENTS:
+        return False
+    if not ID_PATTERN.match(pattern_id):
+        return False
     if not is_enabled():
         return False
     url = backend_url()

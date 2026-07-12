@@ -27,6 +27,11 @@ from pathlib import Path
 # not solved here - see docs/pattern-library-design.md.
 DEFAULT_PATTERNS_DIR = Path(__file__).resolve().parent.parent / "patterns"
 
+# Also used by pattern_client.py to validate a pattern id before building
+# a report URL - imported from here rather than duplicated, so the two
+# checks can't silently drift apart.
+ID_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
 CATEGORIES: tuple[str, ...] = (
     "cost",
     "user-actions",
@@ -92,6 +97,15 @@ def parse_pattern_file(path: Path) -> PatternEntry:
     missing = [k for k in ("id", "title", "category") if not fm.get(k)]
     if missing:
         raise PatternFileError(f"missing required frontmatter field(s): {', '.join(missing)}")
+
+    entry_id = fm["id"]
+    if not ID_PATTERN.match(entry_id):
+        raise PatternFileError(f"id {entry_id!r} must be a kebab-case slug (lowercase letters/digits/hyphens)")
+    if entry_id != path.stem:
+        raise PatternFileError(
+            f"id {entry_id!r} must match the filename exactly (expected {path.stem!r} for {path.name}) - "
+            "see CONTRIBUTING-patterns.md"
+        )
 
     category = fm["category"]
     if category not in CATEGORIES:

@@ -75,7 +75,7 @@ def test_parse_missing_required_field_raises(tmp_path):
 
 def test_parse_unknown_category_raises(tmp_path):
     text = VALID_ENTRY.replace("category: cost", "category: not-a-real-category")
-    path = _write(tmp_path, "bad.md", text)
+    path = _write(tmp_path, "repeated-thing.md", text)
     try:
         parse_pattern_file(path)
         assert False, "should have raised"
@@ -85,7 +85,7 @@ def test_parse_unknown_category_raises(tmp_path):
 
 def test_parse_missing_section_raises(tmp_path):
     text = VALID_ENTRY.replace("## Fix\n\nDo Z.\n", "")
-    path = _write(tmp_path, "bad.md", text)
+    path = _write(tmp_path, "repeated-thing.md", text)
     try:
         parse_pattern_file(path)
         assert False, "should have raised"
@@ -95,14 +95,37 @@ def test_parse_missing_section_raises(tmp_path):
 
 def test_maps_to_optional(tmp_path):
     text = VALID_ENTRY.replace("maps_to: outlier-chapter-cost\n", "")
-    path = _write(tmp_path, "no-map.md", text)
+    path = _write(tmp_path, "repeated-thing.md", text)
     entry = parse_pattern_file(path)
     assert entry.maps_to_rule_id is None
 
 
+def test_id_must_match_filename(tmp_path):
+    """Regression test: the id in frontmatter must match the filename
+    slug exactly, per CONTRIBUTING-patterns.md - a mismatch used to be
+    silently accepted, which would make --mark-used <id> and the backend
+    counters key off something different from what the filename implies."""
+    path = _write(tmp_path, "wrong-name.md", VALID_ENTRY)  # id is "repeated-thing"
+    try:
+        parse_pattern_file(path)
+        assert False, "should have raised"
+    except PatternFileError as e:
+        assert "wrong-name" in str(e) or "repeated-thing" in str(e)
+
+
+def test_id_must_be_kebab_case(tmp_path):
+    text = VALID_ENTRY.replace("id: repeated-thing", "id: Repeated_Thing")
+    path = _write(tmp_path, "Repeated_Thing.md", text)
+    try:
+        parse_pattern_file(path)
+        assert False, "should have raised"
+    except PatternFileError as e:
+        assert "kebab-case" in str(e)
+
+
 def test_load_patterns_skips_template_and_malformed(tmp_path):
     _write(tmp_path, "TEMPLATE.md", "not a real entry, just a template")
-    _write(tmp_path, "good.md", VALID_ENTRY)
+    _write(tmp_path, "repeated-thing.md", VALID_ENTRY)
     _write(tmp_path, "malformed.md", "not frontmatter at all")
 
     entries = load_patterns(tmp_path)
@@ -118,8 +141,8 @@ def test_patterns_for_rule_filters_correctly(tmp_path):
     other = VALID_ENTRY.replace("id: repeated-thing", "id: other-thing").replace(
         "maps_to: outlier-chapter-cost", "maps_to: subagent-heavy-chapter"
     )
-    _write(tmp_path, "a.md", VALID_ENTRY)
-    _write(tmp_path, "b.md", other)
+    _write(tmp_path, "repeated-thing.md", VALID_ENTRY)
+    _write(tmp_path, "other-thing.md", other)
 
     entries = load_patterns(tmp_path)
     matches = patterns_for_rule(entries, "outlier-chapter-cost")

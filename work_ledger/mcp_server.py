@@ -19,7 +19,17 @@ WORK_LEDGER_PATTERN_BACKEND_URL pointed at an actual deployed backend
 (see pattern_client.py); nothing here stands that backend up.
 """
 
-from mcp.server.fastmcp import FastMCP
+import sys
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:
+    print(
+        "error: work-ledger-mcp needs the optional 'patterns' extra.\n"
+        'Run: pip install "work-ledger[patterns]"',
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 from work_ledger.pattern_client import is_enabled, report_event
 from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns
