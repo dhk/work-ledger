@@ -126,6 +126,33 @@ this tool uses — no new cost math, just a grouping label on top.
   falls back to HTML. Not yet supported together with `--all` (that's a
   different chart shape — see issue #4/#7).
 
+## Session limits (Claude Pro/Max)
+
+```
+work-ledger limits                          # live rolling-5h-window token total across all sessions
+work-ledger limits --once                   # snapshot instead of live
+work-ledger limits --window-hours 5         # default 5, matching Claude's session window
+work-ledger limits --set-threshold 500000   # save your own calibrated token threshold
+work-ledger limits --json                   # machine-readable
+```
+
+This tracks a different thing than the rest of the tool: not dollar cost,
+but the Claude Pro/Max **rolling usage window** ("why did I run out of
+session limit") that started this whole project. It's explicitly an
+**estimate, not an official number** — Anthropic doesn't publish the exact
+token/message threshold for that window, and Claude Code's own `/status`
+that shows a live percentage is local-display-only, not exportable.
+
+What `limits` actually does: sums real token usage — the same `Turn` data
+the rest of the tool already parses — across **every** session (not just
+the active one) in a rolling window ending now (default 5 hours). That's a
+real number. Turning it into a percentage needs a threshold this tool
+can't know on its own, so you calibrate it yourself: next time Claude Code
+tells you you've hit your limit, check what `work-ledger limits` reported
+at that moment and save it with `--set-threshold`. The threshold is stored
+in `~/.config/work-ledger/limits_threshold.json`, separate from any
+per-transcript cache.
+
 ## Status
 
 v1 built: near-real-time terminal dashboard reading Claude Code's own
@@ -134,7 +161,10 @@ works at the per-prompt-turn level (default), per-unit-of-work level
 (`--detail`, with skill/subagent calls specifically labeled), and the
 per-initiative level (`chapters`, linked back into `--detail`), which can
 now also be applied retroactively across every past session at once
-(`chapters --all`, with `--since`/`--until` date filtering).
+(`chapters --all`, with `--since`/`--until` date filtering). A visual
+HTML/PNG report (`chapters --report`) covers the "show me" case, and
+`limits` gives a self-calibrated read on the separate Claude Pro/Max
+session-limit question.
 
 Not yet done: cross-session/historical rollup (only watches one transcript
 at a time); Sonnet 5 introductory pricing isn't modeled (runs a little high

@@ -14,15 +14,23 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
 from work_ledger.chapters import Chapter, get_chapters
+from work_ledger.limits import (
+    DEFAULT_WINDOW_HOURS,
+    WindowUsage,
+    compute_window_usage,
+    load_threshold_tokens,
+    save_threshold_tokens,
+)
 from work_ledger.transcript import Turn, TranscriptTailer, find_active_transcript, find_all_transcripts
 
 POLL_INTERVAL_S = 1.0
+LIMITS_POLL_INTERVAL_S = 5.0
 
 UNIT_KIND_STYLE = {
     "skill": "cyan",
@@ -426,6 +434,109 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
         console.print(f"[dim]Chaptering across all sessions cost ${grand_pass_cost:.4f} this run.[/dim]")
 
 
+def build_limits_table(usage: WindowUsage) -> Table:
+    table = Table(title=f"work-ledger limits — rolling {usage.window_hours:g}h window", expand=True)
+    table.add_column("Session", ratio=3, overflow="ellipsis")
+    table.add_column("Last activity", width=13)
+    table.add_column("Tokens", justify="right", width=14)
+    table.add_column("Cost (est.)", justify="right", width=12)
+
+    for s in usage.sessions:
+        last = s.last_activity.astimezone().strftime("%H:%M:%S") if s.last_activity else ""
+        table.add_row(
+            Path(s.transcript).stem,
+            last,
+            f"{s.total_tokens:,}",
+            f"${s.cost_usd:.4f}",
+        )
+
+    table.add_section()
+    table.add_row(
+        "",
+        Text("TOTAL", style="bold"),
+        Text(f"{usage.total_tokens:,}", style="bold green"),
+        Text(f"${usage.total_cost_usd:.4f}", style="bold"),
+    )
+    return table
+
+
+def _threshold_note(usage: WindowUsage, threshold_tokens: int | None) -> str | None:
+    if not threshold_tokens:
+        return None
+    pct = usage.total_tokens / threshold_tokens * 100
+    return f"{pct:.0f}% of your {threshold_tokens:,}-token threshold for this window"
+
+
+def run_limits(
+    window_hours: float = DEFAULT_WINDOW_HOURS,
+    once: bool = False,
+    set_threshold: int | None = None,
+    as_json: bool = False,
+):
+    console = Console()
+
+    if set_threshold is not None:
+        save_threshold_tokens(set_threshold)
+        console.print(f"[green]Saved personal threshold: {set_threshold:,} tokens for a {window_hours:g}h window.[/green]")
+        return
+
+    threshold = load_threshold_tokens()
+    console.print(f"[dim]Rolling {window_hours:g}-hour window across every session under ~/.claude/projects/.[/dim]")
+    console.print(
+        "[dim]This is a self-calibrated estimate, not an official number - Anthropic doesn't publish "
+        "the exact session-limit threshold, and Claude Code's own /status is local-display-only. "
+        "Set yours with --set-threshold once you know it (check this command's total the next time "
+        "Claude Code tells you you've hit your limit).[/dim]\n"
+    )
+    if threshold is None:
+        console.print(
+            "[yellow]No threshold set yet - showing raw totals only. "
+            "Use --set-threshold TOKENS to calibrate.[/yellow]\n"
+        )
+
+    if as_json:
+        usage = compute_window_usage(window_hours=window_hours)
+        import json
+
+        data = {
+            "window_hours": window_hours,
+            "threshold_tokens": threshold,
+            "total_tokens": usage.total_tokens,
+            "total_cost_usd": usage.total_cost_usd,
+            "sessions": [
+                {
+                    "transcript": str(s.transcript),
+                    "tokens": s.total_tokens,
+                    "cost_usd": s.cost_usd,
+                    "last_activity": s.last_activity.isoformat() if s.last_activity else None,
+                }
+                for s in usage.sessions
+            ],
+        }
+        console.print_json(json.dumps(data))
+        return
+
+    def render():
+        usage = compute_window_usage(window_hours=window_hours)
+        renderables = [build_limits_table(usage)]
+        note = _threshold_note(usage, threshold)
+        if note:
+            renderables.append(Text(note, style="bold"))
+        return Group(*renderables)
+
+    if once:
+        console.print(render())
+        return
+
+    with Live(render(), console=console, refresh_per_second=1) as live:
+        try:
+            while True:
+                time.sleep(LIMITS_POLL_INTERVAL_S)
+                live.update(render())
+        except KeyboardInterrupt:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Watch Claude Code session cost/token usage in near-real-time."
@@ -518,7 +629,46 @@ def main():
         help="Output file path for --report (default: work-ledger-chapters-<session>.<format>)",
     )
 
+    limits_parser = subparsers.add_parser(
+        "limits",
+        help="Track rolling-window token usage across all sessions, as a self-calibrated proxy "
+        "for the Claude Pro/Max session limit (not an official number - see the command's own note)",
+    )
+    limits_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Print a snapshot once and exit, instead of watching live",
+    )
+    limits_parser.add_argument(
+        "--window-hours",
+        type=float,
+        default=DEFAULT_WINDOW_HOURS,
+        help=f"Rolling window size in hours (default: {DEFAULT_WINDOW_HOURS:g}, matching Claude's "
+        "session window; use e.g. 168 for a rough weekly view)",
+    )
+    limits_parser.add_argument(
+        "--set-threshold",
+        type=int,
+        default=None,
+        metavar="TOKENS",
+        help="Save your own calibrated token threshold for this window size, then exit",
+    )
+    limits_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable output instead of a terminal table",
+    )
+
     args = parser.parse_args()
+
+    if args.command == "limits":
+        run_limits(
+            window_hours=args.window_hours,
+            once=args.once,
+            set_threshold=args.set_threshold,
+            as_json=args.json,
+        )
+        return
 
     if args.command == "chapters":
         if args.all:
