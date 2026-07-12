@@ -25,11 +25,6 @@ and fill in every field - that file shows the exact shape required.
 
 Required, all mandatory:
 
-- **`id`** (frontmatter) - must match `<slug>` in the filename exactly
-  (e.g. `patterns/repeated-pr-shipping-sequence.md` has
-  `id: repeated-pr-shipping-sequence`). This is what `--mark-used <id>`
-  and the mother-ship counters key off of, so it can't drift from the
-  filename.
 - **`title`** (frontmatter) - short, concrete name.
 - **`category`** (frontmatter) - one of `cost`, `user-actions`,
   `configuration`, `new-skill`, `new-tool` - matches `recommend`'s
