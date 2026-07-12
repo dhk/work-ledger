@@ -14,6 +14,7 @@ dependencies = [
 # Only needed for `work-ledger chapters --report --format png`. Also run
 # `playwright install chromium` once after installing this extra.
 report = ["playwright>=1.40"]
+test = ["pytest>=8.0"]
 
 [project.scripts]
 work-ledger = "work_ledger.cli:main"
@@ -24,3 +25,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["work_ledger"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

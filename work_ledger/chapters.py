@@ -257,6 +257,15 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
         fallback_reason = f"chaptering call failed ({e}); new turns grouped as Unsorted"
         response = None
 
+    def _all_unsorted() -> list[_ChapterOut]:
+        return [
+            _ChapterOut(
+                title=UNSORTED_TITLE,
+                category=DEFAULT_CATEGORY,
+                sections=[_SectionOut(title=UNSORTED_TITLE, prompt_ids=[t.prompt_id for t in new_turns])],
+            )
+        ]
+
     if response is not None:
         if response.usage:
             c = estimate_cost_usd(response.model, response.usage.model_dump())
@@ -264,11 +273,13 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
         parsed = response.parsed_output
         if response.stop_reason == "refusal":
             fallback_reason = "chaptering call was refused; new turns grouped as Unsorted"
+            new_chapter_dicts = _all_unsorted()
         elif parsed is None:
             fallback_reason = (
                 "chaptering response didn't match the expected shape "
                 f"(stop_reason={response.stop_reason!r}); new turns grouped as Unsorted"
             )
+            new_chapter_dicts = _all_unsorted()
         else:
             new_chapter_dicts = _validate_partition(parsed, new_ids)
             covered = {pid for c in new_chapter_dicts for s in c.sections for pid in s.prompt_ids}
@@ -281,15 +292,8 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
                         sections=[_SectionOut(title=UNSORTED_TITLE, prompt_ids=missing)],
                     )
                 )
-
-    if response is None:
-        new_chapter_dicts = [
-            _ChapterOut(
-                title=UNSORTED_TITLE,
-                category=DEFAULT_CATEGORY,
-                sections=[_SectionOut(title=UNSORTED_TITLE, prompt_ids=[t.prompt_id for t in new_turns])],
-            )
-        ]
+    else:
+        new_chapter_dicts = _all_unsorted()
 
     new_chapters = [
         Chapter(

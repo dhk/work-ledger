@@ -38,11 +38,14 @@ CACHE_WRITE_1H_MULT = 2.0
 
 
 def rate_for(model: str) -> ModelRate | None:
-    """Look up rates for a model ID, stripping any date suffix if unknown as-is."""
+    """Look up rates for a model ID, stripping a trailing qualifier
+    (a dated snapshot like "-20251001", or "-latest") if unknown as-is."""
     if model in RATES:
         return RATES[model]
-    base = "-".join(model.split("-")[:-1]) if model[-1:].isdigit() is False else model
-    return RATES.get(base)
+    parts = model.split("-")
+    if len(parts) > 1:
+        return RATES.get("-".join(parts[:-1]))
+    return None
 
 
 def estimate_cost_usd(model: str, usage: dict) -> float | None:

@@ -1,0 +1,103 @@
+import pytest
+
+from work_ledger.chapters import Chapter, Section
+from work_ledger.cli import _filter_only, _in_date_range, _parse_date_arg, _threshold_note, _turns_cost, _turns_unknown
+from work_ledger.limits import SessionWindowUsage, WindowUsage
+from work_ledger.transcript import Turn, Unit
+
+
+def _turn(prompt_id, cost=1.0, unknown=False):
+    unit = Unit(timestamp="2026-07-12T10:00:00Z", own_cost_usd=cost, own_unknown_model=unknown)
+    return Turn(prompt_id=prompt_id, prompt_snippet="x", timestamp="2026-07-12T10:00:00Z", units=[unit])
+
+
+def test_turns_cost_sums_all_turns():
+    turns = [_turn("p1", 1.5), _turn("p2", 2.5)]
+    assert _turns_cost(turns) == 4.0
+
+
+def test_turns_unknown_true_if_any_turn_unknown():
+    turns = [_turn("p1", 0.0, unknown=True), _turn("p2", 1.0)]
+    assert _turns_unknown(turns) is True
+
+
+def test_turns_unknown_false_if_none_unknown():
+    turns = [_turn("p1"), _turn("p2")]
+    assert _turns_unknown(turns) is False
+
+
+def _chapters():
+    return [
+        Chapter(title="Fix double-counting bug", category="bug-fix", sections=[Section(title="s", prompt_ids=["p1"])]),
+        Chapter(title="Build the dashboard", category="feature-build", sections=[Section(title="s", prompt_ids=["p2"])]),
+    ]
+
+
+def test_filter_only_by_exact_title():
+    result = _filter_only(_chapters(), "Build the dashboard")
+    assert len(result) == 1
+    assert result[0].title == "Build the dashboard"
+
+
+def test_filter_only_by_substring():
+    result = _filter_only(_chapters(), "double-counting")
+    assert len(result) == 1
+    assert result[0].title == "Fix double-counting bug"
+
+
+def test_filter_only_by_one_based_index():
+    result = _filter_only(_chapters(), "2")
+    assert result[0].title == "Build the dashboard"
+
+
+def test_filter_only_index_out_of_range_returns_empty():
+    assert _filter_only(_chapters(), "99") == []
+
+
+def test_filter_only_no_match_returns_empty():
+    assert _filter_only(_chapters(), "nonexistent") == []
+
+
+def test_parse_date_arg_valid():
+    d = _parse_date_arg("2026-07-01", "--since")
+    assert d.isoformat() == "2026-07-01"
+
+
+def test_parse_date_arg_invalid_exits(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        _parse_date_arg("not-a-date", "--since")
+    assert exc_info.value.code == 2
+    assert "--since" in capsys.readouterr().err
+
+
+def test_in_date_range_no_bounds_always_true(tmp_path):
+    p = tmp_path / "f.jsonl"
+    p.write_text("", encoding="utf-8")
+    assert _in_date_range(p, None, None) is True
+
+
+def test_in_date_range_since_excludes_older_file(tmp_path):
+    import datetime
+    import os
+
+    p = tmp_path / "f.jsonl"
+    p.write_text("", encoding="utf-8")
+    old_time = (datetime.datetime.now() - datetime.timedelta(days=10)).timestamp()
+    os.utime(p, (old_time, old_time))
+
+    since = (datetime.datetime.now() - datetime.timedelta(days=1)).date()
+    assert _in_date_range(p, since, None) is False
+
+
+def test_threshold_note_none_when_no_threshold():
+    usage = WindowUsage(window_hours=5.0)
+    assert _threshold_note(usage, None) is None
+
+
+def test_threshold_note_formats_percentage():
+    from pathlib import Path
+
+    usage = WindowUsage(window_hours=5.0)
+    usage.sessions.append(SessionWindowUsage(transcript=Path("x.jsonl"), input_tokens=250_000, output_tokens=0))
+    note = _threshold_note(usage, 500_000)
+    assert "50%" in note
