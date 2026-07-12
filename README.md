@@ -30,6 +30,10 @@ work-ledger chapters                    # group prompts into initiatives, cost p
 work-ledger chapters --detail           # same, drilled down to each initiative's underlying calls
 work-ledger chapters --only "<title|index>" --detail   # drill into just one initiative
 work-ledger chapters --json             # machine-readable output
+
+work-ledger chapters --all              # chapter every session found under ~/.claude/projects/, retroactively
+work-ledger chapters --all --since 2026-07-01 --until 2026-07-11   # limit to a date range
+work-ledger chapters --all --json       # machine-readable, one row per session
 ```
 
 By default, cost/tokens are shown per prompt turn (one row per message you
@@ -94,14 +98,29 @@ this tool uses — no new cost math, just a grouping label on top.
   on its own — the point of chaptering is "here's what to cut," which
   means seeing the actual calls behind an expensive initiative, not just
   its dollar total.
+- **Works retroactively, across every session at once, with `--all`.**
+  `chapters` normally only looks at the active transcript; `--all` runs it
+  over every `.jsonl` found under `~/.claude/projects/`, printing one row
+  per session plus a grand total. Each session still has its own cache, so
+  running `--all` repeatedly only pays for genuinely new turns, same as
+  the single-transcript case. `--since`/`--until` (`YYYY-MM-DD`) narrow
+  this to a date range — filtered by the transcript file's last-modified
+  time, which is an approximation of when the session happened, not its
+  exact start/end (a session spanning midnight is bucketed by its last
+  write). A single very long retroactively-chaptered session can still run
+  into the model's output cap before finishing (falls back to "Unsorted"
+  for the remainder rather than crashing) — see `MAX_TOKENS` in
+  `chapters.py`.
 
 ## Status
 
 v1 built: near-real-time terminal dashboard reading Claude Code's own
 session transcripts, no telemetry setup required. Cost/token attribution
 works at the per-prompt-turn level (default), per-unit-of-work level
-(`--detail`, with skill/subagent calls specifically labeled), and now the
-per-initiative level (`chapters`, linked back into `--detail`).
+(`--detail`, with skill/subagent calls specifically labeled), and the
+per-initiative level (`chapters`, linked back into `--detail`), which can
+now also be applied retroactively across every past session at once
+(`chapters --all`, with `--since`/`--until` date filtering).
 
 Not yet done: cross-session/historical rollup (only watches one transcript
 at a time); Sonnet 5 introductory pricing isn't modeled (runs a little high
