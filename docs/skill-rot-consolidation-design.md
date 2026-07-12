@@ -10,7 +10,10 @@ the missing other half, what happens after a skill already exists),
 tracking a piece of reusable knowledge's health over time, but it scores
 one entry in isolation - nothing compares two entries against each other),
 `CONTRIBUTING-patterns.md` (the review discipline any retire/merge action
-here should match).
+here should match), `docs/skill-rot-published-research.md` (a survey of
+published prior art - academic agent-skill-evolution papers, the
+"agent sprawl" enterprise framing, and the knowledge-base-deduplication
+field this doc's mechanism sketch borrows most directly from).
 
 ## Problem
 
