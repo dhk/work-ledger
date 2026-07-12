@@ -19,6 +19,7 @@ prefix").
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -35,6 +36,24 @@ CHAPTER_MODEL = "claude-haiku-4-5"
 MAX_TOKENS = 16000
 UNSORTED_TITLE = "Unsorted"
 
+# Fixed, closed taxonomy - not free text. This is what lets `export` report
+# category rollups without ever transmitting a chapter's actual title (which
+# can describe real project/business specifics). Keep this list short and
+# stable: it becomes part of the on-disk cache schema and, later, the corpus
+# schema (see docs/session-chaptering-design.md and README's Export section).
+CATEGORIES: tuple[str, ...] = (
+    "feature-build",
+    "bug-fix",
+    "refactor",
+    "design-planning",
+    "debugging",
+    "docs",
+    "review-feedback",
+    "tooling-infra",
+    "other",
+)
+DEFAULT_CATEGORY = "other"
+
 SYSTEM_PROMPT = """You group a coding session's prompts into a small number of \
 "chapters" (distinct initiatives, e.g. "Build the v1 dashboard", "Fix the \
 double-counting bug") each split into "sections" (a step within that \
@@ -50,6 +69,9 @@ more than one section.
 restate the raw prompt text.
 - Prefer fewer, larger chapters over many tiny ones, unless the turns are \
 genuinely doing unrelated things.
+- Each chapter also gets a `category`, chosen from a fixed list (feature-build, \
+bug-fix, refactor, design-planning, debugging, docs, review-feedback, \
+tooling-infra, other) - pick the closest match, or "other" if none fit.
 - If you are told that earlier turns were already grouped into prior \
 chapters, only assign chapters/sections to the NEW turns you were given - \
 never re-list an earlier turn's prompt_id."""
@@ -62,6 +84,7 @@ class _SectionOut(BaseModel):
 
 class _ChapterOut(BaseModel):
     title: str
+    category: Literal[CATEGORIES]
     sections: list[_SectionOut]
 
 
@@ -83,6 +106,7 @@ class Section:
 class Chapter:
     title: str
     sections: list[Section] = field(default_factory=list)
+    category: str = DEFAULT_CATEGORY
 
     @property
     def prompt_ids(self) -> list[str]:
@@ -120,6 +144,9 @@ def _load_cache(transcript_path: Path) -> tuple[list[str], list[Chapter]]:
                 Section(title=s["title"], prompt_ids=list(s["prompt_ids"]))
                 for s in c.get("sections", [])
             ],
+            # Older cache files predate the category field - default rather
+            # than re-chaptering (the frozen-prefix contract still holds).
+            category=c.get("category", DEFAULT_CATEGORY),
         )
         for c in data.get("chapters", [])
     ]
@@ -136,6 +163,7 @@ def _save_cache(transcript_path: Path, chaptered_ids: list[str], chapters: list[
         "chapters": [
             {
                 "title": c.title,
+                "category": c.category,
                 "sections": [{"title": s.title, "prompt_ids": s.prompt_ids} for s in c.sections],
             }
             for c in chapters
@@ -196,7 +224,9 @@ def _validate_partition(parsed: _ChaptersOut, expected_ids: set[str]) -> list[_C
             if kept:
                 cleaned_sections.append(_SectionOut(title=section.title, prompt_ids=kept))
         if cleaned_sections:
-            cleaned_chapters.append(_ChapterOut(title=chapter.title, sections=cleaned_sections))
+            cleaned_chapters.append(
+                _ChapterOut(title=chapter.title, category=chapter.category, sections=cleaned_sections)
+            )
     return cleaned_chapters
 
 
@@ -247,6 +277,7 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
                 new_chapter_dicts.append(
                     _ChapterOut(
                         title=UNSORTED_TITLE,
+                        category=DEFAULT_CATEGORY,
                         sections=[_SectionOut(title=UNSORTED_TITLE, prompt_ids=missing)],
                     )
                 )
@@ -255,6 +286,7 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
         new_chapter_dicts = [
             _ChapterOut(
                 title=UNSORTED_TITLE,
+                category=DEFAULT_CATEGORY,
                 sections=[_SectionOut(title=UNSORTED_TITLE, prompt_ids=[t.prompt_id for t in new_turns])],
             )
         ]
@@ -263,6 +295,7 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
         Chapter(
             title=c.title,
             sections=[Section(title=s.title, prompt_ids=s.prompt_ids) for s in c.sections],
+            category=c.category,
         )
         for c in new_chapter_dicts
     ]

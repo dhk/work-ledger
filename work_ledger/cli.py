@@ -20,6 +20,7 @@ from rich.table import Table
 from rich.text import Text
 
 from work_ledger.chapters import Chapter, get_chapters
+from work_ledger.export import build_export_payload
 from work_ledger.limits import (
     DEFAULT_WINDOW_HOURS,
     WindowUsage,
@@ -27,6 +28,7 @@ from work_ledger.limits import (
     load_threshold_tokens,
     save_threshold_tokens,
 )
+from work_ledger.recommend import generate_recommendations
 from work_ledger.transcript import Turn, TranscriptTailer, find_active_transcript, find_all_transcripts
 
 POLL_INTERVAL_S = 1.0
@@ -537,6 +539,92 @@ def run_limits(
             pass
 
 
+def run_export(since: date | None = None, until: date | None = None, out: str | None = None):
+    console = Console()
+    console.print(
+        "[dim]Building an anonymized export - aggregate totals and chapter-category rollups only, "
+        "no chapter titles, transcript paths, or session ids. Sessions not yet chaptered will be "
+        "chaptered now (same small Anthropic API cost as `chapters --all`).[/dim]\n"
+    )
+
+    result = build_export_payload(since=since, until=until)
+    if result.num_sessions == 0:
+        range_note = " in that date range" if (since or until) else ""
+        console.print(f"[red]No session transcripts found{range_note}.[/red]")
+        sys.exit(1)
+
+    import json
+
+    out_path = Path(out) if out else Path(f"work-ledger-export-{date.today().isoformat()}.json")
+    out_path.write_text(json.dumps(result.payload, indent=2), encoding="utf-8")
+
+    totals = result.payload["totals"]
+    console.print(
+        f"[green]Wrote {out_path}[/green] ({totals['sessions']} session(s), "
+        f"{totals['chapters']} chapters, ${totals['cost_usd']:.4f} total)"
+    )
+    if result.pass_cost_usd:
+        console.print(f"[dim]Chaptering newly-seen sessions for this export cost ${result.pass_cost_usd:.4f}.[/dim]")
+    console.print(
+        "[bold yellow]This file was not sent anywhere.[/bold yellow] Review it, then share it "
+        "yourself if you want to contribute it - work-ledger never makes this call for you."
+    )
+
+
+def run_recommend(transcript_path=None, as_json: bool = False):
+    console = Console()
+    path = transcript_path or find_active_transcript()
+    if path is None:
+        console.print(
+            "[red]No Claude Code session transcripts found under "
+            "~/.claude/projects/. Run a session first, or pass --transcript.[/red]"
+        )
+        sys.exit(1)
+
+    console.print(f"[dim]Watching:[/dim] {path}")
+    console.print(
+        "[dim]Recommendations are local-only heuristics over this session's own Turn/Unit/Chapter "
+        "data - no corpus, no extra API call beyond chaptering itself.[/dim]\n"
+    )
+
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+    result = get_chapters(tailer, path)
+    if result.fallback_reason:
+        console.print(f"[yellow]Note: {result.fallback_reason}[/yellow]")
+    if result.pass_cost_usd:
+        console.print(f"[dim]This chaptering pass cost ${result.pass_cost_usd:.4f}[/dim]")
+
+    recs = generate_recommendations(result.chapters, tailer)
+
+    if as_json:
+        import json
+
+        data = [
+            {"rule_id": r.rule_id, "title": r.title, "detail": r.detail, "cost_usd": r.cost_usd}
+            for r in recs
+        ]
+        console.print_json(json.dumps(data))
+        return
+
+    console.print()
+    if not recs:
+        console.print("[green]No recommendations - nothing matched the current heuristics.[/green]")
+        return
+
+    table = Table(title=f"work-ledger recommend — {path.name}", expand=True)
+    table.add_column("At stake", justify="right", width=12)
+    table.add_column("Recommendation", ratio=3, overflow="fold")
+
+    for r in recs:
+        detail_text = Text()
+        detail_text.append(r.title, style="bold")
+        detail_text.append(f"\n{r.detail}", style="dim")
+        table.add_row(f"${r.cost_usd:.4f}", detail_text)
+
+    console.print(table)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Watch Claude Code session cost/token usage in near-real-time."
@@ -659,6 +747,47 @@ def main():
         help="Machine-readable output instead of a terminal table",
     )
 
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Write an anonymized, manual usage export (aggregates + chapter-category rollups "
+        "only) to a local JSON file - never sent anywhere automatically",
+    )
+    export_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/after this date (YYYY-MM-DD)",
+    )
+    export_parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/before this date (YYYY-MM-DD)",
+    )
+    export_parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output file path (default: work-ledger-export-<date>.json)",
+    )
+
+    recommend_parser = subparsers.add_parser(
+        "recommend",
+        help="Local-only, rule-based recommendations over one session's Turn/Unit/Chapter data "
+        "(no corpus, no extra API call beyond chaptering itself)",
+    )
+    recommend_parser.add_argument(
+        "--transcript",
+        type=str,
+        default=None,
+        help="Path to a specific transcript .jsonl file (default: most recently modified session)",
+    )
+    recommend_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable output instead of a terminal table",
+    )
+
     args = parser.parse_args()
 
     if args.command == "limits":
@@ -668,6 +797,17 @@ def main():
             set_threshold=args.set_threshold,
             as_json=args.json,
         )
+        return
+
+    if args.command == "export":
+        since = _parse_date_arg(args.since, "--since") if args.since else None
+        until = _parse_date_arg(args.until, "--until") if args.until else None
+        run_export(since=since, until=until, out=args.out)
+        return
+
+    if args.command == "recommend":
+        transcript_path = Path(args.transcript) if args.transcript else None
+        run_recommend(transcript_path=transcript_path, as_json=args.json)
         return
 
     if args.command == "chapters":
