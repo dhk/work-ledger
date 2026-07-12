@@ -173,16 +173,19 @@ minimal counter-increment endpoint, not a large service to operate.
 
 ## Open questions
 
-1. **Popularity scoring formula.** Raw `used_count`, a ratio
-   (`used_count / recommended_count` as a "confirmed-useful rate"), or a
-   weighted combination that favors confirmed use over just being shown
-   often? Not decided - a ratio needs a minimum-sample floor or a
-   brand-new entry with 1 use out of 1 recommendation looks artificially
-   perfect.
-2. **What counts as "used," beyond v1's explicit confirmation** - is
-   heuristic detection (option 2) worth building before option 3, or
-   should the gap between "confirmed" and "live-correlated" just stay a
-   gap for now?
+1. **Decided: popularity scoring - raw counts, no derived formula.**
+   Display "recommended N times, used M times" as-is; no single score is
+   computed at all. Chosen specifically to avoid inventing a weighting
+   scheme that would need defending ("why is used_count worth 5x?") and
+   to stay consistent with this project's existing stance against a
+   single opaque efficiency number. Cost accepted: nothing to sort a list
+   of entries by except one of the two raw counts directly.
+2. **Decided: "used" means explicit confirmation only, for v1.**
+   `work-ledger recommend --mark-used <id>` - the user says it helped,
+   after the fact. No heuristic detection (pattern stops recurring) and
+   no live MCP-session correlation for v1; both remain possible future
+   work if explicit confirmation turns out to undercount too heavily in
+   practice, but neither is needed to ship the core mechanism.
 3. **Content quality / abuse - lower-priority than it first sounds, and
    worth saying why.** Popularity points create an incentive to game them
    (fake "used" reports for a bad entry), but every entry is already
@@ -193,28 +196,27 @@ minimal counter-increment endpoint, not a large service to operate.
    smaller problem than an open content-moderation hole, which is why a
    manual PR-review gate is treated as sufficient for v1 without further
    abuse-specific tooling. `report_used` calls still need enough
-   rate-limiting/dedup (see question 5) that one install can't trivially
+   rate-limiting/dedup (see decision 4) that one install can't trivially
    inflate a single entry's count, but this is deliberately deferred as
    lower-stakes, not an oversight.
-4. **Offline behavior is a hard requirement, not a real open question:**
+4. **Decided: per-install random UUID for the two report calls.**
+   Generated once on opt-in, stored locally, sent with every
+   `report_recommended`/`report_used` call. No PII, never tied to a
+   person - exists purely so the backend can dedup repeated reports from
+   the same install and apply basic rate-limiting, which full anonymity
+   would rule out entirely.
+5. **Offline behavior is a hard requirement, not a real open question:**
    if the mother-ship endpoint is unreachable, `recommend` must fall back
    to its local-only rules silently, exactly like `chapters` already
    falls back to "Unsorted" on any chaptering failure. Stated explicitly
    here so it doesn't get accidentally violated during implementation.
-5. **Identity/auth for the two report calls.** Fully anonymous means no
-   way to prevent double-counting or trivial abuse; a lightweight
-   per-install random UUID (still no PII, never tied to a person) would
-   let the backend dedup repeated reports from the same install without
-   requiring any real identity system. Leaning toward the UUID approach,
-   not decided.
-6. **`id` stability.** An entry's `id` is what `--mark-used <id>` and the
-   mother-ship counters key off of (see `CONTRIBUTING-patterns.md`). If a
-   merged entry's `id` were ever edited later (e.g. during a content
-   cleanup), its counters effectively orphan or reset, and any
-   already-issued `--mark-used <id>` calls silently stop matching.
-   Proposed resolution: treat `id` as immutable once merged - a rename
-   requires retiring the old entry and adding a fresh one with a new id,
-   never editing `id` in place. Same class of problem as question 5
-   (both are about what the counters key off of and how that can be
-   abused or broken), called out separately since it's a content-review
+6. **Decided: `id` is immutable once merged.** An entry's `id` is what
+   `--mark-used <id>` and the mother-ship counters key off of (see
+   `CONTRIBUTING-patterns.md`). Editing it in place after merge would
+   orphan its counters and silently break any outstanding `--mark-used`
+   calls, so a rename instead requires retiring the old entry (kept for
+   history) and adding a fresh one with a new id - never an in-place edit
+   of `id`. `title` stays freely editable; only `id` is frozen. Same
+   class of concern as decision 4 (both protect what the counters key
+   off of), called out separately since this one is a content-review
    discipline rather than a backend design choice.
