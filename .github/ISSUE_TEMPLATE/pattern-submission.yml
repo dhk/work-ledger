@@ -60,9 +60,15 @@ body:
     id: category
     attributes:
       label: Category
-      description: Which of recommend's existing categories does this map to?
+      description: >-
+        Which of recommend's existing categories does this map to? `cost`
+        covers outlier chapter cost, subagent-heavy chapters, and repeated
+        skill invocation - see docs/recommend-workflow-efficiency-design.md
+        for what each category means. Use the bare value shown here as-is
+        in patterns/<slug>.md's `category` frontmatter field if this gets
+        turned into a PR.
       options:
-        - cost (outlier chapter cost / subagent-heavy / repeated skill invocation)
+        - cost
         - user-actions
         - configuration
         - new-skill

@@ -183,12 +183,19 @@ minimal counter-increment endpoint, not a large service to operate.
    heuristic detection (option 2) worth building before option 3, or
    should the gap between "confirmed" and "live-correlated" just stay a
    gap for now?
-3. **Content quality / abuse.** Popularity points create an incentive to
-   game them (fake "used" reports for a bad entry). At solo-maintainer
-   scale, a manual PR-review gate on the content repo is probably
-   sufficient for v1 - but `report_used` calls themselves need at least
-   enough rate-limiting/dedup (see question 5) that one install can't
-   trivially inflate a single entry's count.
+3. **Content quality / abuse - lower-priority than it first sounds, and
+   worth saying why.** Popularity points create an incentive to game them
+   (fake "used" reports for a bad entry), but every entry is already
+   manually PR-reviewed before it ever goes live (see
+   `CONTRIBUTING-patterns.md`) - the only thing an abuser can inflate is
+   the *counter* on an already-accepted, already-vetted entry, never get
+   bad content published in the first place. That's a meaningfully
+   smaller problem than an open content-moderation hole, which is why a
+   manual PR-review gate is treated as sufficient for v1 without further
+   abuse-specific tooling. `report_used` calls still need enough
+   rate-limiting/dedup (see question 5) that one install can't trivially
+   inflate a single entry's count, but this is deliberately deferred as
+   lower-stakes, not an oversight.
 4. **Offline behavior is a hard requirement, not a real open question:**
    if the mother-ship endpoint is unreachable, `recommend` must fall back
    to its local-only rules silently, exactly like `chapters` already
@@ -200,3 +207,14 @@ minimal counter-increment endpoint, not a large service to operate.
    let the backend dedup repeated reports from the same install without
    requiring any real identity system. Leaning toward the UUID approach,
    not decided.
+6. **`id` stability.** An entry's `id` is what `--mark-used <id>` and the
+   mother-ship counters key off of (see `CONTRIBUTING-patterns.md`). If a
+   merged entry's `id` were ever edited later (e.g. during a content
+   cleanup), its counters effectively orphan or reset, and any
+   already-issued `--mark-used <id>` calls silently stop matching.
+   Proposed resolution: treat `id` as immutable once merged - a rename
+   requires retiring the old entry and adding a fresh one with a new id,
+   never editing `id` in place. Same class of problem as question 5
+   (both are about what the counters key off of and how that can be
+   abused or broken), called out separately since it's a content-review
+   discipline rather than a backend design choice.

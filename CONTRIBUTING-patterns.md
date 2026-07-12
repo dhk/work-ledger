@@ -25,6 +25,12 @@ and fill in every field - that file shows the exact shape required.
 
 Required, all mandatory:
 
+- **`id`** (frontmatter) - kebab-case, unique, and **must match `<slug>`
+  in the filename exactly** (e.g. `patterns/repeated-pr-shipping-sequence.md`
+  has `id: repeated-pr-shipping-sequence`). This is the identifier
+  `--mark-used <id>` and the mother-ship counters key off of - see
+  `docs/pattern-library-design.md`'s open questions for why this is
+  treated as immutable once merged.
 - **`title`** (frontmatter) - short, concrete name.
 - **`category`** (frontmatter) - one of `cost`, `user-actions`,
   `configuration`, `new-skill`, `new-tool` - matches `recommend`'s
