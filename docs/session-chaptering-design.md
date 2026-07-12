@@ -1,6 +1,8 @@
 # Design: Session Chaptering (semantic task attribution)
 
-Status: draft, not yet built
+Status: implemented (`work_ledger/chapters.py`, `chapters` subcommand) - see
+`docs/example-session.md` for real output. Bulk/retroactive (`--all`) and
+the visual report (`--report`) shipped as follow-on PRs on top of this.
 Author: written by Claude, from a design conversation with the repo owner
 Related: `README.md` (v1 telemetry layer, already built), `adventures-in-ai#34`
 (original scoping ticket)
@@ -72,7 +74,10 @@ to act on ("cut initiative X").
 ## Architecture
 
 ```
-transcript.py (existing, untouched)
+transcript.py (the deterministic telemetry layer chaptering builds on -
+               not part of this design; it happened to also gain a
+               separate double-counting fix and Unit refactor in the same
+               PR that shipped chaptering, see PR #1)
   → Turn (per prompt), Unit (per LLM call), each with own cost/tokens
         │
         ▼

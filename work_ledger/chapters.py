@@ -121,6 +121,10 @@ def _load_cache(transcript_path: Path) -> tuple[list[str], list[Chapter]]:
 
 
 def _save_cache(transcript_path: Path, chaptered_ids: list[str], chapters: list[Chapter]) -> None:
+    """Best-effort - a write failure (read-only dir, permissions, full disk)
+    just means the next run re-chapters these turns instead of using the
+    cache. It must not crash `chapters`, which already has its in-memory
+    result to return regardless of whether it gets persisted."""
     data = {
         "chaptered_prompt_ids": chaptered_ids,
         "chapters": [
@@ -131,7 +135,10 @@ def _save_cache(transcript_path: Path, chaptered_ids: list[str], chapters: list[
             for c in chapters
         ],
     }
-    _cache_path(transcript_path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+    try:
+        _cache_path(transcript_path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _build_outline(turns: list[Turn]) -> str:

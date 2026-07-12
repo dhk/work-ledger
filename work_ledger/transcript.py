@@ -82,7 +82,10 @@ def _aggregate_subagent_usage(jsonl_path: Path) -> tuple[int, int, float, bool]:
     try:
         lines = jsonl_path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return 0, 0, 0.0, False
+        # Can't read the subagent transcript - its cost is unknown, not $0.
+        # Flagging unknown=True surfaces "?" in the UI instead of silently
+        # under-reporting (same philosophy as pricing.py's unpriced-model case).
+        return 0, 0, 0.0, True
     for line in lines:
         line = line.strip()
         if not line:
