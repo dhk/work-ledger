@@ -50,6 +50,12 @@ work-ledger chapters --all --json       # machine-readable, one row per session
 
 work-ledger chapters --report                          # write a visual HTML report to a file
 work-ledger chapters --report --format png --out x.png  # same, as a PNG image
+
+work-ledger export                                # write an anonymized usage export to a local file
+work-ledger export --since 2026-07-01 --out x.json     # same, filtered to a date range
+
+work-ledger recommend                             # local-only, rule-based recommendations for one session
+work-ledger recommend --json                           # machine-readable output
 ```
 
 By default, cost/tokens are shown per prompt turn (one row per message you
@@ -138,6 +144,67 @@ this tool uses — no new cost math, just a grouping label on top.
   fails with a clear message rather than crashing — it never silently
   falls back to HTML. Not yet supported together with `--all` (that's a
   different chart shape — see issue #4/#7).
+- **Each chapter also gets a `category`**, chosen by the same Haiku pass
+  from a small fixed list (`feature-build`, `bug-fix`, `refactor`,
+  `design-planning`, `debugging`, `docs`, `review-feedback`,
+  `tooling-infra`, `other`) — not free text. This exists specifically so
+  `export` (below) can report cost rollups without ever transmitting a
+  chapter's actual title.
+
+## Export (anonymized, manual)
+
+```
+work-ledger export                                         # write an export to work-ledger-export-<date>.json
+work-ledger export --since 2026-07-01 --until 2026-07-11   # limit to a date range
+work-ledger export --out my-export.json                    # choose the output path
+```
+
+**work-ledger never sends anything anywhere on its own.** `export` writes
+a local JSON file — session/chapter counts, token/cost totals, and a
+rollup by the fixed `category` taxonomy above — that you can inspect and,
+if you choose, send somewhere yourself (a support request, a shared corpus
+someone's collecting, whatever). There is no submit/upload flag; this is
+the entire mechanism, deliberately.
+
+What's in the file: aggregate totals only, plus one bucket per category
+with its own totals. What's **not** in the file, ever: chapter titles,
+prompt or tool content, transcript paths, session identifiers — anything
+that could identify the work itself rather than just its shape. Getting a
+category for each chapter still needs chaptering to have run (the same
+Haiku pass `chapters --all` already makes), so exporting sessions that
+haven't been chaptered yet incurs that same small, disclosed cost.
+
+The point of collecting this at all: `recommend` (below) currently only
+reasons about a single session's own data. A large enough anonymized
+corpus is what would let it also say "your bug-fix chapters cost more
+than typical" instead of just "this chapter looks expensive relative to
+your other chapters this session" — that corpus-relative layer doesn't
+exist yet; `export` is the first step toward having the data for it.
+
+## Recommendations (local-only, experimental)
+
+```
+work-ledger recommend             # rule-based recommendations for the active session
+work-ledger recommend --json      # machine-readable output
+```
+
+A first cut at turning "here's what this cost" into "here's what to do
+about it." `recommend` runs a small set of concrete, local-only heuristics
+over one session's own `Turn`/`Unit`/`Chapter` data — no corpus, no extra
+LLM call beyond chaptering itself:
+
+- **Outlier chapter cost** — a chapter costing well above this session's
+  own median chapter cost.
+- **Subagent-heavy chapter** — a chapter where dispatching subagents ate
+  most of its cost, worth checking against doing the same work inline.
+- **Repeated skill invocation** — the same skill run several times within
+  one chapter, a candidate for replacing with a plain deterministic script
+  (see [issue #6](https://github.com/dhk/work-ledger/issues/6)).
+
+This is intentionally a short list of defensible rules, not a big
+speculative rule engine — and it's entirely local. A corpus-relative
+dimension ("compared to other users' bug-fix chapters") is future work
+that depends on `export` above actually accumulating a corpus first.
 
 ## Session limits (Claude Pro/Max)
 
@@ -177,13 +244,18 @@ now also be applied retroactively across every past session at once
 (`chapters --all`, with `--since`/`--until` date filtering). A visual
 HTML/PNG report (`chapters --report`) covers the "show me" case, and
 `limits` gives a self-calibrated read on the separate Claude Pro/Max
-session-limit question.
+session-limit question. Chapters now also carry a fixed `category`
+alongside their free-text title, feeding two new, early pieces:
+`export` (an anonymized, manual, opt-in usage export — no automatic
+network call, ever) and `recommend` (a first cut at local-only, rule-based
+recommendations for a single session).
 
 Not yet done: cross-session/historical rollup (only watches one transcript
 at a time); Sonnet 5 introductory pricing isn't modeled (runs a little high
 until 2026-08-31); no automated tests yet; chapter granularity for very
 short sessions is left entirely to the model's judgment (see open question
-in the design doc).
+in the design doc); `recommend`'s corpus-relative dimension depends on
+`export` actually accumulating a corpus, which doesn't exist yet.
 
 ## License
 

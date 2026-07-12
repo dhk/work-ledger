@@ -118,11 +118,19 @@ class Section:
 class Chapter:
     title: str
     sections: list[Section]
+    category: str   # one of a fixed, closed taxonomy - see CATEGORIES in chapters.py
 
     @property
     def prompt_ids(self) -> list[str]:
         return [pid for s in self.sections for pid in s.prompt_ids]
 ```
+
+`category` (added alongside the free-text `title`) is a fixed enum, not
+free text — it exists specifically so `work-ledger export` can report
+category rollups without ever transmitting a chapter's actual title, which
+can describe real project/business specifics. Older cached chapter files
+predate this field and default to `"other"`, same as any other
+frozen-prefix cache migration in this module.
 
 Turns are referenced by `Turn.prompt_id` (already the dict key in
 `TranscriptTailer.turns`), not by position in the ordered turn list.
