@@ -289,6 +289,10 @@ shown earlier in this doc) — cheap to read, no drill-down noise.
   specific pattern — not a generic framework. This is expected to be
   fix-one-at-a-time work driven by what chaptering/mining actually surfaces,
   not something to build ahead of the data.
+- **Local-model backend**: see `docs/local-model-chaptering-design.md` —
+  a pluggable backend (e.g. Ollama) would keep session content off the
+  network entirely, and removes the cost constraint that motivated the
+  frozen-prefix caching decision below, opening up revisiting it.
 
 ## Open questions
 
