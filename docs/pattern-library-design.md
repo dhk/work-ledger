@@ -188,7 +188,12 @@ minimal counter-increment endpoint, not a large service to operate.
    scale, a manual PR-review gate on the content repo is probably
    sufficient for v1 - but `report_used` calls themselves need at least
    enough rate-limiting/dedup (see question 5) that one install can't
-   trivially inflate a single entry's count.
+   trivially inflate a single entry's count. Low-priority for v1
+   specifically: since every entry is already manually PR-reviewed before
+   it's live, the only thing an abuser can inflate is the counter on an
+   already-accepted entry, not get bad content published - worth noting
+   explicitly so this isn't mistaken for an unaddressed hole rather than
+   a deliberately deferred, lower-stakes one.
 4. **Offline behavior is a hard requirement, not a real open question:**
    if the mother-ship endpoint is unreachable, `recommend` must fall back
    to its local-only rules silently, exactly like `chapters` already
@@ -200,3 +205,11 @@ minimal counter-increment endpoint, not a large service to operate.
    let the backend dedup repeated reports from the same install without
    requiring any real identity system. Leaning toward the UUID approach,
    not decided.
+6. **`id` stability.** An entry's `id` (see `CONTRIBUTING-patterns.md`,
+   must match its filename slug) is what `--mark-used <id>` and the
+   mother-ship counters key off of. If a merged entry's `id` is ever
+   edited later, its counters effectively orphan/reset and any
+   already-issued `--mark-used <id>` calls silently stop matching. Not
+   decided whether this needs enforcement (e.g. treat `id` as immutable
+   once merged, require a fresh entry instead of renaming) or is rare
+   enough to just document as a reviewer caution.

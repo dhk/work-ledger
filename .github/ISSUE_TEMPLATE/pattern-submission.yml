@@ -60,9 +60,12 @@ body:
     id: category
     attributes:
       label: Category
-      description: Which of recommend's existing categories does this map to?
+      description: >-
+        Which of recommend's existing categories does this map to? `cost`
+        covers outlier chapter cost, subagent-heavy chapters, and repeated
+        skill invocation.
       options:
-        - cost (outlier chapter cost / subagent-heavy / repeated skill invocation)
+        - cost
         - user-actions
         - configuration
         - new-skill
