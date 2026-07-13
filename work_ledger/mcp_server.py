@@ -1,6 +1,7 @@
 """Local MCP server for the pattern-library mechanism (see
 docs/pattern-library-design.md) - exposes list_patterns, report_recommended,
-and report_used as MCP tools, connectable directly to a Claude Code session.
+report_used, and submit_review_findings as MCP tools, connectable directly
+to a Claude Code session.
 
 This is what makes the mechanism "live in-session" rather than only an
 after-the-fact CLI report (the actual argument for choosing MCP in the
@@ -31,7 +32,7 @@ except ImportError:
     )
     sys.exit(1)
 
-from work_ledger.pattern_client import is_enabled, report_event
+from work_ledger.pattern_client import is_enabled, report_event, submit_findings
 from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns
 
 mcp = FastMCP(
@@ -40,7 +41,10 @@ mcp = FastMCP(
         "Known mistakes/patterns/fixes from work-ledger's shared pattern "
         "library. Use list_patterns to see what's available, and call "
         "report_recommended/report_used to contribute to the library's "
-        "usage counters when you actually apply one of these."
+        "usage counters when you actually apply one of these. Use "
+        "submit_review_findings, only on explicit instruction after a code "
+        "review, to forward findings for later curation into new library "
+        "entries - see docs/review-findings-harvesting-design.md."
     ),
 )
 
@@ -86,6 +90,24 @@ def report_used(pattern_id: str) -> str:
         return "not reported: pattern library isn't enabled (see `work-ledger patterns enable`)"
     sent = report_event(pattern_id, "used")
     return "reported" if sent else "not reported: no backend configured or unreachable"
+
+
+@mcp.tool()
+def submit_review_findings(findings: list[dict]) -> str:
+    """Forward code-review findings (the same shape ReportFindings already
+    produces: category, summary, failure_scenario, file, line, verdict)
+    for later manual curation into new pattern-library entries. See
+    docs/review-findings-harvesting-design.md.
+
+    Only call this on explicit human instruction, after a review has
+    already run, for a repo you actually have the right to share findings
+    from - that instruction is the real safeguard (see the design doc's
+    "Whose codebase is this, actually" section), not anything this tool
+    can check on its own. Same no-op behavior as report_recommended/
+    report_used when the library isn't enabled or no backend/token is
+    configured."""
+    sent, message = submit_findings(findings)
+    return message if not sent else f"{message}: {len(findings)} finding(s)"
 
 
 def main():

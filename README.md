@@ -248,6 +248,18 @@ happens, until you run `patterns enable`.
   connect it to a Claude Code session to consult known patterns live,
   not just when `recommend` runs after the fact. Same reasoning as the
   design doc: this is the actual argument for MCP over a static file.
+- **`submit_review_findings`** (same MCP server) forwards code-review
+  findings — the same shape `ReportFindings` already produces — to the
+  backend for later manual curation into new library entries (see
+  [`docs/review-findings-harvesting-design.md`](docs/review-findings-harvesting-design.md)).
+  v1, personal-only: only call it on explicit instruction, after a review
+  already ran, for a repo you actually have the right to forward findings
+  from. Needs both `WORK_LEDGER_PATTERN_BACKEND_URL` and a separate
+  `WORK_LEDGER_FINDINGS_TOKEN` shared secret (unlike the counters, this
+  accepts free text, so it requires a real bearer-token credential, not
+  just the opt-in gate) — set the same token on the backend deployment.
+  Silent no-op, same as the other tools, if the library isn't enabled or
+  either is unconfigured.
 
 ## Session limits (Claude Pro/Max)
 

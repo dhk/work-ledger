@@ -1,6 +1,9 @@
 # Design: Harvesting Code-Review Findings into the Pattern Library
 
-Status: proposed, not yet built.
+Status: implemented (`backend/api/findings.js`, `pattern_client.py`'s
+`submit_findings`, `mcp_server.py`'s `submit_review_findings` tool) -
+requires `WORK_LEDGER_FINDINGS_TOKEN` set on both sides (see
+`backend/README.md`'s "Findings harvesting setup").
 Author: written by Claude, from a design conversation with the repo owner.
 Related: `docs/pattern-library-design.md` (the mechanism and deployed
 backend this extends), `docs/recommend-workflow-efficiency-design.md`

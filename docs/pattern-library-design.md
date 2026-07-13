@@ -9,7 +9,7 @@ rule categories this would supplement), `work_ledger/export.py` (a
 different, already-shipped mechanism this is NOT a replacement for - see
 "How this differs from `export`" below), `docs/review-findings-
 harvesting-design.md` (a follow-on mechanism for growing the corpus of
-candidate entries, not yet built).
+candidate entries, implemented).
 
 ## Problem
 

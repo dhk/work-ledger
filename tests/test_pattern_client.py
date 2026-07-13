@@ -6,6 +6,17 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(pc, "INSTALL_ID_PATH", tmp_path / "install_id")
     monkeypatch.setattr(pc, "ENABLED_FLAG_PATH", tmp_path / "pattern_library_enabled")
     monkeypatch.delenv(pc.BACKEND_URL_ENV, raising=False)
+    monkeypatch.delenv(pc.FINDINGS_TOKEN_ENV, raising=False)
+
+
+_VALID_FINDING = {
+    "category": "correctness",
+    "summary": "off-by-one in the loop bound",
+    "failure_scenario": "an empty list crashes with IndexError",
+    "file": "work_ledger/foo.py",
+    "line": 42,
+    "verdict": "CONFIRMED",
+}
 
 
 def test_disabled_by_default(tmp_path, monkeypatch):
@@ -124,3 +135,152 @@ def test_report_event_swallows_network_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(pc.urllib.request, "urlopen", fake_urlopen)
 
     assert pc.report_event("some-pattern", "recommended") is False
+
+
+def test_findings_token_reads_env(monkeypatch):
+    monkeypatch.delenv(pc.FINDINGS_TOKEN_ENV, raising=False)
+    assert pc.findings_token() is None
+    monkeypatch.setenv(pc.FINDINGS_TOKEN_ENV, "secret-token")
+    assert pc.findings_token() == "secret-token"
+
+
+def test_submit_findings_rejects_empty_list(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    sent, message = pc.submit_findings([])
+    assert sent is False
+    assert "no findings" in message
+
+
+def test_submit_findings_rejects_non_list_input(tmp_path, monkeypatch):
+    """Regression test: submit_findings must never raise, even for a
+    caller-supplied non-list (e.g. from untrusted MCP tool-call input)."""
+    _isolate(monkeypatch, tmp_path)
+    sent, message = pc.submit_findings(42)
+    assert sent is False
+    assert "no findings" in message
+
+
+def test_submit_findings_rejects_non_dict_finding(tmp_path, monkeypatch):
+    """Regression test: a non-dict element must not crash with
+    AttributeError from .get() - it should fail validation cleanly."""
+    _isolate(monkeypatch, tmp_path)
+    sent, message = pc.submit_findings(["not a dict"])
+    assert sent is False
+    assert "object" in message
+
+
+def test_submit_findings_rejects_bool_line(tmp_path, monkeypatch):
+    """Regression test: bool is a subclass of int in Python, so a bare
+    isinstance(line, int) check would wrongly accept True/False, which
+    the JS backend's Number.isInteger would then reject."""
+    _isolate(monkeypatch, tmp_path)
+    bad = {**_VALID_FINDING, "line": True}
+    sent, message = pc.submit_findings([bad])
+    assert sent is False
+    assert "line" in message
+
+
+def test_submit_findings_rejects_too_many(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    sent, message = pc.submit_findings([_VALID_FINDING] * (pc.MAX_FINDINGS_PER_SUBMISSION + 1))
+    assert sent is False
+    assert "too many findings" in message
+
+
+def test_submit_findings_rejects_missing_required_field(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    bad = {k: v for k, v in _VALID_FINDING.items() if k != "summary"}
+    sent, message = pc.submit_findings([bad])
+    assert sent is False
+    assert "summary" in message
+
+
+def test_submit_findings_rejects_invalid_verdict(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    bad = {**_VALID_FINDING, "verdict": "MAYBE"}
+    sent, message = pc.submit_findings([bad])
+    assert sent is False
+    assert "verdict" in message
+
+
+def test_submit_findings_rejects_non_integer_line(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    bad = {**_VALID_FINDING, "line": "42"}
+    sent, message = pc.submit_findings([bad])
+    assert sent is False
+    assert "line" in message
+
+
+def test_submit_findings_noop_when_disabled(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv(pc.BACKEND_URL_ENV, "https://example.invalid")
+    monkeypatch.setenv(pc.FINDINGS_TOKEN_ENV, "secret-token")
+    sent, message = pc.submit_findings([_VALID_FINDING])
+    assert sent is False
+    assert "isn't enabled" in message
+
+
+def test_submit_findings_noop_when_no_backend_configured(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    pc.enable()
+    monkeypatch.setenv(pc.FINDINGS_TOKEN_ENV, "secret-token")
+    sent, message = pc.submit_findings([_VALID_FINDING])
+    assert sent is False
+    assert "no backend configured" in message
+
+
+def test_submit_findings_noop_when_no_token_configured(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    pc.enable()
+    monkeypatch.setenv(pc.BACKEND_URL_ENV, "https://example.invalid")
+    sent, message = pc.submit_findings([_VALID_FINDING])
+    assert sent is False
+    assert "no findings token configured" in message
+
+
+def test_submit_findings_success_when_backend_reachable(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    pc.enable()
+    monkeypatch.setenv(pc.BACKEND_URL_ENV, "https://example.invalid")
+    monkeypatch.setenv(pc.FINDINGS_TOKEN_ENV, "secret-token")
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["headers"] = request.headers
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(pc.urllib.request, "urlopen", fake_urlopen)
+
+    sent, message = pc.submit_findings([_VALID_FINDING])
+    assert sent is True
+    assert captured["url"] == "https://example.invalid/findings"
+    assert captured["headers"]["Authorization"] == "Bearer secret-token"
+    assert captured["timeout"] == pc.REQUEST_TIMEOUT_S
+
+
+def test_submit_findings_swallows_network_failure(tmp_path, monkeypatch):
+    _isolate(monkeypatch, tmp_path)
+    pc.enable()
+    monkeypatch.setenv(pc.BACKEND_URL_ENV, "https://example.invalid")
+    monkeypatch.setenv(pc.FINDINGS_TOKEN_ENV, "secret-token")
+
+    def fake_urlopen(request, timeout):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(pc.urllib.request, "urlopen", fake_urlopen)
+
+    sent, message = pc.submit_findings([_VALID_FINDING])
+    assert sent is False
+    assert "request failed" in message

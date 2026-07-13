@@ -13,4 +13,9 @@ def test_server_registers_expected_tools():
 
     tools = asyncio.run(_list())
     names = {t.name for t in tools}
-    assert names == {"list_patterns", "report_recommended", "report_used"}
+    assert names == {
+        "list_patterns",
+        "report_recommended",
+        "report_used",
+        "submit_review_findings",
+    }

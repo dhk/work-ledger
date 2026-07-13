@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/patterns/counts", "destination": "/api/patterns/counts" },
-    { "source": "/patterns/:id/:event", "destination": "/api/patterns/:id/:event" }
+    { "source": "/patterns/:id/:event", "destination": "/api/patterns/:id/:event" },
+    { "source": "/findings", "destination": "/api/findings" }
   ]
 }
