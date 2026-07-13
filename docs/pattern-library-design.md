@@ -236,22 +236,26 @@ minimal counter-increment endpoint, not a large service to operate.
   mechanisms with different parameters" language from the Content model
   section above with an actual field, since the doc had deliberately left
   the exact mechanism unspecified.
-- **Packaging gap, disclosed rather than solved**: `patterns/*.md`
-  content lives at the repo root, a sibling of the `work_ledger/` package
-  - this works today for anyone running from a checkout (how this
-  project develops and tests everything), but a real `pip install
-  work-ledger` from PyPI only installs the `work_ledger/` package, not
-  the repo root's `patterns/` directory. Shipping the bundled content as
-  proper package data (or fetching it from a published URL at runtime)
-  is real follow-up work, not solved in this pass - see `work_ledger/
-  patterns.py`'s `DEFAULT_PATTERNS_DIR` comment.
-- **No backend was deployed.** `work_ledger/pattern_client.py` implements
-  the client side (install id, opt-in flag, best-effort
-  `report_recommended`/`report_used` calls to a configurable
-  `WORK_LEDGER_PATTERN_BACKEND_URL`) and `work_ledger/mcp_server.py`
-  implements a local, runnable MCP server exposing `list_patterns`/
-  `report_recommended`/`report_used` as tools - but there is still no
-  publicly hosted counter service. Anyone using this today needs to point
-  `WORK_LEDGER_PATTERN_BACKEND_URL` at their own deployed instance;
-  without one, matching and display still work locally, reporting is
-  just a documented no-op.
+- **Packaging gap, resolved.** `patterns/*.md` content still lives at the
+  repo root (contributors still edit it there - see
+  `CONTRIBUTING-patterns.md`, unchanged), but `pyproject.toml` now remaps
+  it into the built wheel/sdist as `work_ledger.patterns_data` via a
+  `package-dir` alias, so a real `pip install work-ledger` from PyPI
+  bundles it correctly. `DEFAULT_PATTERNS_DIR` (`work_ledger/patterns.py`)
+  prefers that bundled copy at runtime and falls back to the repo-root
+  directory for an editable/dev checkout, where nothing gets physically
+  copied. Verified by building a real wheel and installing it into a
+  clean venv.
+- **A personal backend is deployed, not a publicly shared one.**
+  `work_ledger/pattern_client.py` implements the client side (install id,
+  opt-in flag, best-effort `report_recommended`/`report_used`/
+  `submit_findings` calls to a configurable `WORK_LEDGER_PATTERN_BACKEND_URL`)
+  and `work_ledger/mcp_server.py` implements a local, runnable MCP server
+  exposing those as tools. `backend/` (Vercel + Upstash Redis) is built
+  and deployed for the maintainer's own use, matching v1's explicit
+  single-person scope - but that instance isn't exposed for other
+  installs to report to. Anyone else using this needs to deploy `backend/`
+  themselves (see `backend/README.md`) and point
+  `WORK_LEDGER_PATTERN_BACKEND_URL` at their own instance; without one,
+  matching and display still work locally, reporting is just a documented
+  no-op.
