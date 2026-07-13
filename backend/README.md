@@ -9,6 +9,13 @@ The counter backend for the shared pattern library (see
 - `GET /patterns/counts` - reads back every known pattern id's current
   counts, for verifying this works and as a source a future CLI
   enhancement could fetch live counts from.
+- `POST /findings` - appends a code-review findings submission to a
+  Redis Stream, for later manual curation into new pattern-library
+  entries (see [`../docs/review-findings-harvesting-design.md`](../docs/review-findings-harvesting-design.md)).
+  Unlike the two routes above, this one requires a bearer token (see
+  "Findings harvesting setup" below) - it accepts free text, not just an
+  integer increment, so `install_id`'s self-reported dedup isn't enough
+  on its own.
 
 This is a plain Vercel Serverless Functions project (no framework, no
 frontend) backed by Upstash Redis, deployed as a **subdirectory of the
@@ -56,6 +63,27 @@ work-ledger patterns enable
 work-ledger recommend   # matching library entries now report real counts
 ```
 
+## Findings harvesting setup (optional)
+
+`POST /findings` is only reachable with a shared-secret bearer token -
+set it once you're actually ready to use `submit_review_findings`:
+
+1. **Set `WORK_LEDGER_FINDINGS_TOKEN`** in the Vercel project's
+   Environment Variables to any long random value (e.g.
+   `openssl rand -hex 32`), then redeploy.
+2. **Set the same value** in the environment wherever `work-ledger-mcp`
+   runs (alongside `WORK_LEDGER_PATTERN_BACKEND_URL`).
+3. Requests without a matching `Authorization: Bearer <token>` header get
+   a `401`, before anything touches Redis.
+
+```sh
+curl -X POST https://<your-deployment>.vercel.app/findings \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $WORK_LEDGER_FINDINGS_TOKEN" \
+  -d '{"install_id": "manual-test", "findings": [{"category": "correctness", "summary": "...", "failure_scenario": "..."}]}'
+# {"ok":true,"id":"<stream-entry-id>","count":1}
+```
+
 ## What this deliberately doesn't do
 
 - **No content here.** Pattern content (`patterns/*.md`) stays in the
@@ -66,6 +94,7 @@ work-ledger recommend   # matching library entries now report real counts
   open question on why this is treated as lower-priority for v1 (every
   pattern is already manually reviewed before it's live; the only thing
   to abuse here is a counter on already-vetted content).
-- **No auth on the increment routes** beyond the install-id dedup - the
+- **No auth on the two counter routes** beyond the install-id dedup - the
   design doc's identity/auth decision was a per-install UUID for
-  dedup/rate-limiting, not a real authentication system.
+  dedup/rate-limiting, not a real authentication system. (`/findings` is
+  the exception - see above.)
