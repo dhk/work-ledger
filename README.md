@@ -22,7 +22,11 @@ a local OTEL sink) and real-time mechanism.
 
 ## Install
 
-If you trust me, this is the fast path:
+```sh
+pip install work-ledger
+```
+
+Or, if you trust me, the same fast path as a one-liner:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dhk/work-ledger/main/scripts/install.sh | bash
@@ -30,8 +34,8 @@ curl -fsSL https://raw.githubusercontent.com/dhk/work-ledger/main/scripts/instal
 
 Reviewing a script before piping it into your shell is a reasonable
 instinct — it's right here: [`scripts/install.sh`](scripts/install.sh).
-For a slower, more explicit path (manual pip install, an editable clone,
-troubleshooting), see [INSTALL.md](INSTALL.md).
+For a slower, more explicit path (an editable clone, troubleshooting), see
+[INSTALL.md](INSTALL.md).
 
 ## Usage
 

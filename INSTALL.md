@@ -27,7 +27,7 @@ default dashboard) need neither — they only read local transcripts.
 curl -fsSL https://raw.githubusercontent.com/dhk/work-ledger/main/scripts/install.sh | bash
 ```
 
-This is a `pip install` from this repo plus some printed next-steps — read
+This is a `pip install` from PyPI plus some printed next-steps — read
 [`scripts/install.sh`](scripts/install.sh) yourself first if you'd rather
 not pipe a script straight into your shell. It's a reasonable thing to want
 to check, for this or any install one-liner.
@@ -35,10 +35,15 @@ to check, for this or any install one-liner.
 ## Option B: pip install directly
 
 ```sh
-pip install --user "git+https://github.com/dhk/work-ledger.git"
+pip install --user work-ledger
 ```
 
 Does the same thing as the one-liner, minus the printed next-steps below.
+Want the unreleased tip of `main` instead of the latest release?
+
+```sh
+pip install --user "git+https://github.com/dhk/work-ledger.git"
+```
 
 ## Option C: clone and install editable (for reading/modifying the code)
 

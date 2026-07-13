@@ -3,15 +3,15 @@
 #
 # This script is meant to be read before you run it - that's a reasonable
 # instinct for any curl | bash one-liner, this one included. It does exactly
-# three things: pip-installs work-ledger from this repo, prints how to run
-# it, and tells you what else to set up for the two optional features
+# three things: pip-installs work-ledger from PyPI, prints how to run it,
+# and tells you what else to set up for the two optional features
 # (chapters, limits) that call the Anthropic API directly.
 #
 # For a more explicit, step-by-step path, see INSTALL.md instead.
 
 set -euo pipefail
 
-REPO_URL="git+https://github.com/dhk/work-ledger.git"
+PACKAGE="work-ledger"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "error: python3 not found. Install Python 3.10+ first." >&2
@@ -30,8 +30,8 @@ if [ -n "${VIRTUAL_ENV:-}" ]; then
   PIP_INSTALL_FLAGS=""
 fi
 
-echo "Installing work-ledger from ${REPO_URL}..."
-python3 -m pip install ${PIP_INSTALL_FLAGS} "${REPO_URL}"
+echo "Installing ${PACKAGE} from PyPI..."
+python3 -m pip install ${PIP_INSTALL_FLAGS} "${PACKAGE}"
 
 echo
 echo "Installed. Try it:"
