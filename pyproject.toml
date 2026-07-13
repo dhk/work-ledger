@@ -2,13 +2,34 @@
 name = "work-ledger"
 version = "0.1.0"
 description = "Lightweight, near-real-time Claude Code usage/cost tracker for individuals"
+readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
+authors = [{name = "dhk"}]
+keywords = ["claude-code", "claude", "anthropic", "cost", "usage", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
 dependencies = [
     "rich>=13.0",
     "anthropic>=0.116.0",
     "pydantic>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/dhk/work-ledger"
+Repository = "https://github.com/dhk/work-ledger"
+Issues = "https://github.com/dhk/work-ledger/issues"
 
 [project.optional-dependencies]
 # Only needed for `work-ledger chapters --report --format png`. Also run
@@ -28,7 +49,20 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["work_ledger"]
+# `work_ledger.patterns_data` is a packaging-only alias for the repo-root
+# `patterns/` directory (contributor-facing path, unchanged - see
+# CONTRIBUTING-patterns.md): package-dir remaps its dotted name to that
+# real directory so its *.md files get bundled into the wheel/sdist under
+# work_ledger/patterns_data/, fixing the gap where a real `pip install`
+# (not run from a checkout) otherwise finds zero pattern-library entries.
+# See work_ledger/patterns.py's DEFAULT_PATTERNS_DIR for the runtime side.
+packages = ["work_ledger", "work_ledger.patterns_data"]
+
+[tool.setuptools.package-dir]
+"work_ledger.patterns_data" = "patterns"
+
+[tool.setuptools.package-data]
+"work_ledger.patterns_data" = ["*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

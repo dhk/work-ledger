@@ -236,12 +236,15 @@ happens, until you run `patterns enable`.
   many times it's been recommended and how many times someone confirmed
   they used the fix (`--mark-used <id>`) — displayed as-is, deliberately
   no single derived score (see the design doc's decided open questions).
-- **No hosted backend exists yet.** This project doesn't run a public
-  counter service — set `WORK_LEDGER_PATTERN_BACKEND_URL` to your own
-  deployed instance to have `recommended`/`used` counts actually update
-  anywhere. Without it, everything still works locally (matching, display,
-  `--mark-used` confirmation) — there's just nowhere to report to, which
-  is a silent no-op, never an error.
+- **No publicly shared counter service.** The maintainer runs a personal
+  instance of `backend/` for their own use (v1 is explicitly
+  single-person-scoped — see the design doc), but it isn't exposed for
+  other installs to report to. Deploy `backend/` yourself (see
+  `backend/README.md`) and set `WORK_LEDGER_PATTERN_BACKEND_URL` to have
+  `recommended`/`used` counts actually update anywhere. Without it,
+  everything still works locally (matching, display, `--mark-used`
+  confirmation) — there's just nowhere to report to, which is a silent
+  no-op, never an error.
 - **A local MCP server** (`work-ledger-mcp`, needs the `patterns` extra:
   `pip install "work-ledger[patterns]"`) exposes `list_patterns`,
   `report_recommended`, and `report_used` as MCP tools over stdio —
@@ -316,9 +319,7 @@ until 2026-08-31); chapter granularity for very short sessions is left
 entirely to the model's judgment (see open question in the design doc);
 `recommend`'s corpus-relative dimension depends on `export` actually
 accumulating a corpus, which doesn't exist yet; the pattern library has no
-hosted backend, and its bundled content only ships correctly when running
-from a repo checkout (proper PyPI packaging of `patterns/*.md` as package
-data is a follow-up).
+publicly shared counter backend (bring your own, see above).
 
 ## Development
 

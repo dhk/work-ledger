@@ -20,12 +20,22 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-# Content lives at the repo root, a sibling of the work_ledger/ package -
-# works today for anyone running from a checkout (how this project is
-# developed and tested throughout). Shipping this content inside a
-# PyPI-distributed wheel as proper package data is a packaging follow-up,
-# not solved here - see docs/pattern-library-design.md.
-DEFAULT_PATTERNS_DIR = Path(__file__).resolve().parent.parent / "patterns"
+def _default_patterns_dir() -> Path:
+    """A real `pip install` (not run from a checkout) ships pattern
+    content bundled at `work_ledger/patterns_data/` - see pyproject.toml's
+    package-dir remap, which aliases that dotted package name to the
+    actual repo-root `patterns/` directory at build time, so contributors
+    still just edit `patterns/<slug>.md` (see CONTRIBUTING-patterns.md).
+    An editable/dev checkout has no such bundled copy (nothing gets
+    physically copied in that mode), so fall back to the repo-root
+    directory directly - that's how this project runs and tests itself."""
+    bundled = Path(__file__).resolve().parent / "patterns_data"
+    if bundled.is_dir():
+        return bundled
+    return Path(__file__).resolve().parent.parent / "patterns"
+
+
+DEFAULT_PATTERNS_DIR = _default_patterns_dir()
 
 # Also used by pattern_client.py to validate a pattern id before building
 # a report URL - imported from here rather than duplicated, so the two
