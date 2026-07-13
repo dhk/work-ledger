@@ -53,12 +53,41 @@ library entry."
 - A public (or even repo-owner-facing custom) read/query API over
   submitted findings. v1 curation happens by browsing the raw data
   directly in the Upstash console - no new tooling to view it.
-- Any automatic redaction/anonymization pipeline. v1 is personal-only
-  (the repo owner's own data, on their own backend), so this is
-  deliberately deferred rather than over-built before v2 needs it for
-  real.
+- Any *automatic* redaction/anonymization pipeline (scanning/rewriting
+  finding text to strip secrets algorithmically). Still deferred - real
+  engineering effort not justified before there's volume to justify it.
+  This is **not** the same as skipping the risk entirely - see "Whose
+  codebase is this, actually" below, which is a v1 requirement, not
+  deferred.
 - Solving v2's actual privacy/trust model. Flagged everywhere it's
   relevant below, not designed here.
+
+## Whose codebase is this, actually (not a v2 problem - a v1 one)
+
+"v1 is personal-only" was drafted to mean "only the repo owner submits,"
+and that framing conflates two different things: *who is submitting*
+versus *whose code is being reviewed*. `/code-review` runs across many
+repos, per the Problem section above - some of those may be an
+employer's, a client's, or another otherwise-confidential codebase the
+repo owner doesn't unilaterally have the right to forward to a
+third-party-hosted Redis instance, opt-in gate or not. A `summary` or
+`failure_scenario` can easily quote a secret literal, an internal API
+name, or a proprietary algorithm's shape found in the reviewed code. None
+of that changes based on who else can later read the data (that's the
+v2 boundary) - it's a question of whether sending unredacted third-party
+code content off-box is safe *at all*, which is a v1 question.
+
+**v1 requirement, not deferred**: `submit_review_findings` is invoked on
+explicit human instruction after a review already ran (see Mechanism
+below) - that instruction is the actual safeguard, and this doc should
+say so plainly rather than imply it. Before saying "submit those
+findings," the reviewer (the repo owner) is the one who has to judge
+whether this specific repo's findings are theirs to forward - a company
+laptop's client work is a clear no; the repo owner's own open-source
+project is a clear yes. No tooling enforces this in v1 (there's no way
+for the MCP server to know whose repo it's looking at) - it's a judgment
+call baked into the workflow, and this doc names it as one instead of
+leaving it implicit.
 
 ## What's actually being submitted
 
@@ -101,10 +130,46 @@ conversation, not the rest of the session.
   produced - no reformatting needed given the schema reuse above.
 - **New backend route, `POST /findings`**, on the already-deployed
   `backend/` Vercel project. Stores each submission as one entry in a
-  Redis Stream (`XADD findings * ...`) rather than a List or a per-id
-  Hash - Streams are the right primitive here specifically because this
-  is an append-only log meant to be read back in order later (unlike the
-  counters, which only ever need their latest value).
+  Redis Stream, trimmed on write - `XADD findings MAXLEN ~ 10000 * ...`
+  - rather than a List or a per-id Hash - Streams are the right primitive
+  here specifically because this is an append-only log meant to be read
+  back in order later (unlike the counters, which only ever need their
+  latest value). The approximate `MAXLEN` bounds growth on what's
+  realistically a free/low-tier Upstash instance without needing a
+  separate cleanup job; unlike the counters (which must never lose data),
+  losing the oldest, already-curated-or-ignored findings once the stream
+  is huge is an acceptable tradeoff, not a correctness bug.
+- **Requires a shared-secret bearer token, unlike the counters route.**
+  `POST /patterns/:id/:event` only ever increments an integer behind a
+  strict id/event validation - a free-text findings-ingestion endpoint is
+  a meaningfully bigger attack surface than a counter increment: anyone
+  who discovers the URL could otherwise POST unbounded arbitrary content
+  into the stream, not just bump a number. For v1 (genuinely
+  single-submitter), a single shared secret is proportionate - a new env
+  var (e.g. `WORK_LEDGER_FINDINGS_TOKEN`) set on both the backend and
+  wherever `work-ledger-mcp` runs, checked via `Authorization: Bearer
+  <token>`, rejecting unauthenticated requests with 401. This is a
+  different mechanism from the counters' `install_id`, which is a
+  self-reported dedup key, not a credential - it doesn't gate access on
+  its own and shouldn't be mistaken for auth. v2, with real multiple
+  submitters, replaces this with a real per-submitter identity/token
+  system rather than one shared secret - not designed here.
+- **Server-side validation even with auth in place**: cap the number of
+  findings accepted per request (e.g. 50), cap total request body size,
+  and length-limit each field (e.g. `summary` under ~300 characters,
+  `failure_scenario` under ~1000) - defense in depth against an
+  authorized-but-buggy or compromised client, not just unauthenticated
+  abuse.
+- **No dedup for retries, acknowledged rather than solved.** The counters
+  route has a real dedup key (`install_id:pattern_id:event`, a 60s
+  window) specifically because retries are expected there. A findings
+  submission has no equivalent natural identity, so a client-side retry
+  would silently double-append to the stream. Low-stakes given curation
+  is manual and a human will notice near-duplicate entries when reading
+  the stream - worth a client-generated idempotency key (a UUID per
+  submission call, checked against a short-TTL marker key the same way
+  the counters route already does) as a cheap follow-up if double-appends
+  turn out to be annoying in practice, not required to ship v1.
 - **Reuses the existing opt-in gate** (`work-ledger patterns enable`) and
   the existing best-effort semantics (never blocks, never crashes,
   silently no-ops if disabled or the backend's unreachable) rather than
@@ -147,17 +212,26 @@ way v1 doesn't have to solve, and shouldn't try to guess at:
 - **Abuse/volume handling** - v1's "browse the console occasionally"
   curation model does not survive real multi-user submission volume.
 
-None of this blocks v1, which only ever handles the repo owner's own
-data on their own backend - but v1's implementation should avoid
-decisions that would make bolting these on later harder than necessary
-(e.g. the Stream-per-submission shape and the reused install_id concept
-both carry forward cleanly; a bespoke v1-only format wouldn't).
+None of this blocks v1, which only ever has one *submitter* (the repo
+owner) reporting to their own backend - but v1's implementation should
+avoid decisions that would make bolting these on later harder than
+necessary (e.g. the Stream-per-submission shape and the reused
+install_id concept both carry forward cleanly; a bespoke v1-only format
+wouldn't).
 
 ## Open questions
 
-1. Should `file` paths be left exactly as the review produced them for
-   v1, given it's personal-only anyway? Leaning yes - redaction is a v2
-   problem, not a v1 one - but worth confirming rather than assuming.
+1. **Reframed, per review feedback.** Not "should `file` paths be left
+   raw since v1 is personal-only" - whether a path is safe to forward
+   doesn't depend on who's submitting, it depends on whose codebase it
+   names (see "Whose codebase is this, actually" above). The real
+   question: should `submit_review_findings` (or its caller) be expected
+   to confirm the reviewed repo is actually the reviewer's to forward
+   before paths/summaries go out unredacted, or is the per-call human
+   instruction already the confirmation (see Mechanism)? Leaning toward
+   the latter - the instruction to submit *is* the confirmation, made
+   explicit in this doc rather than assumed - but this is a real v1
+   decision now, not a deferred v2 one.
 2. Is a repo-identifying hash (a one-way hash of e.g. the git remote,
    not the literal name) worth adding now, so the curation pass can tell
    "these 5 findings are from the same project" apart from "these 5 are
