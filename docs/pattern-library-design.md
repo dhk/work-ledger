@@ -1,11 +1,15 @@
 # Design: Shared Pattern Library ("the mother ship")
 
-Status: proposed, not yet built.
+Status: implemented and deployed (`work_ledger/patterns.py`,
+`pattern_client.py`, `mcp_server.py`, `backend/` on Vercel + Upstash
+Redis) - one seeded entry so far (`patterns/outlier-chapter-cost-review.md`).
 Author: written by Claude, from a design conversation with the repo owner.
 Related: `docs/recommend-workflow-efficiency-design.md` (the local-only
 rule categories this would supplement), `work_ledger/export.py` (a
 different, already-shipped mechanism this is NOT a replacement for - see
-"How this differs from `export`" below).
+"How this differs from `export`" below), `docs/review-findings-
+harvesting-design.md` (a follow-on mechanism for growing the corpus of
+candidate entries, not yet built).
 
 ## Problem
 
