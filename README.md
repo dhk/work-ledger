@@ -23,8 +23,11 @@ a local OTEL sink) and real-time mechanism.
 ## Install
 
 ```sh
-pip install work-ledger
+pip install --user work-ledger
 ```
+
+(Drop `--user` if you're installing into an active virtualenv - `--user`
+fails outright there.)
 
 Or, if you trust me, the same fast path as a one-liner:
 

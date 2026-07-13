@@ -4,8 +4,8 @@
 # This script is meant to be read before you run it - that's a reasonable
 # instinct for any curl | bash one-liner, this one included. It does exactly
 # three things: pip-installs work-ledger from PyPI, prints how to run it,
-# and tells you what else to set up for the two optional features
-# (chapters, limits) that call the Anthropic API directly.
+# and tells you what else to set up for the one optional feature (chapters)
+# that calls the Anthropic API directly.
 #
 # For a more explicit, step-by-step path, see INSTALL.md instead.
 
@@ -36,16 +36,15 @@ python3 -m pip install ${PIP_INSTALL_FLAGS} "${PACKAGE}"
 echo
 echo "Installed. Try it:"
 echo "  work-ledger --once"
+echo "  work-ledger limits --once   - rolling-window token tracking, no credentials needed"
 echo
-echo "Two features call the Anthropic API directly (separate from your"
-echo "Claude Code session) and need credentials of their own:"
-echo "  work-ledger chapters   - groups prompts into initiatives via Haiku"
-echo "  work-ledger limits     - rolling-window token tracking"
-echo "Set ANTHROPIC_API_KEY, or run 'ant auth login' if you have the"
-echo "Anthropic CLI, before using either."
+echo "work-ledger chapters calls the Anthropic API directly (separate from"
+echo "your Claude Code session) to group prompts into initiatives via Haiku,"
+echo "and needs its own credentials. Set ANTHROPIC_API_KEY, or run"
+echo "'ant auth login' if you have the Anthropic CLI, before using it."
 echo
 echo "For the visual PNG report (chapters --report --format png), also run:"
-echo "  python3 -m pip install --user \"work-ledger[report]\""
+echo "  python3 -m pip install ${PIP_INSTALL_FLAGS} \"work-ledger[report]\""
 echo "  playwright install chromium"
 echo
 echo "Full guide, troubleshooting, and an editable-install path: INSTALL.md"
