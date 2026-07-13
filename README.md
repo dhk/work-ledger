@@ -1,5 +1,7 @@
 # work-ledger
 
+[![tests](https://github.com/dhk/work-ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/dhk/work-ledger/actions/workflows/ci.yml)
+
 A lightweight usage analytics tool for individual Claude Code users — the
 person watching their own $20/month or $100/month subscription, not a team
 with an observability stack.
