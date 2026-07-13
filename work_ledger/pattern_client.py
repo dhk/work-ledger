@@ -141,6 +141,9 @@ def findings_token() -> str | None:
 
 
 def _validate_finding(finding: dict) -> None:
+    if not isinstance(finding, dict):
+        raise FindingValidationError("each finding must be an object")
+
     category = finding.get("category")
     summary = finding.get("summary")
     failure_scenario = finding.get("failure_scenario")
@@ -162,7 +165,7 @@ def _validate_finding(finding: dict) -> None:
         )
     if file is not None and (not isinstance(file, str) or len(file) > MAX_FILE_LEN):
         raise FindingValidationError(f"file must be a string up to {MAX_FILE_LEN} chars")
-    if line is not None and not isinstance(line, int):
+    if line is not None and (not isinstance(line, int) or isinstance(line, bool)):
         raise FindingValidationError("line must be an integer if present")
     if verdict is not None and verdict not in VALID_VERDICTS:
         raise FindingValidationError(f"verdict must be one of {VALID_VERDICTS} if present")
@@ -178,7 +181,7 @@ def submit_findings(findings: list[dict]) -> tuple[bool, str]:
     the right to share findings from - that instruction is the real
     safeguard here, not anything this function can check (see the design
     doc's "Whose codebase is this, actually" section)."""
-    if not findings:
+    if not isinstance(findings, list) or not findings:
         return False, "no findings to submit"
     if len(findings) > MAX_FINDINGS_PER_SUBMISSION:
         return False, f"too many findings in one submission (max {MAX_FINDINGS_PER_SUBMISSION})"

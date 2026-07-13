@@ -151,6 +151,35 @@ def test_submit_findings_rejects_empty_list(tmp_path, monkeypatch):
     assert "no findings" in message
 
 
+def test_submit_findings_rejects_non_list_input(tmp_path, monkeypatch):
+    """Regression test: submit_findings must never raise, even for a
+    caller-supplied non-list (e.g. from untrusted MCP tool-call input)."""
+    _isolate(monkeypatch, tmp_path)
+    sent, message = pc.submit_findings(42)
+    assert sent is False
+    assert "no findings" in message
+
+
+def test_submit_findings_rejects_non_dict_finding(tmp_path, monkeypatch):
+    """Regression test: a non-dict element must not crash with
+    AttributeError from .get() - it should fail validation cleanly."""
+    _isolate(monkeypatch, tmp_path)
+    sent, message = pc.submit_findings(["not a dict"])
+    assert sent is False
+    assert "object" in message
+
+
+def test_submit_findings_rejects_bool_line(tmp_path, monkeypatch):
+    """Regression test: bool is a subclass of int in Python, so a bare
+    isinstance(line, int) check would wrongly accept True/False, which
+    the JS backend's Number.isInteger would then reject."""
+    _isolate(monkeypatch, tmp_path)
+    bad = {**_VALID_FINDING, "line": True}
+    sent, message = pc.submit_findings([bad])
+    assert sent is False
+    assert "line" in message
+
+
 def test_submit_findings_rejects_too_many(tmp_path, monkeypatch):
     _isolate(monkeypatch, tmp_path)
     sent, message = pc.submit_findings([_VALID_FINDING] * (pc.MAX_FINDINGS_PER_SUBMISSION + 1))
