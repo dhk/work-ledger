@@ -328,7 +328,9 @@ def build_activity_report_html(session_name: str, buckets: list[ActivityBucket],
     data = [{"label": b.label, "cost": b.cost_usd} for b in buckets]
     data_json = json.dumps(data)
     colors_json = json.dumps(bucket_colors)
-    other_pct = next((b.cost_usd / grand_total * 100 for b, o in zip(buckets, is_other) if o), 0.0)
+    other_pct = (
+        next((b.cost_usd / grand_total * 100 for b, o in zip(buckets, is_other) if o), 0.0) if grand_total else 0.0
+    )
 
     return f"""<!doctype html>
 <html>

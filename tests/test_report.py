@@ -66,3 +66,12 @@ def test_build_activity_report_html_no_residual_bucket():
 def test_build_activity_report_html_zero_buckets_does_not_crash():
     html = build_activity_report_html("empty.jsonl", [], total_n_buckets=0)
     assert "<!doctype html>" in html
+
+
+def test_build_activity_report_html_zero_cost_with_residual_bucket_does_not_crash():
+    """Regression test: a zero-cost transcript (e.g. all turns hit unknown/
+    unpriced models) with an "Other/final" bucket present used to raise
+    ZeroDivisionError computing other_pct - must degrade to 0%, not crash."""
+    buckets = [ActivityBucket("Tool: Bash", 0.0), ActivityBucket("Other/final 20% (2 categories)", 0.0)]
+    html = build_activity_report_html("s.jsonl", buckets, total_n_buckets=3)
+    assert "<!doctype html>" in html

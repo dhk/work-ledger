@@ -399,6 +399,15 @@ def _parse_date_arg(value: str, flag: str) -> date:
         sys.exit(2)
 
 
+def _validate_other_threshold(value: float) -> None:
+    if not 0 <= value <= 1:
+        print(
+            f"error: --other-threshold must be between 0 and 1 (a fraction), got {value}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def _in_date_range(path: Path, since: date | None, until: date | None) -> bool:
     """Filter by the transcript file's mtime - an approximation of when the
     session happened, not its exact start/end (see README). Cheap: doesn't
@@ -1060,6 +1069,7 @@ def main():
         if args.report and args.json:
             print("error: --report and --json are mutually exclusive", file=sys.stderr)
             sys.exit(2)
+        _validate_other_threshold(args.other_threshold)
         transcript_path = Path(args.transcript) if args.transcript else None
         run_activity(
             transcript_path=transcript_path,
