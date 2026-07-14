@@ -1,9 +1,10 @@
 """Generate a self-contained visual report (HTML or PNG) of a session's
-chapters - the same data `work-ledger chapters --json` exposes, rendered as
-a stat-tile + bar-chart page instead of a terminal table. Design matches the
-one-off example built while dogfooding this tool: categorical color per
-chapter, per-section bar segments with hover tooltips, light/dark mode.
-See https://github.com/dhk/work-ledger/issues/7.
+chapters or activity-type breakdown - the same data `work-ledger chapters
+--json` / `work-ledger activity --json` expose, rendered as a stat-tile +
+bar-chart page instead of a terminal table. Design matches the one-off
+example built while dogfooding this tool: categorical color per
+chapter/bucket, per-section bar segments with hover tooltips, light/dark
+mode. See https://github.com/dhk/work-ledger/issues/7.
 
 PNG rendering needs a headless browser (Playwright) to screenshot the HTML -
 an optional dependency (`pip install "work-ledger[report]"` + a one-time
@@ -14,6 +15,7 @@ generation itself has no extra dependency.
 import json
 from pathlib import Path
 
+from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter
 from work_ledger.transcript import TranscriptTailer
 
@@ -44,49 +46,12 @@ def _series_colors(n: int) -> list[tuple[str, str]]:
     return colors
 
 
-def _chapters_payload(tailer: TranscriptTailer, chapters: list[Chapter]) -> list[dict]:
-    payload = []
-    for c in chapters:
-        turns = c.turns(tailer)
-        payload.append(
-            {
-                "title": c.title,
-                "cost": sum(t.cost_usd for t in turns),
-                "sections": [
-                    {
-                        "title": s.title,
-                        "cost": sum(t.cost_usd for t in s.turns(tailer)),
-                        "turns": len(s.turns(tailer)),
-                    }
-                    for s in c.sections
-                ],
-            }
-        )
-    return payload
-
-
-def build_report_html(
-    session_name: str,
-    tailer: TranscriptTailer,
-    chapters: list[Chapter],
-    pass_cost_usd: float,
-) -> str:
-    data = _chapters_payload(tailer, chapters)
-    grand_total = sum(c["cost"] for c in data)
-    colors = _series_colors(len(data))
-
-    css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
-    css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
-
-    data_json = json.dumps(data)
-    colors_json = json.dumps([f"var(--series-{i+1})" for i in range(len(data))])
-
-    return f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>work-ledger chapters — {session_name}</title>
-<style>
+def _style_block(css_vars_light: str, css_vars_dark: str) -> str:
+    """The CSS shared by both the chapters report and the activity-type
+    report - same stat tiles / panel / bar-track-with-segments / tooltip
+    look for both, so they read as one system rather than two different
+    reports. Factored out once two call sites needed it, not before."""
+    return f"""<style>
   .viz-root {{
     --surface-1:      #fcfcfb;
     --page:           #f9f9f7;
@@ -171,7 +136,54 @@ def build_report_html(
 
   .footnote {{ font-size: 11.5px; color: var(--text-muted); margin-top: 24px; line-height: 1.6; }}
   .footnote code {{ color: var(--text-secondary); }}
-</style>
+</style>"""
+
+
+def _chapters_payload(tailer: TranscriptTailer, chapters: list[Chapter]) -> list[dict]:
+    payload = []
+    for c in chapters:
+        turns = c.turns(tailer)
+        payload.append(
+            {
+                "title": c.title,
+                "cost": sum(t.cost_usd for t in turns),
+                "sections": [
+                    {
+                        "title": s.title,
+                        "cost": sum(t.cost_usd for t in s.turns(tailer)),
+                        "turns": len(s.turns(tailer)),
+                    }
+                    for s in c.sections
+                ],
+            }
+        )
+    return payload
+
+
+def build_report_html(
+    session_name: str,
+    tailer: TranscriptTailer,
+    chapters: list[Chapter],
+    pass_cost_usd: float,
+) -> str:
+    data = _chapters_payload(tailer, chapters)
+    grand_total = sum(c["cost"] for c in data)
+    colors = _series_colors(len(data))
+
+    css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
+    css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
+
+    data_json = json.dumps(data)
+    colors_json = json.dumps([f"var(--series-{i+1})" for i in range(len(data))])
+
+    style = _style_block(css_vars_light, css_vars_dark)
+
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>work-ledger chapters — {session_name}</title>
+{style}
 </head>
 <body>
 <div class="viz-root">
@@ -273,6 +285,146 @@ sorted.forEach((c) => {{
     sections.appendChild(row);
   }});
   wrap.appendChild(sections);
+
+  root.appendChild(wrap);
+}});
+</script>
+</body>
+</html>
+"""
+
+
+def build_activity_report_html(session_name: str, buckets: list[ActivityBucket], total_n_buckets: int) -> str:
+    """Same visual style as build_report_html, but for activity.py's
+    grouping (by tool/skill/subagent/direct-reply) instead of chapters -
+    a view that needs no ANTHROPIC_API_KEY, unlike chaptering. `buckets`
+    is expected to already be activity.collapse_to_other()'s output (kept
+    buckets plus one optional residual "Other/final N%" bucket);
+    `total_n_buckets` is the count *before* collapsing, purely for the
+    "N of M" stat tile - it's not re-derived here since collapse_to_other
+    doesn't retain that count once it discards the tail."""
+    grand_total = sum(b.cost_usd for b in buckets)
+    is_other = [b.label.startswith("Other/final") for b in buckets]
+    n_kept = sum(1 for o in is_other if not o)
+    colors = _series_colors(n_kept)
+
+    css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
+    css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
+    style = _style_block(css_vars_light, css_vars_dark)
+
+    # The residual bucket (if present) always renders in the neutral
+    # overflow color, never a categorical slot - it's a sum of many
+    # different activity types, not one of them (see activity.py's
+    # collapse_to_other docstring).
+    bucket_colors = []
+    kept_i = 0
+    for other in is_other:
+        if other:
+            bucket_colors.append("var(--overflow)")
+        else:
+            bucket_colors.append(f"var(--series-{kept_i + 1})")
+            kept_i += 1
+
+    data = [{"label": b.label, "cost": b.cost_usd} for b in buckets]
+    data_json = json.dumps(data)
+    colors_json = json.dumps(bucket_colors)
+    other_pct = next((b.cost_usd / grand_total * 100 for b, o in zip(buckets, is_other) if o), 0.0)
+
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>work-ledger activity — {session_name}</title>
+{style}
+<style>
+  .viz-root {{ --overflow: {_OVERFLOW_LIGHT}; }}
+  @media (prefers-color-scheme: dark) {{ .viz-root {{ --overflow: {_OVERFLOW_DARK}; }} }}
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <div class="wrap">
+    <h1>work-ledger activity</h1>
+    <p class="subtitle">Session <code class="path">{session_name}</code> — grouped by activity type, no API call needed</p>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <p class="stat-label">Total session cost (est.)</p>
+        <div class="stat-value">${grand_total:.2f}</div>
+        <p class="stat-note">across {total_n_buckets} activity type{'s' if total_n_buckets != 1 else ''}</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Shown individually</p>
+        <div class="stat-value">{n_kept} of {total_n_buckets}</div>
+        <p class="stat-note">rest folded into one residual bucket</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Residual bucket</p>
+        <div class="stat-value">{other_pct:.0f}%</div>
+        <p class="stat-note">{"smaller categories combined" if other_pct else "nothing left over"}</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Cost by activity type</h2>
+      <p class="caption">Sorted by cost, most expensive first — which tool, skill, subagent, or plain reply produced it.</p>
+      <div class="legend" id="legend"></div>
+      <div id="chapters"></div>
+    </div>
+
+    <p class="footnote">
+      Grouped by activity type (tool call, skill, subagent, or a plain
+      reply with none of those), not by initiative - unlike
+      <code>chapters</code>, this needs no <code>ANTHROPIC_API_KEY</code>
+      and no separate API call, since everything it reads is already
+      parsed locally from the transcript. Generated by
+      <code>work-ledger activity --report</code>.
+    </p>
+  </div>
+</div>
+
+<script>
+const data = {data_json};
+const seriesColor = {colors_json};
+const grandTotal = data.reduce((s, c) => s + c.cost, 0) || 1;
+const maxCost = Math.max(...data.map(c => c.cost), 1e-9);
+
+const legend = document.getElementById("legend");
+data.forEach((c, i) => {{
+  const item = document.createElement("div");
+  item.className = "legend-item";
+  item.innerHTML = `<span class="swatch" style="background:${{seriesColor[i]}}"></span>${{c.label}}`;
+  legend.appendChild(item);
+}});
+
+const root = document.getElementById("chapters");
+
+data.forEach((c, i) => {{
+  const pct = (c.cost / grandTotal) * 100;
+  const widthPct = (c.cost / maxCost) * 100;
+
+  const wrap = document.createElement("div");
+  wrap.className = "chapter";
+
+  const head = document.createElement("div");
+  head.className = "chapter-head";
+  head.innerHTML = `
+    <div class="chapter-title"><span class="swatch" style="background:${{seriesColor[i]}}"></span>${{c.label}}</div>
+    <div class="chapter-figs"><b>$${{c.cost.toFixed(2)}}</b> &nbsp;(${{pct.toFixed(0)}}%)</div>
+  `;
+  wrap.appendChild(head);
+
+  const track = document.createElement("div");
+  track.className = "bar-track";
+  track.style.width = widthPct.toFixed(1) + "%";
+
+  const seg = document.createElement("div");
+  seg.className = "bar-seg";
+  seg.style.width = "100%";
+  seg.style.background = seriesColor[i];
+  seg.innerHTML = `<div class="tooltip"><b>${{c.label}}</b><br>$${{c.cost.toFixed(2)}} · ${{pct.toFixed(1)}}% of total</div>`;
+  track.appendChild(seg);
+  wrap.appendChild(track);
 
   root.appendChild(wrap);
 }});

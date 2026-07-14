@@ -60,6 +60,11 @@ work-ledger chapters --all --json       # machine-readable, one row per session
 work-ledger chapters --report                          # write a visual HTML report to a file
 work-ledger chapters --report --format png --out x.png  # same, as a PNG image
 
+work-ledger activity                              # cost grouped by activity type (tool/skill/subagent/direct-reply)
+work-ledger activity --json                            # machine-readable output
+work-ledger activity --report                          # same visual style as chapters --report, as HTML
+work-ledger activity --report --format png --out x.png  # same, as a PNG image
+
 work-ledger export                                # write an anonymized usage export to a local file
 work-ledger export --since 2026-07-01 --out x.json     # same, filtered to a date range
 
@@ -159,6 +164,31 @@ this tool uses — no new cost math, just a grouping label on top.
   `tooling-infra`, `other`) — not free text. This exists specifically so
   `export` (below) can report cost rollups without ever transmitting a
   chapter's actual title.
+
+## Activity breakdown
+
+`work-ledger activity` answers a different question than `chapters`: not
+"which initiative cost this" but "which *kind* of work" — a tool call
+(`Tool: Bash`, `Tool: Edit`, ...), an MCP server call (`MCP: github`), a
+skill or subagent invocation (same `Skill:`/`Subagent:` labels `--detail`
+already uses), or a plain reply with no tool call at all
+(`Direct response (no tool call)`).
+
+- **Needs no `ANTHROPIC_API_KEY` and makes no API call.** Everything it
+  groups by (`Unit.kind`, `skill_name`, `subagent_agent_type`,
+  `tool_names`) is already parsed locally from the transcript — unlike
+  `chapters`, there's no Haiku pass, no cost, and no fallback-to-Unsorted
+  case to worry about. Useful on its own, and as a fallback view when
+  chaptering isn't set up.
+- **`--report` matches `chapters --report`'s visual style** (same stat
+  tiles, bar-per-category, legend, hover tooltips, light/dark mode) —
+  sorted by cost, most expensive first. By default it shows activity
+  types individually until their running cost crosses 80% of the total,
+  then folds the rest into one residual "Other/final 20%" bucket, so the
+  chart stays readable even with a long tail of one-off tool calls.
+  `--other-threshold` adjusts that cutoff fraction (e.g. `0.9` for 90%).
+  The table and `--json` views are unaffected by this — they always show
+  every activity type, uncollapsed.
 
 ## Export (anonymized, manual)
 
