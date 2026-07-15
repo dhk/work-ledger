@@ -1,5 +1,6 @@
+from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter, Section
-from work_ledger.report import build_report_html
+from work_ledger.report import build_activity_report_html, build_report_html
 from work_ledger.transcript import TranscriptTailer
 
 from .conftest import assistant_lines, user_entry, write_jsonl
@@ -31,4 +32,46 @@ def test_build_report_html_zero_chapters_does_not_crash(tmp_path):
     tailer.poll()
 
     html = build_report_html("empty.jsonl", tailer, [], pass_cost_usd=0.0)
+    assert "<!doctype html>" in html
+
+
+def test_build_activity_report_html_smoke():
+    buckets = [
+        ActivityBucket("Tool: Bash", 50.0),
+        ActivityBucket("Direct response (no tool call)", 30.0),
+        ActivityBucket("Other/final 20% (3 categories)", 20.0),
+    ]
+    html = build_activity_report_html("s.jsonl", buckets, total_n_buckets=5)
+
+    assert html.startswith("<!doctype html>")
+    assert "Tool: Bash" in html
+    assert "Other/final 20% (3 categories)" in html
+    assert "s.jsonl" in html
+    assert "</html>" in html
+    # The residual bucket must render in the neutral overflow color, not
+    # a categorical slot - it's a sum of unrelated activity types.
+    assert "var(--overflow)" in html
+
+
+def test_build_activity_report_html_no_residual_bucket():
+    """Not every call has a residual bucket (e.g. threshold=1.0, or fewer
+    buckets than needed to cross the threshold) - must not crash looking
+    for one that isn't there."""
+    buckets = [ActivityBucket("Tool: Bash", 50.0), ActivityBucket("Tool: Edit", 50.0)]
+    html = build_activity_report_html("s.jsonl", buckets, total_n_buckets=2)
+    assert "<!doctype html>" in html
+    assert "var(--overflow)" not in html
+
+
+def test_build_activity_report_html_zero_buckets_does_not_crash():
+    html = build_activity_report_html("empty.jsonl", [], total_n_buckets=0)
+    assert "<!doctype html>" in html
+
+
+def test_build_activity_report_html_zero_cost_with_residual_bucket_does_not_crash():
+    """Regression test: a zero-cost transcript (e.g. all turns hit unknown/
+    unpriced models) with an "Other/final" bucket present used to raise
+    ZeroDivisionError computing other_pct - must degrade to 0%, not crash."""
+    buckets = [ActivityBucket("Tool: Bash", 0.0), ActivityBucket("Other/final 20% (2 categories)", 0.0)]
+    html = build_activity_report_html("s.jsonl", buckets, total_n_buckets=3)
     assert "<!doctype html>" in html

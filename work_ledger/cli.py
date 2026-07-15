@@ -19,6 +19,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
+from work_ledger.activity import collapse_to_other, group_by_activity
 from work_ledger.chapters import Chapter, get_chapters
 from work_ledger.export import build_export_payload
 from work_ledger.limits import (
@@ -319,11 +320,91 @@ def run_chapters(
     )
 
 
+def run_activity(
+    transcript_path=None,
+    as_json: bool = False,
+    report: bool = False,
+    report_format: str = "html",
+    report_out: str | None = None,
+    other_threshold: float = 0.8,
+):
+    """Cost grouped by activity type (tool/skill/subagent/direct-reply),
+    not by initiative - unlike `chapters`, this makes no API call and
+    needs no ANTHROPIC_API_KEY, since everything it reads is already
+    parsed locally from the transcript."""
+    console = Console()
+    path = transcript_path or find_active_transcript()
+    if path is None:
+        console.print(
+            "[red]No Claude Code session transcripts found under "
+            "~/.claude/projects/. Run a session first, or pass --transcript.[/red]"
+        )
+        sys.exit(1)
+
+    console.print(f"[dim]Watching:[/dim] {path}")
+
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    buckets = group_by_activity(tailer)
+    if not buckets:
+        console.print("[yellow]No units found in this transcript.[/yellow]")
+        return
+
+    if report:
+        from work_ledger.report import ReportRenderError, build_activity_report_html, render_png
+
+        collapsed = collapse_to_other(buckets, threshold=other_threshold)
+        out_path = Path(report_out) if report_out else Path(f"work-ledger-activity-{path.stem}.{report_format}")
+        html = build_activity_report_html(path.name, collapsed, len(buckets))
+
+        if report_format == "html":
+            out_path.write_text(html, encoding="utf-8")
+        else:
+            try:
+                render_png(html, out_path)
+            except ReportRenderError as e:
+                console.print(f"[red]{e}[/red]")
+                sys.exit(1)
+
+        console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
+        return
+
+    grand_total = sum(b.cost_usd for b in buckets) or 1e-9
+
+    if as_json:
+        import json
+
+        data = [
+            {"label": b.label, "cost_usd": b.cost_usd, "pct": b.cost_usd / grand_total * 100} for b in buckets
+        ]
+        console.print_json(json.dumps(data))
+        return
+
+    table = Table(title=f"work-ledger activity — {path.name}", expand=True)
+    table.add_column("activity type", ratio=3)
+    table.add_column("cost (est.)", justify="right", width=14)
+    table.add_column("% of total", justify="right", width=10)
+    for b in buckets:
+        table.add_row(b.label, f"${b.cost_usd:.4f}", f"{b.cost_usd / grand_total * 100:.1f}%")
+    console.print()
+    console.print(table)
+
+
 def _parse_date_arg(value: str, flag: str) -> date:
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError:
         print(f"error: {flag} must be YYYY-MM-DD, got {value!r}", file=sys.stderr)
+        sys.exit(2)
+
+
+def _validate_other_threshold(value: float) -> None:
+    if not 0 <= value <= 1:
+        print(
+            f"error: --other-threshold must be between 0 and 1 (a fraction), got {value}",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
 
@@ -821,6 +902,52 @@ def main():
         help="Output file path for --report (default: work-ledger-chapters-<session>.<format>)",
     )
 
+    activity_parser = subparsers.add_parser(
+        "activity",
+        help="Cost grouped by activity type (tool/skill/subagent/direct-reply) instead of "
+        "initiative - unlike `chapters`, needs no ANTHROPIC_API_KEY and makes no API call",
+    )
+    activity_parser.add_argument(
+        "--transcript",
+        type=str,
+        default=None,
+        help="Path to a specific transcript .jsonl file (default: most recently modified session)",
+    )
+    activity_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable output instead of a terminal table",
+    )
+    activity_parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Generate a visual report (HTML or PNG) to a file instead of a terminal table",
+    )
+    activity_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["html", "png"],
+        default="html",
+        help="Report format for --report (default: html). png needs the optional "
+        "'report' extra: pip install \"work-ledger[report]\" && playwright install chromium",
+    )
+    activity_parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output file path for --report (default: work-ledger-activity-<session>.<format>)",
+    )
+    activity_parser.add_argument(
+        "--other-threshold",
+        type=float,
+        default=0.8,
+        metavar="FRACTION",
+        help="With --report: show activity types individually until their running cost "
+        "crosses this fraction of the total (default: 0.8, i.e. 80%%), then fold the rest "
+        "into one residual bucket. Only affects --report, not the table/--json views, which "
+        "always show every activity type.",
+    )
+
     limits_parser = subparsers.add_parser(
         "limits",
         help="Track rolling-window token usage across all sessions, as a self-calibrated proxy "
@@ -936,6 +1063,22 @@ def main():
 
     if args.command == "patterns":
         run_patterns(args.action)
+        return
+
+    if args.command == "activity":
+        if args.report and args.json:
+            print("error: --report and --json are mutually exclusive", file=sys.stderr)
+            sys.exit(2)
+        _validate_other_threshold(args.other_threshold)
+        transcript_path = Path(args.transcript) if args.transcript else None
+        run_activity(
+            transcript_path=transcript_path,
+            as_json=args.json,
+            report=args.report,
+            report_format=args.format,
+            report_out=args.out,
+            other_threshold=args.other_threshold,
+        )
         return
 
     if args.command == "chapters":

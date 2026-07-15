@@ -1,7 +1,15 @@
 import pytest
 
 from work_ledger.chapters import Chapter, Section
-from work_ledger.cli import _filter_only, _in_date_range, _parse_date_arg, _threshold_note, _turns_cost, _turns_unknown
+from work_ledger.cli import (
+    _filter_only,
+    _in_date_range,
+    _parse_date_arg,
+    _threshold_note,
+    _turns_cost,
+    _turns_unknown,
+    _validate_other_threshold,
+)
 from work_ledger.limits import SessionWindowUsage, WindowUsage
 from work_ledger.transcript import Turn, Unit
 
@@ -68,6 +76,19 @@ def test_parse_date_arg_invalid_exits(capsys):
         _parse_date_arg("not-a-date", "--since")
     assert exc_info.value.code == 2
     assert "--since" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", [0.0, 0.5, 0.8, 1.0])
+def test_validate_other_threshold_accepts_in_range_values(value):
+    _validate_other_threshold(value)  # must not raise/exit
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1, 150, -1])
+def test_validate_other_threshold_rejects_out_of_range_values(value, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        _validate_other_threshold(value)
+    assert exc_info.value.code == 2
+    assert "--other-threshold" in capsys.readouterr().err
 
 
 def test_in_date_range_no_bounds_always_true(tmp_path):
