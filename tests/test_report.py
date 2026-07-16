@@ -53,6 +53,16 @@ def test_build_activity_report_html_smoke():
     assert "var(--overflow)" in html
 
 
+def test_build_activity_report_html_recognizes_top_n_residual_label():
+    """top_n() (a hard count cutoff) labels its residual bucket
+    "Other/rest (...)" rather than collapse_to_other's "Other/final N%" -
+    both must be detected as the residual bucket and get the neutral
+    overflow color, not a categorical slot."""
+    buckets = [ActivityBucket("Tool: Bash", 50.0), ActivityBucket("Other/rest (3 categories)", 20.0)]
+    html = build_activity_report_html("s.jsonl", buckets, total_n_buckets=4)
+    assert "var(--overflow)" in html
+
+
 def test_build_activity_report_html_no_residual_bucket():
     """Not every call has a residual bucket (e.g. threshold=1.0, or fewer
     buckets than needed to cross the threshold) - must not crash looking

@@ -9,6 +9,7 @@ from work_ledger.cli import (
     _turns_cost,
     _turns_unknown,
     _validate_other_threshold,
+    _validate_top,
 )
 from work_ledger.limits import SessionWindowUsage, WindowUsage
 from work_ledger.transcript import Turn, Unit
@@ -89,6 +90,23 @@ def test_validate_other_threshold_rejects_out_of_range_values(value, capsys):
         _validate_other_threshold(value)
     assert exc_info.value.code == 2
     assert "--other-threshold" in capsys.readouterr().err
+
+
+def test_validate_top_accepts_none():
+    _validate_top(None)  # must not raise/exit - --top is optional
+
+
+@pytest.mark.parametrize("value", [1, 5, 100])
+def test_validate_top_accepts_positive_values(value):
+    _validate_top(value)  # must not raise/exit
+
+
+@pytest.mark.parametrize("value", [0, -1, -10])
+def test_validate_top_rejects_non_positive_values(value, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        _validate_top(value)
+    assert exc_info.value.code == 2
+    assert "--top" in capsys.readouterr().err
 
 
 def test_in_date_range_no_bounds_always_true(tmp_path):

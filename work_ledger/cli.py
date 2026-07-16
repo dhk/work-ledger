@@ -19,7 +19,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from work_ledger.activity import collapse_to_other, group_by_activity
+from work_ledger.activity import collapse_to_other, group_by_activity, top_n
 from work_ledger.chapters import Chapter, get_chapters
 from work_ledger.export import build_export_payload
 from work_ledger.limits import (
@@ -327,6 +327,7 @@ def run_activity(
     report_format: str = "html",
     report_out: str | None = None,
     other_threshold: float = 0.8,
+    top: int | None = None,
 ):
     """Cost grouped by activity type (tool/skill/subagent/direct-reply),
     not by initiative - unlike `chapters`, this makes no API call and
@@ -354,7 +355,7 @@ def run_activity(
     if report:
         from work_ledger.report import ReportRenderError, build_activity_report_html, render_png
 
-        collapsed = collapse_to_other(buckets, threshold=other_threshold)
+        collapsed = top_n(buckets, top) if top is not None else collapse_to_other(buckets, threshold=other_threshold)
         out_path = Path(report_out) if report_out else Path(f"work-ledger-activity-{path.stem}.{report_format}")
         html = build_activity_report_html(path.name, collapsed, len(buckets))
 
@@ -405,6 +406,12 @@ def _validate_other_threshold(value: float) -> None:
             f"error: --other-threshold must be between 0 and 1 (a fraction), got {value}",
             file=sys.stderr,
         )
+        sys.exit(2)
+
+
+def _validate_top(value: int | None) -> None:
+    if value is not None and value <= 0:
+        print(f"error: --top must be a positive integer, got {value}", file=sys.stderr)
         sys.exit(2)
 
 
@@ -944,8 +951,18 @@ def main():
         metavar="FRACTION",
         help="With --report: show activity types individually until their running cost "
         "crosses this fraction of the total (default: 0.8, i.e. 80%%), then fold the rest "
-        "into one residual bucket. Only affects --report, not the table/--json views, which "
-        "always show every activity type.",
+        "into one residual bucket. Ignored if --top is given. Only affects --report, not "
+        "the table/--json views, which always show every activity type.",
+    )
+    activity_parser.add_argument(
+        "--top",
+        type=int,
+        default=None,
+        metavar="N",
+        help="With --report: show only the N costliest activity types individually, folding "
+        "everything else into one residual bucket - a hard count cutoff instead of "
+        "--other-threshold's percentage cutoff. Takes precedence over --other-threshold "
+        "if both are given.",
     )
 
     limits_parser = subparsers.add_parser(
@@ -1069,7 +1086,9 @@ def main():
         if args.report and args.json:
             print("error: --report and --json are mutually exclusive", file=sys.stderr)
             sys.exit(2)
-        _validate_other_threshold(args.other_threshold)
+        _validate_top(args.top)
+        if args.top is None:
+            _validate_other_threshold(args.other_threshold)
         transcript_path = Path(args.transcript) if args.transcript else None
         run_activity(
             transcript_path=transcript_path,
@@ -1078,6 +1097,7 @@ def main():
             report_format=args.format,
             report_out=args.out,
             other_threshold=args.other_threshold,
+            top=args.top,
         )
         return
 
