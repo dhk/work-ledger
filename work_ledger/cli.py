@@ -1086,8 +1086,9 @@ def main():
         if args.report and args.json:
             print("error: --report and --json are mutually exclusive", file=sys.stderr)
             sys.exit(2)
-        _validate_other_threshold(args.other_threshold)
         _validate_top(args.top)
+        if args.top is None:
+            _validate_other_threshold(args.other_threshold)
         transcript_path = Path(args.transcript) if args.transcript else None
         run_activity(
             transcript_path=transcript_path,
