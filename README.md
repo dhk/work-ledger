@@ -47,6 +47,7 @@ work-ledger              # live dashboard, watching the most recently active ses
 work-ledger --once       # print current totals once and exit
 work-ledger --detail     # break each prompt down into its underlying units of work
 work-ledger --transcript path/to/session.jsonl   # watch a specific transcript
+work-ledger --session 0daf9882                   # same, but by (a prefix of) its transcript UUID
 
 work-ledger chapters                    # group prompts into initiatives, cost per initiative
 work-ledger chapters --detail           # same, drilled down to each initiative's underlying calls
@@ -78,6 +79,16 @@ send). `--detail` expands each turn into its underlying **units of work** —
 one row per actual LLM call (one `message.id`) — and specifically labels
 `Skill:` and `Subagent:` calls so fan-out cost is visible instead of folded
 into the turn total.
+
+`--transcript`/`--session` (mutually exclusive, both available on every
+subcommand that targets a specific session) pick a session explicitly
+instead of the default "most recently active one." `--session` takes a
+session's local transcript UUID — or a short prefix of one, like a git
+commit hash — and searches `~/.claude/projects/` for a matching filename;
+an ambiguous prefix lists every match instead of guessing. This is **not**
+the same id as a `claude.ai/code` `session_...` URL — that's a separate,
+unrelated identifier with no local mapping to a transcript file, so it
+can't be looked up this way.
 
 **Known limitation on subagent attribution**: this environment writes
 subagent transcripts to a separate `<session>/subagents/agent-<id>.jsonl`
