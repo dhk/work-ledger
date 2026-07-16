@@ -1,4 +1,6 @@
-from work_ledger.activity import ActivityBucket, bucket_key, collapse_to_other, group_by_activity
+import pytest
+
+from work_ledger.activity import ActivityBucket, bucket_key, collapse_to_other, group_by_activity, top_n
 from work_ledger.transcript import TranscriptTailer
 
 from .conftest import assistant_lines, user_entry, write_jsonl
@@ -159,3 +161,34 @@ def test_collapse_to_other_keeps_everything_when_threshold_is_one():
     buckets = [ActivityBucket("A", 50), ActivityBucket("B", 30), ActivityBucket("C", 20)]
     collapsed = collapse_to_other(buckets, threshold=1.0)
     assert [b.label for b in collapsed] == ["A", "B", "C"]
+
+
+def test_top_n_keeps_first_n_and_folds_the_rest():
+    buckets = [ActivityBucket(chr(65 + i), 10 - i) for i in range(5)]  # A..E, 10,9,8,7,6
+    kept = top_n(buckets, 3)
+    labels = [b.label for b in kept]
+    assert labels == ["A", "B", "C", "Other/rest (2 categories)"]
+    assert kept[-1].cost_usd == 7 + 6
+
+
+def test_top_n_no_residual_when_n_covers_everything():
+    buckets = [ActivityBucket("A", 10), ActivityBucket("B", 5)]
+    kept = top_n(buckets, 5)
+    assert [b.label for b in kept] == ["A", "B"]
+
+
+def test_top_n_exactly_n_buckets_no_residual():
+    buckets = [ActivityBucket("A", 10), ActivityBucket("B", 5)]
+    kept = top_n(buckets, 2)
+    assert [b.label for b in kept] == ["A", "B"]
+
+
+def test_top_n_empty_list():
+    assert top_n([], 10) == []
+
+
+def test_top_n_rejects_non_positive_n():
+    with pytest.raises(ValueError):
+        top_n([ActivityBucket("A", 10)], 0)
+    with pytest.raises(ValueError):
+        top_n([ActivityBucket("A", 10)], -1)

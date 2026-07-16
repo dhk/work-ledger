@@ -64,6 +64,7 @@ work-ledger activity                              # cost grouped by activity typ
 work-ledger activity --json                            # machine-readable output
 work-ledger activity --report                          # same visual style as chapters --report, as HTML
 work-ledger activity --report --format png --out x.png  # same, as a PNG image
+work-ledger activity --report --top 10                  # show only the 10 costliest types, rest folded into "Other"
 
 work-ledger export                                # write an anonymized usage export to a local file
 work-ledger export --since 2026-07-01 --out x.json     # same, filtered to a date range
@@ -186,9 +187,11 @@ already uses), or a plain reply with no tool call at all
   types individually until their running cost crosses 80% of the total,
   then folds the rest into one residual "Other/final 20%" bucket, so the
   chart stays readable even with a long tail of one-off tool calls.
-  `--other-threshold` adjusts that cutoff fraction (e.g. `0.9` for 90%).
-  The table and `--json` views are unaffected by this — they always show
-  every activity type, uncollapsed.
+  `--other-threshold` adjusts that cutoff fraction (e.g. `0.9` for 90%),
+  or use `--top N` for a hard count cutoff instead (e.g. `--top 10` for
+  exactly the 10 costliest types) — `--top` takes precedence if both are
+  given. The table and `--json` views are unaffected by either — they
+  always show every activity type, uncollapsed.
 
 ## Export (anonymized, manual)
 

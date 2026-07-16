@@ -304,7 +304,11 @@ def build_activity_report_html(session_name: str, buckets: list[ActivityBucket],
     "N of M" stat tile - it's not re-derived here since collapse_to_other
     doesn't retain that count once it discards the tail."""
     grand_total = sum(b.cost_usd for b in buckets)
-    is_other = [b.label.startswith("Other/final") for b in buckets]
+    # Covers both collapse_to_other's "Other/final N%" and top_n's
+    # "Other/rest" residual-bucket labels - either way, a leading
+    # "Other/" marks a bucket that's a sum of many activity types, not
+    # one of them, and always renders in the neutral overflow color.
+    is_other = [b.label.startswith("Other/") for b in buckets]
     n_kept = sum(1 for o in is_other if not o)
     colors = _series_colors(n_kept)
 

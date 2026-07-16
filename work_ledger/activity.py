@@ -81,3 +81,20 @@ def collapse_to_other(buckets: list[ActivityBucket], threshold: float = 0.8) -> 
                 )
             return kept
     return kept
+
+
+def top_n(buckets: list[ActivityBucket], n: int) -> list[ActivityBucket]:
+    """Keep the `n` costliest buckets individually, folding everything
+    else into one residual bucket - a hard count cutoff, unlike
+    collapse_to_other's percentage-of-total cutoff. `buckets` must
+    already be sorted most expensive first (group_by_activity's
+    contract). Same "residual bucket isn't part of the sort" caveat as
+    collapse_to_other - see its docstring."""
+    if n <= 0:
+        raise ValueError(f"n must be positive, got {n}")
+    kept = list(buckets[:n])
+    rest = buckets[n:]
+    if rest:
+        rest_cost = sum(b.cost_usd for b in rest)
+        kept.append(ActivityBucket(label=f"Other/rest ({len(rest)} categories)", cost_usd=rest_cost))
+    return kept
