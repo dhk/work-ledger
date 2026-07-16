@@ -64,6 +64,16 @@ def find_all_transcripts() -> list[Path]:
     return [p for p, _mtime in dated]
 
 
+def find_transcripts_by_session_prefix(prefix: str) -> list[Path]:
+    """Every transcript whose filename (the session's own local UUID, not
+    to be confused with a claude.ai/code `session_...` URL id - those are
+    a different, unrelated identifier with no mapping to this one) starts
+    with `prefix`, newest first. Lets `--session` take a short prefix
+    instead of the full UUID, same convention as `git rev-parse` accepting
+    a short commit hash."""
+    return [p for p in find_all_transcripts() if p.stem.startswith(prefix)]
+
+
 def _shorten(text: str, max_len: int = 60) -> str:
     text = " ".join(text.split())  # collapse whitespace/newlines
     if len(text) > max_len:

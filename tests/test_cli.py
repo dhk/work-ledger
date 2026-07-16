@@ -1,10 +1,13 @@
 import pytest
 
 from work_ledger.chapters import Chapter, Section
+from pathlib import Path
+
 from work_ledger.cli import (
     _filter_only,
     _in_date_range,
     _parse_date_arg,
+    _resolve_transcript_arg,
     _threshold_note,
     _turns_cost,
     _turns_unknown,
@@ -140,3 +143,52 @@ def test_threshold_note_formats_percentage():
     usage.sessions.append(SessionWindowUsage(transcript=Path("x.jsonl"), input_tokens=250_000, output_tokens=0))
     note = _threshold_note(usage, 500_000)
     assert "50%" in note
+
+
+def test_resolve_transcript_arg_mutually_exclusive(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        _resolve_transcript_arg("some/path.jsonl", "0daf9882")
+    assert exc_info.value.code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_resolve_transcript_arg_neither_given_returns_none():
+    assert _resolve_transcript_arg(None, None) is None
+
+
+def test_resolve_transcript_arg_transcript_given_returns_path():
+    assert _resolve_transcript_arg("some/path.jsonl", None) == Path("some/path.jsonl")
+
+
+def test_resolve_transcript_arg_session_resolves_unique_match(isolated_transcripts_root):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    target = proj / "0daf9882-076e-53aa-84a0-0db25e6d57a2.jsonl"
+    target.write_text("", encoding="utf-8")
+
+    assert _resolve_transcript_arg(None, "0daf9882") == target
+
+
+def test_resolve_transcript_arg_session_no_match_exits(isolated_transcripts_root, capsys):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    (proj / "0daf9882-076e-53aa-84a0-0db25e6d57a2.jsonl").write_text("", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        _resolve_transcript_arg(None, "zzzz")
+    assert exc_info.value.code == 1
+    assert "zzzz" in capsys.readouterr().err
+
+
+def test_resolve_transcript_arg_session_ambiguous_exits_and_lists_candidates(isolated_transcripts_root, capsys):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    (proj / "0daf1111-0000-0000-0000-000000000000.jsonl").write_text("", encoding="utf-8")
+    (proj / "0daf2222-0000-0000-0000-000000000000.jsonl").write_text("", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        _resolve_transcript_arg(None, "0daf")
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "0daf1111-0000-0000-0000-000000000000" in err
+    assert "0daf2222-0000-0000-0000-000000000000" in err

@@ -1,7 +1,12 @@
 import os
 import time
 
-from work_ledger.transcript import TranscriptTailer, find_active_transcript, find_all_transcripts
+from work_ledger.transcript import (
+    TranscriptTailer,
+    find_active_transcript,
+    find_all_transcripts,
+    find_transcripts_by_session_prefix,
+)
 
 from .conftest import assistant_lines, user_entry, write_jsonl
 
@@ -237,3 +242,43 @@ def test_find_all_transcripts_skips_vanished_file(isolated_transcripts_root, mon
 
     monkeypatch.setattr(pathlib.Path, "stat", flaky_stat)
     assert find_all_transcripts() == []
+
+
+def test_find_transcripts_by_session_prefix_exact_and_prefix_match(isolated_transcripts_root):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    target = proj / "0daf9882-076e-53aa-84a0-0db25e6d57a2.jsonl"
+    other = proj / "1111aaaa-0000-0000-0000-000000000000.jsonl"
+    target.write_text("", encoding="utf-8")
+    other.write_text("", encoding="utf-8")
+
+    assert find_transcripts_by_session_prefix("0daf9882-076e-53aa-84a0-0db25e6d57a2") == [target]
+    assert find_transcripts_by_session_prefix("0daf9882") == [target]
+    assert find_transcripts_by_session_prefix("0daf") == [target]
+
+
+def test_find_transcripts_by_session_prefix_ambiguous_returns_all_matches(isolated_transcripts_root):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    a = proj / "0daf1111-0000-0000-0000-000000000000.jsonl"
+    b = proj / "0daf2222-0000-0000-0000-000000000000.jsonl"
+    a.write_text("", encoding="utf-8")
+    b.write_text("", encoding="utf-8")
+
+    matches = find_transcripts_by_session_prefix("0daf")
+    assert set(matches) == {a, b}
+
+
+def test_find_transcripts_by_session_prefix_no_match(isolated_transcripts_root):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    (proj / "0daf9882-076e-53aa-84a0-0db25e6d57a2.jsonl").write_text("", encoding="utf-8")
+
+    assert find_transcripts_by_session_prefix("zzzz") == []
+
+
+def test_find_transcripts_by_session_prefix_no_projects_dir(tmp_path, monkeypatch):
+    import work_ledger.transcript as transcript_mod
+
+    monkeypatch.setattr(transcript_mod, "TRANSCRIPTS_ROOT", tmp_path / "does-not-exist")
+    assert find_transcripts_by_session_prefix("anything") == []

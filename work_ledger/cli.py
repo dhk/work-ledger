@@ -32,7 +32,13 @@ from work_ledger.limits import (
 from work_ledger import pattern_client
 from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns, patterns_for_rule
 from work_ledger.recommend import generate_recommendations
-from work_ledger.transcript import Turn, TranscriptTailer, find_active_transcript, find_all_transcripts
+from work_ledger.transcript import (
+    Turn,
+    TranscriptTailer,
+    find_active_transcript,
+    find_all_transcripts,
+    find_transcripts_by_session_prefix,
+)
 
 POLL_INTERVAL_S = 1.0
 LIMITS_POLL_INTERVAL_S = 5.0
@@ -413,6 +419,37 @@ def _validate_top(value: int | None) -> None:
     if value is not None and value <= 0:
         print(f"error: --top must be a positive integer, got {value}", file=sys.stderr)
         sys.exit(2)
+
+
+def _resolve_transcript_arg(transcript: str | None, session: str | None) -> Path | None:
+    """Turn --transcript/--session into a concrete Path (or None, meaning
+    "fall back to find_active_transcript()") - shared by every subcommand
+    that accepts either flag, so the mutual-exclusion and no-match/
+    ambiguous-match errors are worded identically everywhere.
+
+    --session takes a session's local transcript UUID (or a prefix of
+    one, like a short git commit hash) and searches for it under
+    ~/.claude/projects/ - it has nothing to do with a claude.ai/code
+    `session_...` URL id, which isn't recorded anywhere transcript.py can
+    read (see find_transcripts_by_session_prefix's docstring)."""
+    if transcript and session:
+        print("error: --transcript and --session are mutually exclusive", file=sys.stderr)
+        sys.exit(2)
+    if not session:
+        return Path(transcript) if transcript else None
+
+    matches = find_transcripts_by_session_prefix(session)
+    if not matches:
+        print(f"error: no transcript found with session id starting with {session!r}", file=sys.stderr)
+        sys.exit(1)
+    if len(matches) > 1:
+        print(f"error: {session!r} matches {len(matches)} transcripts - be more specific:", file=sys.stderr)
+        for p in matches[:10]:
+            print(f"  {p.stem}", file=sys.stderr)
+        if len(matches) > 10:
+            print(f"  ... and {len(matches) - 10} more", file=sys.stderr)
+        sys.exit(2)
+    return matches[0]
 
 
 def _in_date_range(path: Path, since: date | None, until: date | None) -> bool:
@@ -817,16 +854,33 @@ def run_patterns(action: str):
         return
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Watch Claude Code session cost/token usage in near-real-time."
-    )
+def _add_transcript_args(parser: argparse.ArgumentParser) -> None:
+    """--transcript and --session are two ways to pick a specific
+    session, added identically to every subcommand that needs one - see
+    _resolve_transcript_arg for how they're reconciled."""
     parser.add_argument(
         "--transcript",
         type=str,
         default=None,
         help="Path to a specific transcript .jsonl file (default: most recently modified session)",
     )
+    parser.add_argument(
+        "--session",
+        type=str,
+        default=None,
+        metavar="UUID_OR_PREFIX",
+        help="Pick a session by its local transcript UUID (or a prefix of one, like a short git "
+        "commit hash) instead of a full --transcript path. Searches ~/.claude/projects/ for a "
+        "matching filename. Mutually exclusive with --transcript. Not the same id as a "
+        "claude.ai/code session_... URL - there's no local mapping from that id to a transcript.",
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Watch Claude Code session cost/token usage in near-real-time."
+    )
+    _add_transcript_args(parser)
     parser.add_argument(
         "--once",
         action="store_true",
@@ -844,12 +898,7 @@ def main():
         "chapters",
         help="Group prompts into semantic initiatives via a Haiku pass, with cost rollup per initiative",
     )
-    chapters_parser.add_argument(
-        "--transcript",
-        type=str,
-        default=None,
-        help="Path to a specific transcript .jsonl file (default: most recently modified session)",
-    )
+    _add_transcript_args(chapters_parser)
     chapters_parser.add_argument(
         "--detail",
         action="store_true",
@@ -914,12 +963,7 @@ def main():
         help="Cost grouped by activity type (tool/skill/subagent/direct-reply) instead of "
         "initiative - unlike `chapters`, needs no ANTHROPIC_API_KEY and makes no API call",
     )
-    activity_parser.add_argument(
-        "--transcript",
-        type=str,
-        default=None,
-        help="Path to a specific transcript .jsonl file (default: most recently modified session)",
-    )
+    _add_transcript_args(activity_parser)
     activity_parser.add_argument(
         "--json",
         action="store_true",
@@ -1024,12 +1068,7 @@ def main():
         help="Local-only, rule-based recommendations over one session's Turn/Unit/Chapter data "
         "(no corpus, no extra API call beyond chaptering itself)",
     )
-    recommend_parser.add_argument(
-        "--transcript",
-        type=str,
-        default=None,
-        help="Path to a specific transcript .jsonl file (default: most recently modified session)",
-    )
+    _add_transcript_args(recommend_parser)
     recommend_parser.add_argument(
         "--json",
         action="store_true",
@@ -1074,7 +1113,7 @@ def main():
         return
 
     if args.command == "recommend":
-        transcript_path = Path(args.transcript) if args.transcript else None
+        transcript_path = _resolve_transcript_arg(args.transcript, args.session)
         run_recommend(transcript_path=transcript_path, as_json=args.json, mark_used=args.mark_used)
         return
 
@@ -1089,7 +1128,7 @@ def main():
         _validate_top(args.top)
         if args.top is None:
             _validate_other_threshold(args.other_threshold)
-        transcript_path = Path(args.transcript) if args.transcript else None
+        transcript_path = _resolve_transcript_arg(args.transcript, args.session)
         run_activity(
             transcript_path=transcript_path,
             as_json=args.json,
@@ -1103,8 +1142,11 @@ def main():
 
     if args.command == "chapters":
         if args.all:
-            if args.transcript or args.detail or args.only:
-                print("error: --all can't be combined with --transcript, --detail, or --only", file=sys.stderr)
+            if args.transcript or args.session or args.detail or args.only:
+                print(
+                    "error: --all can't be combined with --transcript, --session, --detail, or --only",
+                    file=sys.stderr,
+                )
                 sys.exit(2)
             if args.report:
                 print("error: --report doesn't support --all yet (see issue #4/#7)", file=sys.stderr)
@@ -1119,7 +1161,7 @@ def main():
         if args.report and args.json:
             print("error: --report and --json are mutually exclusive", file=sys.stderr)
             sys.exit(2)
-        transcript_path = Path(args.transcript) if args.transcript else None
+        transcript_path = _resolve_transcript_arg(args.transcript, args.session)
         run_chapters(
             transcript_path=transcript_path,
             detail=args.detail,
@@ -1131,7 +1173,7 @@ def main():
         )
         return
 
-    transcript_path = Path(args.transcript) if args.transcript else None
+    transcript_path = _resolve_transcript_arg(args.transcript, args.session)
     run(transcript_path=transcript_path, once=args.once, detail=args.detail)
 
 
