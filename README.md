@@ -5,6 +5,8 @@
 A lightweight usage analytics tool for individual Claude Code users — the
 person watching their own $20/month or $100/month subscription, not a team
 with an observability stack.
+<img width="1536" height="1024" alt="ChatGPT Image Jul 21, 2026, 08_48_07 AM" src="https://github.com/user-attachments/assets/5c2674b1-cd6b-452e-8989-82ebd1847f3f" />
+
 
 **Goals:**
 - Near-real-time visibility into what a session or automation is costing
