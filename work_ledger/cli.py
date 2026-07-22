@@ -32,6 +32,7 @@ from work_ledger.limits import (
 from work_ledger import pattern_client
 from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns, patterns_for_rule
 from work_ledger.recommend import generate_recommendations
+from work_ledger.session_pin import clear_pinned_session, get_pinned_session, set_pinned_session
 from work_ledger.transcript import (
     Turn,
     TranscriptTailer,
@@ -481,12 +482,19 @@ def _resolve_transcript_arg(transcript: str | None, session: str | None) -> Path
     one, like a short git commit hash) and searches for it under
     ~/.claude/projects/ - it has nothing to do with a claude.ai/code
     `session_...` URL id, which isn't recorded anywhere transcript.py can
-    read (see find_transcripts_by_session_prefix's docstring)."""
+    read (see find_transcripts_by_session_prefix's docstring).
+
+    If neither is given, a pinned session (`work-ledger session set ...`)
+    takes priority over the usual "most recently active" default - an
+    explicit --transcript/--session on this specific call still overrides
+    the pin, same as any explicit flag beats a saved default."""
     if transcript and session:
         print("error: --transcript and --session are mutually exclusive", file=sys.stderr)
         sys.exit(2)
     if not session:
-        return Path(transcript) if transcript else None
+        if transcript:
+            return Path(transcript)
+        return get_pinned_session()
 
     matches = find_transcripts_by_session_prefix(session)
     if not matches:
@@ -514,6 +522,42 @@ def _in_date_range(path: Path, since: date | None, until: date | None) -> bool:
     if until and mtime_date > until:
         return False
     return True
+
+
+def run_session(action: str, value: str | None) -> None:
+    """Manage the pinned session (`work-ledger session set/clear/status`) -
+    see session_pin.py and _resolve_transcript_arg's docstring for how the
+    pin is consumed. `set`'s no-match/ambiguous-prefix errors reuse
+    _resolve_transcript_arg's own (via session=value, transcript=None) so
+    the wording matches --session's errors exactly rather than drifting."""
+    console = Console()
+    if action == "set":
+        if not value:
+            print(
+                "error: 'session set' needs a uuid-or-prefix, e.g. `work-ledger session set abc123` "
+                "- see `work-ledger sessions` to find one",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        path = _resolve_transcript_arg(None, value)
+        set_pinned_session(path)
+        console.print(f"[green]Pinned session:[/green] {path.stem}")
+        console.print("[dim]Every command defaults to this session now, until `work-ledger session clear`.[/dim]")
+        return
+
+    if action == "clear":
+        clear_pinned_session()
+        console.print("[green]Cleared.[/green] Commands default to the most recently active session again.")
+        return
+
+    if action == "status":
+        pinned = get_pinned_session()
+        if pinned:
+            console.print(f"Pinned session: [cyan]{pinned.stem}[/cyan]")
+            console.print(f"[dim]{pinned}[/dim]")
+        else:
+            console.print("[yellow]No session pinned.[/yellow] Commands default to the most recently active session.")
+        return
 
 
 def run_sessions(since: date | None = None, until: date | None = None, as_json: bool = False):
@@ -1156,6 +1200,24 @@ def main():
         help="Machine-readable output instead of a terminal table",
     )
 
+    session_parser = subparsers.add_parser(
+        "session",
+        help="Pin a session so chapters/activity/recommend default to it instead of the most "
+        "recently active one, until cleared - see also `work-ledger sessions` to find one",
+    )
+    session_parser.add_argument(
+        "action",
+        choices=["set", "clear", "status"],
+        help="'set <value>' pins a session, 'clear' unpins, 'status' shows what's pinned",
+    )
+    session_parser.add_argument(
+        "value",
+        type=str,
+        nargs="?",
+        default=None,
+        help="Session UUID (or a prefix of one) - required for 'set', ignored otherwise",
+    )
+
     sessions_parser = subparsers.add_parser(
         "sessions",
         help="List every local session transcript (project, last-active time, first prompt, "
@@ -1246,6 +1308,10 @@ def main():
             set_threshold=args.set_threshold,
             as_json=args.json,
         )
+        return
+
+    if args.command == "session":
+        run_session(args.action, args.value)
         return
 
     if args.command == "sessions":

@@ -210,6 +210,67 @@ def test_get_chapters_model_exception_falls_back_to_unsorted(tmp_path, monkeypat
     assert result.chapters[0].prompt_ids == ["p1"]
 
 
+def test_get_chapters_no_api_key_gives_specific_fallback_reason(tmp_path, monkeypatch):
+    """The SDK raises a plain TypeError (not an AnthropicError subclass)
+    with this exact message when no credential is configured at all -
+    verified against the installed anthropic SDK, not guessed. Must be
+    distinguished from a generic failure or a rejected-key failure."""
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    def no_key(outline, prior_titles):
+        raise TypeError(
+            '"Could not resolve authentication method. Expected one of api_key, auth_token, '
+            'or credentials to be set. Or for one of the `X-Api-Key` or `Authorization` '
+            'headers to be explicitly omitted"'
+        )
+
+    monkeypatch.setattr("work_ledger.chapters._call_model", no_key)
+
+    result = get_chapters(tailer, transcript_path)
+    assert "No ANTHROPIC_API_KEY found" in result.fallback_reason
+    assert result.chapters[0].title == UNSORTED_TITLE
+
+
+def test_get_chapters_unrelated_type_error_falls_back_generically(tmp_path, monkeypatch):
+    """A TypeError that isn't the specific no-credential message must not
+    be misreported as "no API key found" - falls back to the generic
+    message instead."""
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    def unrelated_type_error(outline, prior_titles):
+        raise TypeError("unexpected keyword argument 'foo'")
+
+    monkeypatch.setattr("work_ledger.chapters._call_model", unrelated_type_error)
+
+    result = get_chapters(tailer, transcript_path)
+    assert "No ANTHROPIC_API_KEY found" not in result.fallback_reason
+    assert "chaptering call failed" in result.fallback_reason
+
+
+def test_get_chapters_invalid_api_key_gives_specific_fallback_reason(tmp_path, monkeypatch):
+    """A real 401 from the server (anthropic.AuthenticationError) - the
+    key was sent but rejected - is a different problem than no key being
+    present at all, and should say so distinctly."""
+    import anthropic
+    import httpx
+
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    def rejected_key(outline, prior_titles):
+        request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        response = httpx.Response(status_code=401, request=request)
+        raise anthropic.AuthenticationError("invalid x-api-key", response=response, body=None)
+
+    monkeypatch.setattr("work_ledger.chapters._call_model", rejected_key)
+
+    result = get_chapters(tailer, transcript_path)
+    assert "rejected by the server" in result.fallback_reason
+    assert result.chapters[0].title == UNSORTED_TITLE
+
+
 def test_get_chapters_refusal_falls_back_to_unsorted(tmp_path, monkeypatch):
     transcript_path = tmp_path / "s.jsonl"
     tailer = _make_turns_transcript(transcript_path, ["p1"])

@@ -251,9 +251,35 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
     fallback_reason = None
     new_chapter_dicts: list[_ChapterOut] = []
 
+    import anthropic  # imported lazily - only needed for `chapters`, not the live dashboard
+
     try:
         response = _call_model(outline, prior_titles)
-    except Exception as e:  # noqa: BLE001 - any failure here falls back, never crashes
+    except anthropic.AuthenticationError as e:
+        # A real 401 from the server - a key was sent and rejected (invalid,
+        # revoked, or malformed), distinct from no key being present at all
+        # (see the TypeError branch below) - worth flagging differently
+        # since the fix is "check the key," not "set a key."
+        fallback_reason = (
+            f"ANTHROPIC_API_KEY was rejected by the server ({e}); new turns grouped as "
+            "Unsorted. Check the key is still valid at console.anthropic.com."
+        )
+        response = None
+    except TypeError as e:
+        # The SDK raises a plain TypeError, not an AnthropicError subclass,
+        # when it can't find any credential at all (verified against the
+        # installed anthropic SDK, not guessed) - client-side, before any
+        # network call, so this costs nothing to check.
+        if "Could not resolve authentication method" in str(e):
+            fallback_reason = (
+                "No ANTHROPIC_API_KEY found in this environment; new turns grouped as "
+                "Unsorted. Set ANTHROPIC_API_KEY, or run `ant auth login` if you have the "
+                "Anthropic CLI."
+            )
+        else:
+            fallback_reason = f"chaptering call failed ({e}); new turns grouped as Unsorted"
+        response = None
+    except Exception as e:  # noqa: BLE001 - any other failure here falls back, never crashes
         fallback_reason = f"chaptering call failed ({e}); new turns grouped as Unsorted"
         response = None
 
