@@ -99,6 +99,15 @@ can't be looked up this way. Don't know which session you want yet? Run
 every session with enough to identify one (project, last-active time,
 first/last prompt, cost) and its id to pass to `--session`.
 
+**Order matters for `chapters`/`activity`/`recommend`: put `--transcript`/
+`--session` *after* the subcommand name**, e.g.
+`work-ledger chapters --session abc123`, not
+`work-ledger --session abc123 chapters`. Placing it before the subcommand
+name is rejected with an explicit error rather than silently picking the
+wrong session — a real gap in how Python's `argparse` resolves the same
+flag when it's defined on both the top-level parser and a subcommand's own
+parser.
+
 **Known limitation on subagent attribution**: this environment writes
 subagent transcripts to a separate `<session>/subagents/agent-<id>.jsonl`
 file with a `.meta.json` sidecar naming the exact `toolUseId` that spawned
