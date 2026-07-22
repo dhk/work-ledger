@@ -153,8 +153,36 @@ def test_resolve_transcript_arg_mutually_exclusive(capsys):
     assert "mutually exclusive" in capsys.readouterr().err
 
 
-def test_resolve_transcript_arg_neither_given_returns_none():
+def test_resolve_transcript_arg_neither_given_returns_none_when_no_pin(tmp_path, monkeypatch):
+    import work_ledger.session_pin as session_pin_mod
+
+    monkeypatch.setattr(session_pin_mod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(session_pin_mod, "PINNED_SESSION_PATH", tmp_path / "pinned_session")
     assert _resolve_transcript_arg(None, None) is None
+
+
+def test_resolve_transcript_arg_falls_back_to_pinned_session(tmp_path, monkeypatch):
+    import work_ledger.session_pin as session_pin_mod
+
+    monkeypatch.setattr(session_pin_mod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(session_pin_mod, "PINNED_SESSION_PATH", tmp_path / "pinned_session")
+    target = tmp_path / "session.jsonl"
+    target.write_text("", encoding="utf-8")
+    session_pin_mod.set_pinned_session(target)
+
+    assert _resolve_transcript_arg(None, None) == target.resolve()
+
+
+def test_resolve_transcript_arg_explicit_transcript_overrides_pin(tmp_path, monkeypatch):
+    import work_ledger.session_pin as session_pin_mod
+
+    monkeypatch.setattr(session_pin_mod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(session_pin_mod, "PINNED_SESSION_PATH", tmp_path / "pinned_session")
+    pinned = tmp_path / "pinned.jsonl"
+    pinned.write_text("", encoding="utf-8")
+    session_pin_mod.set_pinned_session(pinned)
+
+    assert _resolve_transcript_arg("explicit.jsonl", None) == Path("explicit.jsonl")
 
 
 def test_resolve_transcript_arg_transcript_given_returns_path():

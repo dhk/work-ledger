@@ -73,6 +73,10 @@ work-ledger sessions                              # list every local session: pr
 work-ledger sessions --since 2026-07-01                # limit to a date range
 work-ledger sessions --json                            # machine-readable output
 
+work-ledger session set abc123    # pin a session - chapters/activity/recommend default to it until cleared
+work-ledger session status        # show what's currently pinned, if anything
+work-ledger session clear         # unpin - back to defaulting to the most recently active session
+
 work-ledger export                                # write an anonymized usage export to a local file
 work-ledger export --since 2026-07-01 --out x.json     # same, filtered to a date range
 
@@ -107,6 +111,13 @@ name is rejected with an explicit error rather than silently picking the
 wrong session — a real gap in how Python's `argparse` resolves the same
 flag when it's defined on both the top-level parser and a subcommand's own
 parser.
+
+**`work-ledger session set <id>` pins a session** so `chapters`/`activity`/
+`recommend` all default to it instead of "most recently active," until
+`work-ledger session clear` — useful when you're watching an older or
+less-active session and don't want to pass `--session` on every single
+command. An explicit `--transcript`/`--session` on a specific command
+still overrides the pin for that one call.
 
 **Known limitation on subagent attribution**: this environment writes
 subagent transcripts to a separate `<session>/subagents/agent-<id>.jsonl`
@@ -151,7 +162,11 @@ this tool uses — no new cost math, just a grouping label on top.
   an `ant auth login` profile) — separate from your Claude Code session,
   since this is a direct API call this tool makes on your behalf. Without
   credentials (or on any other failure), it doesn't crash — it falls back
-  to a single "Unsorted" chapter and says so explicitly.
+  to a single "Unsorted" chapter and says so explicitly, with a specific
+  reason: no key found at all vs. a key that was sent but rejected by the
+  server (invalid/revoked) get distinctly worded messages, so you know
+  whether to set a key or check an existing one, rather than one generic
+  "chaptering call failed" for both.
 - **Results are cached and frozen.** A `<session-id>.chapters.json` file
   next to the transcript remembers what's already been chaptered.
   Re-running only chapters newly-added prompts; it never re-pays for or
