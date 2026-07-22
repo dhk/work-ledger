@@ -466,6 +466,73 @@ def _in_date_range(path: Path, since: date | None, until: date | None) -> bool:
     return True
 
 
+def run_sessions(since: date | None = None, until: date | None = None, as_json: bool = False):
+    """Lightweight listing of every local session transcript, newest first -
+    no chaptering, no API call, just what's already parsed locally (last
+    active time, first/last prompt, turn count, cost). Meant for discovery:
+    "what sessions exist, which one do I mean" before reaching for
+    --transcript/--session on another command - a claude.ai/code
+    session_... URL can't answer that (see --session's own help text),
+    but this listing doesn't need that id at all.
+
+    Both the first and last prompt are shown, not just the first - a
+    long-running or resumed session's first prompt (e.g. "how do we track
+    X") often stops reflecting what the session is actually about by the
+    time you're trying to identify it later; the most recent prompt is
+    frequently the more useful cue."""
+    console = Console()
+    transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
+    if not transcripts:
+        range_note = " in that date range" if (since or until) else ""
+        console.print(f"[red]No session transcripts found{range_note}.[/red]")
+        sys.exit(1)
+
+    rows = []
+    for path in transcripts:
+        tailer = TranscriptTailer(path)
+        tailer.poll()
+        turns = tailer.ordered_turns()
+        rows.append(
+            {
+                "session": path.stem,
+                "project": path.parent.name,
+                "last_active": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="minutes"),
+                "num_turns": len(turns),
+                "first_prompt": turns[0].prompt_snippet if turns else "",
+                "last_prompt": turns[-1].prompt_snippet if turns else "",
+                "cost_usd": tailer.total_cost_usd(),
+            }
+        )
+
+    if as_json:
+        import json
+
+        console.print_json(json.dumps(rows))
+        return
+
+    table = Table(title="work-ledger sessions", expand=True)
+    table.add_column("Session id", width=10)
+    table.add_column("Project", ratio=1, overflow="ellipsis")
+    table.add_column("Last active", width=16)
+    table.add_column("Turns", justify="right", width=5)
+    table.add_column("First prompt", ratio=2, overflow="ellipsis")
+    table.add_column("Last prompt", ratio=2, overflow="ellipsis")
+    table.add_column("Cost (est.)", justify="right", width=12)
+    for r in rows:
+        table.add_row(
+            r["session"][:8] + "…",
+            r["project"],
+            r["last_active"],
+            str(r["num_turns"]),
+            r["first_prompt"] or "[dim](empty)[/dim]",
+            r["last_prompt"] or "[dim](empty)[/dim]",
+            f"${r['cost_usd']:.4f}",
+        )
+    console.print()
+    console.print(table)
+    console.print("[dim]Pass a session's id to --session (a prefix is enough) on another command.[/dim]")
+
+
 def run_chapters_all(since: date | None = None, until: date | None = None, as_json: bool = False):
     console = Console()
     transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
@@ -1039,6 +1106,30 @@ def main():
         help="Machine-readable output instead of a terminal table",
     )
 
+    sessions_parser = subparsers.add_parser(
+        "sessions",
+        help="List every local session transcript (project, last-active time, first prompt, "
+        "cost) - no chaptering, no API call. Meant for discovery, before reaching for "
+        "--transcript/--session on another command",
+    )
+    sessions_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/after this date (YYYY-MM-DD)",
+    )
+    sessions_parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/before this date (YYYY-MM-DD)",
+    )
+    sessions_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable output instead of a terminal table",
+    )
+
     export_parser = subparsers.add_parser(
         "export",
         help="Write an anonymized, manual usage export (aggregates + chapter-category rollups "
@@ -1104,6 +1195,12 @@ def main():
             set_threshold=args.set_threshold,
             as_json=args.json,
         )
+        return
+
+    if args.command == "sessions":
+        since = _parse_date_arg(args.since, "--since") if args.since else None
+        until = _parse_date_arg(args.until, "--until") if args.until else None
+        run_sessions(since=since, until=until, as_json=args.json)
         return
 
     if args.command == "export":

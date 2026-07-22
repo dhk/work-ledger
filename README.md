@@ -67,6 +67,10 @@ work-ledger activity --report                          # same visual style as ch
 work-ledger activity --report --format png --out x.png  # same, as a PNG image
 work-ledger activity --report --top 10                  # show only the 10 costliest types, rest folded into "Other"
 
+work-ledger sessions                              # list every local session: project, last-active, first/last prompt, cost
+work-ledger sessions --since 2026-07-01                # limit to a date range
+work-ledger sessions --json                            # machine-readable output
+
 work-ledger export                                # write an anonymized usage export to a local file
 work-ledger export --since 2026-07-01 --out x.json     # same, filtered to a date range
 
@@ -88,7 +92,10 @@ commit hash — and searches `~/.claude/projects/` for a matching filename;
 an ambiguous prefix lists every match instead of guessing. This is **not**
 the same id as a `claude.ai/code` `session_...` URL — that's a separate,
 unrelated identifier with no local mapping to a transcript file, so it
-can't be looked up this way.
+can't be looked up this way. Don't know which session you want yet? Run
+`work-ledger sessions` first — no chaptering, no API call, just a list of
+every session with enough to identify one (project, last-active time,
+first/last prompt, cost) and its id to pass to `--session`.
 
 **Known limitation on subagent attribution**: this environment writes
 subagent transcripts to a separate `<session>/subagents/agent-<id>.jsonl`
