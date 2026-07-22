@@ -4,6 +4,7 @@ from work_ledger.chapters import Chapter, Section
 from pathlib import Path
 
 from work_ledger.cli import (
+    _check_transcript_flag_placement,
     _filter_only,
     _in_date_range,
     _parse_date_arg,
@@ -192,3 +193,58 @@ def test_resolve_transcript_arg_session_ambiguous_exits_and_lists_candidates(iso
     err = capsys.readouterr().err
     assert "0daf1111-0000-0000-0000-000000000000" in err
     assert "0daf2222-0000-0000-0000-000000000000" in err
+
+
+@pytest.mark.parametrize("command", ["chapters", "activity", "recommend"])
+def test_check_transcript_flag_placement_rejects_session_before_subcommand(command, capsys):
+    argv = ["--session", "abc123", command]
+    with pytest.raises(SystemExit) as exc_info:
+        _check_transcript_flag_placement(argv, command)
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "--session" in err
+    assert command in err
+
+
+@pytest.mark.parametrize("command", ["chapters", "activity", "recommend"])
+def test_check_transcript_flag_placement_rejects_transcript_before_subcommand(command, capsys):
+    argv = ["--transcript", "x.jsonl", command]
+    with pytest.raises(SystemExit) as exc_info:
+        _check_transcript_flag_placement(argv, command)
+    assert exc_info.value.code == 2
+    assert "--transcript" in capsys.readouterr().err
+
+
+def test_check_transcript_flag_placement_allows_flag_after_subcommand():
+    argv = ["chapters", "--session", "abc123"]
+    _check_transcript_flag_placement(argv, "chapters")  # must not raise/exit
+
+
+def test_check_transcript_flag_placement_allows_before_and_after_since_after_wins():
+    """Regression coverage for the exact argparse behavior this check is
+    built around: if the flag appears both before and after the subcommand,
+    argparse's own parsing already lets the after-occurrence win correctly
+    - only "before, and not repeated after" is actually broken."""
+    argv = ["--session", "wrong", "chapters", "--session", "right"]
+    _check_transcript_flag_placement(argv, "chapters")  # must not raise/exit
+
+
+def test_check_transcript_flag_placement_no_subcommand_is_fine():
+    argv = ["--session", "abc123", "--once"]
+    _check_transcript_flag_placement(argv, None)  # must not raise/exit
+
+
+@pytest.mark.parametrize("command", ["limits", "export", "patterns", "sessions"])
+def test_check_transcript_flag_placement_ignores_commands_without_transcript_flags(command):
+    """limits/export/patterns/sessions never redefine --transcript/--session
+    on their own parser, so there's no ambiguity for this check to catch -
+    it should be a no-op for these regardless of flag position."""
+    argv = ["--session", "abc123", command]
+    _check_transcript_flag_placement(argv, command)  # must not raise/exit
+
+
+def test_check_transcript_flag_placement_handles_flag_equals_form():
+    argv = ["--session=abc123", "chapters"]
+    with pytest.raises(SystemExit) as exc_info:
+        _check_transcript_flag_placement(argv, "chapters")
+    assert exc_info.value.code == 2

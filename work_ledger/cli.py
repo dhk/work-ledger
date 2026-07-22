@@ -421,6 +421,56 @@ def _validate_top(value: int | None) -> None:
         sys.exit(2)
 
 
+# Subcommands that redefine --transcript/--session on their own parser
+# (via _add_transcript_args) - see _check_transcript_flag_placement for why
+# that duplication matters. limits/export/patterns/sessions don't accept
+# either flag at all, so there's no ambiguity to check for those.
+_COMMANDS_WITH_OWN_TRANSCRIPT_FLAGS = {"chapters", "activity", "recommend"}
+
+
+def _check_transcript_flag_placement(argv: list[str], command: str | None) -> None:
+    """--transcript/--session are defined on both the top-level parser (for
+    the plain `work-ledger --transcript X` dashboard form, with no
+    subcommand) and on chapters'/activity's/recommend's own parsers (for
+    the documented `work-ledger <command> --transcript X` form). Verified
+    via a minimal argparse repro (not guessed): when the same dest is
+    defined on both, argparse's subparsers action always lets the
+    subcommand's own parsed value - including its unset default - win over
+    whatever the parent already parsed, silently discarding it. That makes
+    `work-ledger --session X chapters` silently ignore --session entirely
+    and fall back to "most recently active session," with no error - a
+    real bug a user hit in practice, not a hypothetical.
+
+    Fixing this to actually *work* would mean either breaking the
+    documented `work-ledger <command> --transcript X` form (removing the
+    subcommand's own definition) or fragile raw-argv value-recovery. Given
+    the "before the subcommand" placement was never actually documented
+    (every example puts the flag either with no subcommand at all, or
+    after one), the correct fix is to reject that specific combination
+    outright with a clear, actionable error instead of silently using the
+    wrong session."""
+    if command not in _COMMANDS_WITH_OWN_TRANSCRIPT_FLAGS:
+        return
+    try:
+        command_index = argv.index(command)
+    except ValueError:
+        return
+    before, after = argv[:command_index], argv[command_index + 1 :]
+    for flag in ("--transcript", "--session"):
+        appears_before = any(tok == flag or tok.startswith(flag + "=") for tok in before)
+        appears_after = any(tok == flag or tok.startswith(flag + "=") for tok in after)
+        if appears_before and not appears_after:
+            print(
+                f"error: {flag} must come after '{command}', not before it - e.g. "
+                f"`work-ledger {command} {flag} ...`, not `work-ledger {flag} ... {command}`. "
+                "Placing it before the subcommand name silently ignores it (a known "
+                "argparse limitation with subcommands - see _check_transcript_flag_placement), "
+                "so this is rejected rather than silently watching the wrong session.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+
 def _resolve_transcript_arg(transcript: str | None, session: str | None) -> Path | None:
     """Turn --transcript/--session into a concrete Path (or None, meaning
     "fall back to find_active_transcript()") - shared by every subcommand
@@ -1187,6 +1237,7 @@ def main():
     )
 
     args = parser.parse_args()
+    _check_transcript_flag_placement(sys.argv[1:], args.command)
 
     if args.command == "limits":
         run_limits(
