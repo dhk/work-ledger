@@ -1,0 +1,308 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>How a session of AI-assisted coding actually got used</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--page-plane, #f9f9f7); }
+
+  .viz-root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1: #2a78d6; /* blue */
+    --series-2: #eb6834; /* orange */
+    --series-3: #1baf7a; /* aqua */
+    --series-4: #eda100; /* yellow */
+    --series-5: #e87ba4; /* magenta */
+    --series-6: #008300; /* green */
+    --series-7: #4a3aa7; /* violet */
+    --series-8: #e34948; /* red */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --series-4: #c98500;
+      --series-5: #d55181;
+      --series-6: #008300;
+      --series-7: #9085e9;
+      --series-8: #e66767;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+  }
+
+  .viz-root {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--text-primary);
+    background: var(--page-plane);
+  }
+  .wrap {
+    width: 1360px;
+    margin: 0 auto;
+    padding: 44px 48px 40px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+  }
+
+  .kicker {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+  h1 {
+    margin: 0 0 10px;
+    font-size: 34px;
+    line-height: 1.15;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .sub {
+    margin: 0 0 34px;
+    font-size: 16px;
+    color: var(--text-secondary);
+    max-width: 900px;
+  }
+
+  .chart { margin-bottom: 30px; }
+
+  .chapter { padding: 18px 0; }
+  .chapter + .chapter { border-top: 1px solid var(--gridline); }
+
+  .chapter-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 20px;
+    margin-bottom: 10px;
+  }
+  .chapter-title {
+    font-size: 17px;
+    font-weight: 700;
+  }
+  .chapter-value {
+    text-align: right;
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .chapter-value .pct {
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-size: 13.5px;
+  }
+
+  .chapter-track {
+    position: relative;
+    height: 22px;
+    background-image: linear-gradient(to right, var(--gridline) 1px, transparent 1px);
+    background-size: 25% 100%;
+    margin-bottom: 12px;
+  }
+  .chapter-fill {
+    position: absolute;
+    left: 0; top: 0;
+    height: 22px;
+    display: flex;
+  }
+  .seg {
+    height: 100%;
+    margin-right: 2px;
+  }
+  .seg:last-child { margin-right: 0; border-radius: 0 4px 4px 0; }
+
+  .sections {
+    display: flex;
+    flex-direction: column;
+    row-gap: 5px;
+    padding-left: 2px;
+  }
+  .section-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 20px;
+    font-size: 14px;
+  }
+  .section-name {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    color: var(--text-secondary);
+  }
+  .section-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transform: translateY(-1px);
+  }
+  .section-value {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .foot {
+    margin: 0;
+    padding-top: 22px;
+    border-top: 1px solid var(--gridline);
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  .foot b { color: var(--text-primary); }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <div class="wrap">
+    <p class="kicker">work-ledger · synthetic session</p>
+    <h1>How a session of AI-assisted coding actually got used</h1>
+    <p class="sub">$104.50 across 8 chaptered initiatives — a synthetic session built to show the kind of story work-ledger surfaces from real transcripts.</p>
+
+    <div class="chart" id="chart"></div>
+
+    <p class="foot"><b>Two places worth a second look:</b> a debugging chapter that spiraled through 14 attempts before the real fix (37% of spend), and a mechanical refactor paid for one call-site at a time instead of one pass (22%).</p>
+  </div>
+</div>
+
+<script>
+const data = [
+  {
+    title: "Debug intermittent payment-retry test failures", cost: 38.40, color: "var(--series-1)",
+    sections: [
+      { title: "Reproduce failure locally", cost: 6.00 },
+      { title: "Try four different fixes for the race condition", cost: 24.10 },
+      { title: "Add regression test and confirm the fix holds", cost: 8.30 },
+    ],
+  },
+  {
+    title: "Refactor legacy switch-statement dispatcher to strategy pattern", cost: 22.50, color: "var(--series-2)",
+    sections: [
+      { title: "Convert the first module as a template", cost: 9.00 },
+      { title: "Convert the remaining six call sites one by one", cost: 13.50 },
+    ],
+  },
+  {
+    title: "Investigate and fix Stripe webhook duplicate-charge bug", cost: 18.90, color: "var(--series-8)",
+    sections: [
+      { title: "Reproduce the duplicate charge", cost: 7.40 },
+      { title: "Root-cause the idempotency-key handling", cost: 6.50 },
+      { title: "Ship the fix and add a regression test", cost: 5.00 },
+    ],
+  },
+  {
+    title: "Rebuild onboarding email template (second attempt)", cost: 9.80, color: "var(--series-3)",
+    sections: [
+      { title: "First pass — wrong templating engine assumed", cost: 4.60 },
+      { title: "Redo with the correct templating engine", cost: 5.20 },
+    ],
+  },
+  {
+    title: "Write onboarding docs for new engineers", cost: 6.30, color: "var(--series-7)",
+    sections: [
+      { title: "Draft outline", cost: 1.10 },
+      { title: "Expand into full doc with examples", cost: 5.20 },
+    ],
+  },
+  {
+    title: "Unsorted", cost: 4.90, color: "var(--series-4)",
+    sections: [
+      { title: "One-off questions and small asks", cost: 4.90 },
+    ],
+  },
+  {
+    title: "Add CSV export button to reports page", cost: 2.10, color: "var(--series-6)",
+    sections: [
+      { title: "Implement export endpoint and wire up button", cost: 2.10 },
+    ],
+  },
+  {
+    title: "Tune ESLint/Prettier config for the monorepo", cost: 1.60, color: "var(--series-5)",
+    sections: [
+      { title: "Adjust rules and fix new lint errors", cost: 1.60 },
+    ],
+  },
+];
+
+const grandTotal = data.reduce((s, d) => s + d.cost, 0);
+const maxCost = Math.max(...data.map(d => d.cost));
+
+const chart = document.getElementById("chart");
+data.forEach(d => {
+  const pct = (d.cost / grandTotal) * 100;
+  const widthPct = (d.cost / maxCost) * 100;
+  const chapterCost = d.cost || 1e-9;
+
+  const block = document.createElement("div");
+  block.className = "chapter";
+
+  const segsHtml = d.sections.map(s => {
+    const segPct = (s.cost / chapterCost) * 100;
+    const opacity = (0.55 + 0.45 * (s.cost / chapterCost)).toFixed(2);
+    return `<div class="seg" style="width:${segPct.toFixed(2)}%; background:${d.color}; opacity:${opacity}"></div>`;
+  }).join("");
+
+  const sectionsHtml = d.sections.map(s => `
+    <div class="section-row">
+      <div class="section-name"><span class="section-dot" style="background:${d.color}"></span>${s.title}</div>
+      <div class="section-value">$${s.cost.toFixed(2)}</div>
+    </div>
+  `).join("");
+
+  block.innerHTML = `
+    <div class="chapter-head">
+      <div class="chapter-title">${d.title}</div>
+      <div class="chapter-value">$${d.cost.toFixed(2)} <span class="pct">(${pct.toFixed(0)}%)</span></div>
+    </div>
+    <div class="chapter-track"><div class="chapter-fill" style="width:${widthPct.toFixed(1)}%">${segsHtml}</div></div>
+    <div class="sections">${sectionsHtml}</div>
+  `;
+  chart.appendChild(block);
+});
+</script>
+</body>
+</html>
