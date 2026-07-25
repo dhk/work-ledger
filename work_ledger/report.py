@@ -12,6 +12,7 @@ an optional dependency (`pip install "work-ledger[report]"` + a one-time
 generation itself has no extra dependency.
 """
 
+import html
 import json
 from pathlib import Path
 
@@ -612,6 +613,354 @@ function renderPanel(rows, colors, legendId, rootId, unitLabel) {{
 renderPanel({activity_json}, {activity_colors_json}, "activity-legend", "activity-days", "unit(s)");
 renderPanel({category_json}, {category_colors_json}, "category-legend", "category-days", "turn(s)");
 </script>
+</body>
+</html>
+"""
+
+
+def build_sessions_index_html(rows: list[dict]) -> str:
+    """`work-ledger serve`'s landing page - every local session rendered as
+    one clickable, cost-sized bar, reusing the exact same stat-tile/
+    bar-track/tooltip visual language as build_report_html/
+    build_activity_report_html rather than inventing a second look. A
+    session isn't broken into per-section segments the way a chapter's bar
+    is - that finer drill-down lives one click away, on its own page via
+    build_session_detail_html - so each bar here is a single solid segment,
+    same shape as build_activity_report_html's bars.
+
+    `rows` is the exact shape cli.build_session_rows() returns (session,
+    project, last_active, num_turns, first_prompt, last_prompt, cost_usd) -
+    this function adds only presentation (color, href, escaping), no new
+    data derivation."""
+    n = len(rows)
+    total_cost = sum(r["cost_usd"] for r in rows)
+    total_turns = sum(r["num_turns"] for r in rows)
+    colors = _series_colors(n)
+
+    css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
+    css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
+    style = _style_block(css_vars_light, css_vars_dark)
+
+    data = [
+        {
+            "label": html.escape(f"{r['project']} — {r['session'][:8]}"),
+            "cost": r["cost_usd"],
+            "href": f"/session/{r['session']}",
+            "last_active": html.escape(r["last_active"]),
+            "num_turns": r["num_turns"],
+            "first_prompt": html.escape(r["first_prompt"] or "(empty)"),
+            "last_prompt": html.escape(r["last_prompt"] or "(empty)"),
+        }
+        for r in rows
+    ]
+    data_json = json.dumps(data)
+    colors_json = json.dumps([f"var(--series-{i+1})" for i in range(n)])
+    most_recent = rows[0]["last_active"] if rows else "—"
+
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>work-ledger — sessions</title>
+{style}
+<style>
+  .session-row a {{ color: inherit; text-decoration: none; display: block; }}
+  .session-row a:hover .chapter-title {{ text-decoration: underline; }}
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <div class="wrap">
+    <h1>work-ledger</h1>
+    <p class="subtitle">Every local session found under <code class="path">~/.claude/projects/</code> — click one to drill into its chapters, turns, and units.</p>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <p class="stat-label">Total cost (est.)</p>
+        <div class="stat-value">${total_cost:.2f}</div>
+        <p class="stat-note">across {n} session{'s' if n != 1 else ''} shown</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Sessions found</p>
+        <div class="stat-value">{n}</div>
+        <p class="stat-note">{total_turns} turn{'s' if total_turns != 1 else ''} total</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Most recently active</p>
+        <div class="stat-value" style="font-size:16px;">{html.escape(most_recent)}</div>
+        <p class="stat-note">local transcript mtime</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Sessions by cost</h2>
+      <p class="caption">Sorted by cost, most expensive first — hover a bar for a quick summary, click it (or its row) to open that session.</p>
+      <div id="sessions"></div>
+    </div>
+
+    <p class="footnote">
+      Read-only - nothing on this page can edit a transcript or trigger a chaptering API call.
+      Cost is the same token-pricing estimate the CLI shows, not itemized billing. Served
+      locally by <code>work-ledger serve</code>; never leaves 127.0.0.1.
+    </p>
+  </div>
+</div>
+
+<script>
+const data = {data_json};
+const seriesColor = {colors_json};
+const maxCost = Math.max(...data.map(d => d.cost), 1e-9);
+const sorted = [...data].map((d, i) => ({{ ...d, color: seriesColor[i] }})).sort((a, b) => b.cost - a.cost);
+
+const root = document.getElementById("sessions");
+sorted.forEach((d) => {{
+  const widthPct = (d.cost / maxCost) * 100;
+
+  const wrap = document.createElement("div");
+  wrap.className = "chapter session-row";
+
+  const link = document.createElement("a");
+  link.href = d.href;
+
+  const head = document.createElement("div");
+  head.className = "chapter-head";
+  head.innerHTML = `
+    <div class="chapter-title"><span class="swatch" style="background:${{d.color}}"></span>${{d.label}}</div>
+    <div class="chapter-figs"><b>$${{d.cost.toFixed(2)}}</b></div>
+  `;
+  link.appendChild(head);
+
+  const track = document.createElement("div");
+  track.className = "bar-track";
+  track.style.width = widthPct.toFixed(1) + "%";
+  const seg = document.createElement("div");
+  seg.className = "bar-seg";
+  seg.style.width = "100%";
+  seg.style.background = d.color;
+  seg.innerHTML = `<div class="tooltip"><b>${{d.num_turns}} turn${{d.num_turns === 1 ? "" : "s"}}</b> · last active ${{d.last_active}}<br>${{d.first_prompt}}<br>${{d.last_prompt}}</div>`;
+  track.appendChild(seg);
+  link.appendChild(track);
+
+  wrap.appendChild(link);
+  root.appendChild(wrap);
+}});
+</script>
+</body>
+</html>
+"""
+
+
+_DETAIL_EXTRA_CSS = """
+  .back-link { color: var(--text-secondary); font-size: 13px; text-decoration: none; }
+  .back-link:hover { text-decoration: underline; }
+
+  details.chapter-d { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+  details.chapter-d > summary.chapter-summary {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 12px 14px; cursor: pointer; list-style: none; background: var(--surface-1);
+  }
+  details.chapter-d > summary.chapter-summary::-webkit-details-marker { display: none; }
+  details.chapter-d[open] > summary.chapter-summary { border-bottom: 1px solid var(--border); }
+  .category-badge {
+    font-size: 10.5px; font-weight: 500; color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: 1px 8px; margin-left: 8px;
+  }
+
+  .sections { padding: 6px 14px 10px 30px; }
+  details.section-d { margin: 6px 0; }
+  summary.section-summary {
+    display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary);
+    cursor: pointer; list-style: none; padding: 4px 0;
+  }
+  summary.section-summary::-webkit-details-marker { display: none; }
+  summary.section-summary .t { flex: 1; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  summary.section-summary .val { white-space: nowrap; }
+
+  .turns { padding: 2px 0 4px 20px; }
+  details.turn-d { margin: 2px 0; }
+  summary.turn-summary {
+    display: flex; align-items: center; gap: 10px; font-size: 12px; cursor: pointer;
+    list-style: none; padding: 5px 8px; border-radius: 6px;
+  }
+  summary.turn-summary:hover { background: var(--gridline); }
+  summary.turn-summary::-webkit-details-marker { display: none; }
+  summary.turn-summary .time { color: var(--text-muted); width: 64px; flex: none; font-variant-numeric: tabular-nums; }
+  summary.turn-summary .t { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  summary.turn-summary .val { color: var(--text-secondary); white-space: nowrap; flex: none; }
+
+  .units { padding: 2px 0 6px 74px; }
+  .unit-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--text-secondary); padding: 3px 0; }
+  .unit-row .kind {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; border-radius: 4px;
+    padding: 1px 6px; flex: none; color: var(--page); background: var(--text-muted);
+  }
+  .unit-row .kind-skill { background: #4a3aa7; }
+  .unit-row .kind-subagent { background: #e34948; }
+  .unit-row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .unit-row .val { white-space: nowrap; flex: none; }
+"""
+
+
+def build_session_detail_html(session_id: str, project: str, tailer: TranscriptTailer, chapters: list[Chapter]) -> str:
+    """Per-session drill-down: chapters -> turns -> units, mirroring
+    `chapters --detail`'s terminal rows but as real clickable navigation
+    (native <details>/<summary> disclosure - no JS needed for the tree
+    itself) instead of a CLI flag. Chapters/sections reuse the same
+    stat-tile/panel/section-row visual language as build_report_html;
+    turns/units get a small amount of new CSS in the same spirit
+    (_DETAIL_EXTRA_CSS), added once rather than duplicated per call site.
+
+    `chapters` is expected to come from chapters.cached_chapters(), never
+    chapters.get_chapters() - this function only renders whatever's already
+    on disk, so calling it can never trigger a paid Haiku pass as a side
+    effect of browsing (see server.py). Any turn not covered by a cached
+    chapter (either because none exist yet, or new turns arrived since the
+    last chaptering pass) is shown under a synthetic "Not yet chaptered"
+    group rather than silently dropped."""
+    all_turns = tailer.ordered_turns()
+    grand_total = tailer.total_cost_usd()
+    chaptered_ids = {pid for c in chapters for pid in c.prompt_ids}
+    leftover_turns = [t for t in all_turns if t.prompt_id not in chaptered_ids]
+
+    colors = _series_colors(len(chapters) + (1 if leftover_turns else 0))
+    css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
+    css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
+    style = _style_block(css_vars_light, css_vars_dark)
+
+    def _unit_cost_str(unit) -> str:
+        return "?" if unit.unknown_model_cost and unit.cost_usd == 0 else f"${unit.cost_usd:.4f}"
+
+    def _turn_cost_str(turn) -> str:
+        return "?" if turn.unknown_model_cost and turn.cost_usd == 0 else f"${turn.cost_usd:.4f}"
+
+    def _unit_row(unit) -> str:
+        return (
+            f'<div class="unit-row"><span class="kind kind-{html.escape(unit.kind)}">{html.escape(unit.kind)}</span>'
+            f'<span class="t">{html.escape(unit.label)}</span>'
+            f'<span class="val">{unit.input_tokens:,} in / {unit.output_tokens:,} out · {_unit_cost_str(unit)}</span></div>'
+        )
+
+    def _turn_block(turn) -> str:
+        time_str = turn.timestamp[11:19] if len(turn.timestamp) >= 19 else turn.timestamp
+        units_html = "".join(_unit_row(u) for u in turn.units) or '<div class="unit-row"><span class="t">(no units)</span></div>'
+        n_units = len(turn.units)
+        return (
+            '<details class="turn-d">'
+            '<summary class="turn-summary">'
+            f'<span class="time">{html.escape(time_str)}</span>'
+            f'<span class="t">{html.escape(turn.prompt_snippet)}</span>'
+            f'<span class="val">{n_units} call{"" if n_units == 1 else "s"} · {_turn_cost_str(turn)}</span>'
+            "</summary>"
+            f'<div class="units">{units_html}</div>'
+            "</details>"
+        )
+
+    def _section_block(section, color: str) -> str:
+        s_turns = section.turns(tailer)
+        s_cost = sum(t.cost_usd for t in s_turns)
+        n_turns = len(s_turns)
+        turns_html = "".join(_turn_block(t) for t in s_turns) or '<p class="caption">(no turns)</p>'
+        return (
+            '<details class="section-d" open>'
+            '<summary class="section-summary">'
+            f'<span class="dot" style="background:{color}"></span>'
+            f'<span class="t">{html.escape(section.title)}</span>'
+            f'<span class="val">{n_turns} turn{"" if n_turns == 1 else "s"} · ${s_cost:.4f}</span>'
+            "</summary>"
+            f'<div class="turns">{turns_html}</div>'
+            "</details>"
+        )
+
+    def _chapter_block(chapter, color: str) -> str:
+        c_turns = chapter.turns(tailer)
+        c_cost = sum(t.cost_usd for t in c_turns)
+        pct = (c_cost / grand_total * 100) if grand_total else 0.0
+        sections_html = "".join(_section_block(s, color) for s in chapter.sections)
+        return (
+            '<details class="chapter-d">'
+            '<summary class="chapter-summary">'
+            '<span class="chapter-title">'
+            f'<span class="swatch" style="background:{color}"></span>{html.escape(chapter.title)}'
+            f'<span class="category-badge">{html.escape(chapter.category)}</span></span>'
+            f'<span class="chapter-figs"><b>${c_cost:.4f}</b>&nbsp;({pct:.0f}%)</span>'
+            "</summary>"
+            f'<div class="sections">{sections_html}</div>'
+            "</details>"
+        )
+
+    chapter_blocks = [_chapter_block(c, f"var(--series-{i+1})") for i, c in enumerate(chapters)]
+
+    if leftover_turns:
+        color = f"var(--series-{len(chapters)+1})"
+        leftover_cost = sum(t.cost_usd for t in leftover_turns)
+        pct = (leftover_cost / grand_total * 100) if grand_total else 0.0
+        turns_html = "".join(_turn_block(t) for t in leftover_turns)
+        chapter_blocks.append(
+            '<details class="chapter-d" open>'
+            '<summary class="chapter-summary">'
+            '<span class="chapter-title">'
+            f'<span class="swatch" style="background:{color}"></span>Not yet chaptered</span>'
+            f'<span class="chapter-figs"><b>${leftover_cost:.4f}</b>&nbsp;({pct:.0f}%)</span>'
+            "</summary>"
+            f'<div class="turns">{turns_html}</div>'
+            "</details>"
+        )
+
+    chapters_note = (
+        f"{len(chapters)} chapter{'s' if len(chapters) != 1 else ''} cached"
+        if chapters
+        else "no chapters cached - run `work-ledger chapters` to add initiative grouping "
+        "(a small Anthropic API cost); this page never triggers that pass itself"
+    )
+
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>work-ledger — {html.escape(session_id)}</title>
+{style}
+<style>
+{_DETAIL_EXTRA_CSS}
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <div class="wrap">
+    <p><a class="back-link" href="/">&larr; All sessions</a></p>
+    <h1>{html.escape(project)}</h1>
+    <p class="subtitle">Session <code class="path">{html.escape(session_id)}</code></p>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <p class="stat-label">Total cost (est.)</p>
+        <div class="stat-value">${grand_total:.2f}</div>
+        <p class="stat-note">across {len(all_turns)} turn{'s' if len(all_turns) != 1 else ''}</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Chapters</p>
+        <div class="stat-value">{len(chapters)}</div>
+        <p class="stat-note">{chapters_note}</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Not yet chaptered</p>
+        <div class="stat-value">{len(leftover_turns)}</div>
+        <p class="stat-note">turn{'s' if len(leftover_turns) != 1 else ''} outside any cached chapter</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Chapters &rarr; turns &rarr; units</h2>
+      <p class="caption">Click a chapter, then a section, then a turn to drill down — same grouping as <code>chapters --detail</code>, browsable instead of flag-driven.</p>
+      {"".join(chapter_blocks) or '<p class="caption">No turns found in this transcript.</p>'}
+    </div>
+
+    <p class="footnote">
+      Read-only - nothing here edits the transcript or its chapter cache, and viewing this page
+      never triggers a chaptering API call. Served locally by <code>work-ledger serve</code>;
+      never leaves 127.0.0.1.
+    </p>
+  </div>
+</div>
 </body>
 </html>
 """
