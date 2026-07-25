@@ -24,7 +24,7 @@ below in this theme extends that core rather than replacing it.
 |---|---|---|
 | [#3](https://github.com/dhk/work-ledger/issues/3) | Cross-session rollup — cluster the same initiative across sessions | — |
 | [#4](https://github.com/dhk/work-ledger/issues/4) | Trend/time-series view of cost over time | — |
-| [#5](https://github.com/dhk/work-ledger/issues/5) | Recurring-pattern/waste mining across chapters and sessions | — |
+| [#5](https://github.com/dhk/work-ledger/issues/5) | Recurring-pattern/waste mining across chapters and sessions | Within-session half shipped (`work-ledger waste`: repeated file reads, repeated near-identical subagent dispatches, scoped to session/chapter); the cross-session half of this issue still depends on #3 |
 | [#16](https://github.com/dhk/work-ledger/issues/16) | Pluggable local-model chaptering backend (Ollama) + unfreeze chapters | — |
 | [#35](https://github.com/dhk/work-ledger/issues/35) | `miso` — run chapters + reports end-to-end in one command | — |
 
