@@ -75,6 +75,12 @@ work-ledger timeline --json                            # machine-readable output
 work-ledger timeline --report                          # same visual style as chapters --report, as HTML
 work-ledger timeline backfill                          # chapter any uncached sessions in range first (small API cost), then show
 
+work-ledger trend                                 # is spend going up or down - cost bucketed by day (last 30 days by default)
+work-ledger trend --bucket week                        # same, bucketed by ISO week instead of day
+work-ledger trend --since 2026-06-01                   # a longer look-back
+work-ledger trend --json                               # machine-readable output
+work-ledger trend --report                             # same visual style as chapters --report, as HTML
+
 work-ledger serve                                 # local-only web UI - browse every session, drill into chapters/turns/units
 work-ledger serve --port 9000                          # different port (default 8765)
 
@@ -285,6 +291,33 @@ has shifted over time, not just your spend.
   page, same visual system as `chapters --report`/`activity --report`.
 - **`--json`** emits the full per-day activity/category counts for
   programmatic use.
+
+## Trend (cost over time)
+
+`work-ledger trend` answers the question `timeline` deliberately doesn't:
+not "how has my practice changed" but "is my spend going up or down" — a
+real time series of dollars, bucketed by day (default) or `--bucket week`,
+across every session in range. `chapters --all` already lists per-session
+totals, but that's a flat list; this re-slices the same per-turn cost data
+by calendar period so a trend is visible at a glance instead of read off a
+long table by hand.
+
+- **Cost only, not activity mix** — a deliberately narrower, complementary
+  view to `timeline`'s tool/skill/subagent/approach-category breakdown.
+  Reads only `Turn.cost_usd`/`Turn.timestamp`, so unlike `timeline`'s
+  chapter-category panel there's no cached-vs-uncached distinction and no
+  API call, ever: every period's cost is either fully priced or flagged
+  unknown, never partial.
+- **Defaults to the last 30 days** if neither `--since` nor `--until` is
+  given, same re-derive-fresh-every-run precedent as `chapters --all`/
+  `timeline` (no persisted cross-session store yet).
+- **Terminal output is a sparkline** (same scaling convention as
+  `timeline`'s) plus a per-period table with cost, turn count, and a
+  proportional bar, so you get both the at-a-glance shape and the exact
+  numbers. `--report` renders the same data as an HTML/PNG page, same
+  visual system as `chapters --report`/`timeline --report`.
+- **`--json`** emits the full per-period cost/turn-count/pricing-coverage
+  data for programmatic use.
 
 ## Local web UI
 
@@ -502,7 +535,8 @@ validation, cache round-trip, the frozen-prefix/continuation-merge
 behavior, and the model-call fallback paths - refusal, malformed shape,
 exception, plus the cache-only `cached_chapters`/`has_uncached_turns`
 helpers `timeline` relies on), `export.py`, `recommend.py`, `limits.py`,
-`timeline.py` (day-bucketing, category-mix, top-label ranking), and
+`timeline.py` (day-bucketing, category-mix, top-label ranking),
+`trend.py` (day/week cost-bucketing, unknown-model-cost flagging), and
 `cli.py`'s pure helper functions.
 
 CI (`.github/workflows/ci.yml`) runs the suite with `pytest-cov` and a

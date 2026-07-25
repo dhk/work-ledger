@@ -6,6 +6,7 @@ from pathlib import Path
 from work_ledger import cli
 from work_ledger.cli import (
     _check_transcript_flag_placement,
+    _cost_bar,
     _filter_only,
     _has_skill_units,
     _in_date_range,
@@ -39,6 +40,22 @@ def test_turns_cost_sums_all_turns():
 def test_turns_unknown_true_if_any_turn_unknown():
     turns = [_turn("p1", 0.0, unknown=True), _turn("p2", 1.0)]
     assert _turns_unknown(turns) is True
+
+
+def test_cost_bar_scales_to_own_max():
+    assert _cost_bar(5.0, 10.0, width=10) == "█" * 5
+    assert _cost_bar(10.0, 10.0, width=10) == "█" * 10
+    assert _cost_bar(0.0, 10.0, width=10) == ""
+
+
+def test_cost_bar_zero_max_returns_empty():
+    """A trend where every period has $0 cost (e.g. all unpriced models) must
+    not divide by zero - no bar rather than crashing."""
+    assert _cost_bar(0.0, 0.0) == ""
+
+
+def test_cost_bar_never_exceeds_width():
+    assert len(_cost_bar(100.0, 1.0, width=10)) == 10
 
 
 def test_turns_unknown_false_if_none_unknown():

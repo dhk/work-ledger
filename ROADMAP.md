@@ -11,7 +11,7 @@ Staging follows the show/tell/do rubric in `CLAUDE.md` (full writeup:
 the narrative synthesis on top, refreshed when a theme's shape actually
 changes — not mechanically re-synced on every issue edit.
 
-**Current focus:** the practice-visibility theme is now fully shipped (#44 timeline, #43 web UI) and the quality/infra batch (#45-48) is closed out. Nothing designated as current focus yet - next candidate is whichever of #42 (history store) or the Tell-stage work (#19/#21/#22-23) gets picked up.
+**Current focus:** the practice-visibility theme is now fully shipped (#44 timeline, #43 web UI), the cost/usage theme picked up a time-series view (#4 trend), and the quality/infra batch (#45-48) is closed out. Nothing designated as current focus yet - next candidate is whichever of #42 (history store) or the Tell-stage work (#19/#21/#22-23) gets picked up.
 
 ## Cost/usage reporting — Show, core shipped
 
@@ -23,7 +23,7 @@ below in this theme extends that core rather than replacing it.
 | Issue | What | Depends on |
 |---|---|---|
 | [#3](https://github.com/dhk/work-ledger/issues/3) | Cross-session rollup — cluster the same initiative across sessions | — |
-| [#4](https://github.com/dhk/work-ledger/issues/4) | Trend/time-series view of cost over time | — |
+| [#4](https://github.com/dhk/work-ledger/issues/4) ✅ | **Trend view** — cost bucketed by day/week across all sessions (`work-ledger trend`) | Shipped; did not block on #42 |
 | [#5](https://github.com/dhk/work-ledger/issues/5) | Recurring-pattern/waste mining across chapters and sessions | — |
 | [#16](https://github.com/dhk/work-ledger/issues/16) | Pluggable local-model chaptering backend (Ollama) + unfreeze chapters | — |
 | [#35](https://github.com/dhk/work-ledger/issues/35) | `miso` — run chapters + reports end-to-end in one command | — |

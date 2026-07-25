@@ -34,6 +34,7 @@ from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns, patterns_f
 from work_ledger.recommend import generate_recommendations
 from work_ledger.session_pin import clear_pinned_session, get_pinned_session, set_pinned_session
 from work_ledger.timeline import DEFAULT_WINDOW_DAYS, build_timeline, top_activity_labels, top_category_labels
+from work_ledger.trend import BUCKET_SIZES, build_trend
 from work_ledger.transcript import (
     Turn,
     TranscriptTailer,
@@ -1155,6 +1156,134 @@ def run_timeline_backfill(since: date | None = None, until: date | None = None) 
     run_timeline(since=effective_since, until=until)
 
 
+def _cost_bar(cost: float, max_cost: float, width: int = 30) -> str:
+    """Proportional block-bar for one period's cost against this trend's own
+    max - same idea as _sparkline's per-series scaling, just rendered as one
+    solid bar per row instead of a single-character-per-value line, since a
+    per-period table row has room for a longer, more legible bar."""
+    if max_cost <= 0:
+        return ""
+    filled = max(0, min(width, round(cost / max_cost * width)))
+    return "█" * filled
+
+
+_UNIT_ADVERB = {"day": "daily", "week": "weekly"}
+
+
+def _render_trend(console: Console, result) -> None:
+    buckets = result.buckets
+    unit = "day" if result.bucket_size == "day" else "week"
+    console.print(
+        f"[bold]work-ledger trend[/bold]  [dim]{buckets[0].period} to {buckets[-1].period} "
+        f"({_UNIT_ADVERB[unit]}, cost only - see `timeline` for activity/approach mix)[/dim]\n"
+    )
+
+    # Reuses _sparkline exactly (same block set, same independent-max
+    # scaling) rather than a different terminal visual language - scaled in
+    # cents for a bit more resolution than whole-dollar ints would give.
+    cents = [round(b.cost_usd * 100) for b in buckets]
+    max_cost = max((b.cost_usd for b in buckets), default=0.0)
+    console.print(f"  {'Cost':<12} {_sparkline(cents)}  [dim]max ${max_cost:.2f}/{unit}[/dim]\n")
+
+    table = Table(title=f"work-ledger trend — cost by {unit}", expand=True)
+    table.add_column("Period", width=14)
+    table.add_column("Cost (est.)", justify="right", width=14)
+    table.add_column("Turns", justify="right", width=8)
+    table.add_column("", ratio=1, overflow="crop")  # bar column, no header
+    for b in buckets:
+        cost_str = "?" if b.unknown_model_cost and b.cost_usd == 0 else f"${b.cost_usd:.4f}"
+        table.add_row(
+            b.period,
+            cost_str,
+            str(b.num_turns),
+            Text(_cost_bar(b.cost_usd, max_cost), style="cyan"),
+        )
+    console.print(table)
+
+    console.print(
+        f"\n[dim]Total across {len(buckets)} {unit}(s), {result.total_sessions} session(s): "
+        f"${result.total_cost_usd:.4f}[/dim]"
+    )
+    if any(b.unknown_model_cost for b in buckets):
+        console.print(
+            "[yellow]Some periods include unpriced models - their cost is a floor, not exact "
+            "(shown as \"?\" where the whole period's cost is unknown).[/yellow]"
+        )
+
+
+def run_trend(
+    since: date | None = None,
+    until: date | None = None,
+    bucket: str = "day",
+    as_json: bool = False,
+    report: bool = False,
+    report_format: str = "html",
+    report_out: str | None = None,
+):
+    """Is spend trending up or down - cost specifically, bucketed by day or
+    week across every session in range, a real time series of dollars
+    rather than `chapters --all`'s flat per-session list. A different axis
+    than `timeline` (tool/skill/subagent/approach *mix*, deliberately not
+    cost - see timeline.py's module docstring): this reads only
+    Turn.cost_usd/Turn.timestamp, so unlike timeline's category panel there
+    is no cached-vs-uncached distinction and no API call, ever - every
+    period's total is either fully priced or flagged unknown, never
+    partial. Defaults to the last DEFAULT_WINDOW_DAYS days if neither
+    --since nor --until is given, same re-derive-fresh-every-run precedent
+    as `chapters --all`/`timeline` (no persisted cross-session store yet -
+    issue #42)."""
+    console = Console()
+    if since is None and until is None:
+        since = date.today() - timedelta(days=DEFAULT_WINDOW_DAYS)
+
+    transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
+    if not transcripts:
+        console.print("[red]No session transcripts found in that range.[/red]")
+        sys.exit(1)
+
+    result = build_trend(transcripts, bucket=bucket)
+    if not result.buckets:
+        console.print("[yellow]No turns found in that range.[/yellow]")
+        return
+
+    if report:
+        from work_ledger.report import ReportRenderError, build_trend_report_html, render_png
+
+        range_label = f"{since.isoformat() if since else 'earliest'} to {until.isoformat() if until else 'now'}"
+        out_path = (
+            Path(report_out) if report_out else Path(f"work-ledger-trend-{date.today().isoformat()}.{report_format}")
+        )
+        html = build_trend_report_html(range_label, result.buckets, result.bucket_size, result.total_sessions)
+        if report_format == "html":
+            out_path.write_text(html, encoding="utf-8")
+        else:
+            try:
+                render_png(html, out_path)
+            except ReportRenderError as e:
+                console.print(f"[red]{e}[/red]")
+                sys.exit(1)
+        console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
+        return
+
+    if as_json:
+        import json
+
+        data = [
+            {
+                "period": b.period,
+                "cost_usd": b.cost_usd,
+                "num_turns": b.num_turns,
+                "unknown_model_cost": b.unknown_model_cost,
+            }
+            for b in result.buckets
+        ]
+        console.print_json(json.dumps(data))
+        return
+
+    console.print()
+    _render_trend(console, result)
+
+
 def run_recommend(transcript_path=None, as_json: bool = False, mark_used: str | None = None):
     console = Console()
 
@@ -1591,6 +1720,57 @@ def main():
         help="Output file path for --report (default: work-ledger-timeline-<date>.<format>)",
     )
 
+    trend_parser = subparsers.add_parser(
+        "trend",
+        help="Is spend trending up or down - cost bucketed by day/week across all sessions, a "
+        "real time series of dollars (not activity mix - see `timeline` for that). Defaults to "
+        "the last 30 days if no --since/--until given",
+    )
+    trend_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/after this date (YYYY-MM-DD). "
+        "Default: 30 days ago, if neither --since nor --until is given.",
+    )
+    trend_parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/before this date (YYYY-MM-DD)",
+    )
+    trend_parser.add_argument(
+        "--bucket",
+        type=str,
+        choices=list(BUCKET_SIZES),
+        default="day",
+        help="Bucket cost by day (default) or by ISO week (Monday-starting)",
+    )
+    trend_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable output instead of a terminal sparkline/table",
+    )
+    trend_parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Generate a visual report (HTML or PNG) to a file instead of terminal output",
+    )
+    trend_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["html", "png"],
+        default="html",
+        help="Report format for --report (default: html). png needs the optional "
+        "'report' extra: pip install \"work-ledger[report]\" && playwright install chromium",
+    )
+    trend_parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output file path for --report (default: work-ledger-trend-<date>.<format>)",
+    )
+
     export_parser = subparsers.add_parser(
         "export",
         help="Write an anonymized, manual usage export (aggregates + chapter-category rollups "
@@ -1730,6 +1910,23 @@ def main():
                 report_format=args.format,
                 report_out=args.out,
             )
+        return
+
+    if args.command == "trend":
+        since = _parse_date_arg(args.since, "--since") if args.since else None
+        until = _parse_date_arg(args.until, "--until") if args.until else None
+        if args.report and args.json:
+            print("error: --report and --json can't be combined", file=sys.stderr)
+            sys.exit(2)
+        run_trend(
+            since=since,
+            until=until,
+            bucket=args.bucket,
+            as_json=args.json,
+            report=args.report,
+            report_format=args.format,
+            report_out=args.out,
+        )
         return
 
     if args.command == "export":
