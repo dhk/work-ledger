@@ -91,6 +91,11 @@ work-ledger export --since 2026-07-01 --out x.json     # same, filtered to a dat
 
 work-ledger recommend                             # local-only, rule-based recommendations for one session
 work-ledger recommend --json                           # machine-readable output
+
+work-ledger waste                                 # within-session waste mining - repeated file reads/subagent dispatches, and their cost
+work-ledger waste --json                               # machine-readable output
+work-ledger waste --report                             # same visual style as chapters --report, as HTML
+work-ledger waste --report --format png --out x.png     # same, as a PNG image
 ```
 
 By default, cost/tokens are shown per prompt turn (one row per message you
@@ -366,6 +371,46 @@ speculative rule engine — and it's entirely local. A corpus-relative
 dimension ("compared to other users' bug-fix chapters") is future work
 that depends on `export` above actually accumulating a corpus first.
 
+## Waste mining (within-session, experimental)
+
+```
+work-ledger waste                                       # flag repeated within-session patterns and their cost
+work-ledger waste --json                                # machine-readable output
+work-ledger waste --report                              # same visual style as chapters --report, as HTML
+work-ledger waste --report --format png --out x.png      # same, as a PNG image
+```
+
+`work-ledger` can tell you *what* something cost; `waste` starts answering
+*whether it was wasteful, and whether it keeps happening* — within one
+session, for now (see [issue #5](https://github.com/dhk/work-ledger/issues/5)).
+Like `activity`, it's Show-stage: read-only, no API call, no chaptering
+required. It flags two recurring patterns and reports "this happened N
+times, costing $X total" for each:
+
+- **Repeated file read** — the same file `Read` by more than one LLM call.
+  A single call that happens to `Read` the same path twice isn't counted
+  as a repeat (occurrences/cost are per-`Unit`, not per raw tool call) —
+  see the same "same real API call, not a raw tool_use block" accounting
+  discipline used everywhere else in this tool.
+- **Repeated subagent dispatch** — the same subagent (agent type +
+  near-identical description, matched via normalized-exact string
+  comparison — no embedding/LLM call, no new paid dependency) dispatched
+  more than once.
+
+If this session already has cached chapters (from a prior `work-ledger
+chapters` run — `waste` never triggers that pass itself), each pattern is
+scoped to the chapter it fell in rather than just the whole session;
+without cached chapters, everything is scoped to "whole session."
+
+**Deliberately not prescriptive.** `waste` surfaces the pattern and its
+cost and stops there — it doesn't suggest what to do about it, that's
+[issue #6](https://github.com/dhk/work-ledger/issues/6), which is
+explicitly blocked on this command surfacing real, recurring evidence
+first. Cross-session correlation (the same pattern recurring across
+*separate* sessions) is out of scope here too — it depends on
+[issue #3](https://github.com/dhk/work-ledger/issues/3)'s cross-session
+clustering and may ship independently later.
+
 ## Pattern library (opt-in, experimental)
 
 ```
@@ -497,11 +542,15 @@ rather than touching `~/.claude/projects/` or `~/.config/work-ledger/`, and
 the one call that costs real money (`chapters`' Haiku pass) is mocked at
 the `chapters._call_model` seam rather than actually invoked. Covers
 `transcript.py` (the message.id dedup fix, skill/subagent labeling,
-subagent-transcript correlation), `pricing.py`, `chapters.py` (partition
-validation, cache round-trip, the frozen-prefix/continuation-merge
+subagent-transcript correlation, and `Unit.read_paths` - a Read tool_use
+call's target file path, captured narrowly for `waste.py` rather than a
+generic capture-every-tool-input field), `pricing.py`, `chapters.py`
+(partition validation, cache round-trip, the frozen-prefix/continuation-merge
 behavior, and the model-call fallback paths - refusal, malformed shape,
 exception, plus the cache-only `cached_chapters`/`has_uncached_turns`
-helpers `timeline` relies on), `export.py`, `recommend.py`, `limits.py`,
+helpers `timeline` relies on), `export.py`, `recommend.py`, `waste.py`
+(repeated-read/repeated-subagent detection, chapter-vs-whole-session
+scoping, the normalized-exact subagent-description match), `limits.py`,
 `timeline.py` (day-bucketing, category-mix, top-label ranking), and
 `cli.py`'s pure helper functions.
 

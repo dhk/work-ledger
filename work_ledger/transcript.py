@@ -39,6 +39,7 @@ TRANSCRIPTS_ROOT = Path.home() / ".claude" / "projects"
 
 SUBAGENT_TOOL_NAMES = {"Agent", "Task"}
 SKILL_TOOL_NAME = "Skill"
+READ_TOOL_NAME = "Read"
 
 
 def find_active_transcript() -> Path | None:
@@ -158,6 +159,14 @@ class Unit:
     text_snippet: str = ""
     tool_names: list[str] = field(default_factory=list)
     skill_name: str | None = None
+    # Target path of every Read tool_use call this unit made (in call order,
+    # duplicates included) - narrowly scoped to just what waste.py's
+    # repeated-file-read detection needs (#5), rather than a generic
+    # capture-every-tool-input field: a Write/Edit input can carry a whole
+    # file's contents, which would bloat every Unit for no reason nothing
+    # here reads. The path itself isn't a new privacy exposure - it's
+    # already visible elsewhere in the same transcript (the Read's result).
+    read_paths: list[str] = field(default_factory=list)
     subagent_desc: str | None = None
     subagent_tool_use_id: str | None = None
     subagent_agent_type: str | None = None
@@ -351,6 +360,10 @@ class TranscriptTailer:
                     unit.tool_names.append(name)
                     if name == SKILL_TOOL_NAME and unit.skill_name is None:
                         unit.skill_name = (block.get("input") or {}).get("skill", "unknown")
+                    elif name == READ_TOOL_NAME:
+                        path = (block.get("input") or {}).get("file_path")
+                        if path:
+                            unit.read_paths.append(path)
                     elif name in SUBAGENT_TOOL_NAMES and unit.subagent_desc is None:
                         inp = block.get("input") or {}
                         unit.subagent_desc = (
