@@ -11,7 +11,7 @@ Staging follows the show/tell/do rubric in `CLAUDE.md` (full writeup:
 the narrative synthesis on top, refreshed when a theme's shape actually
 changes — not mechanically re-synced on every issue edit.
 
-**Current focus:** #44, the timeline view (practice-visibility theme).
+**Current focus:** #44 (timeline view) is implemented - `work-ledger timeline`/`timeline backfill`, day-bucketed activity + chapter-category mix, terminal sparklines and `--report` HTML/PNG. Not yet merged/closed as of this writing.
 
 ## Cost/usage reporting — Show, core shipped
 
@@ -36,7 +36,7 @@ flag-driven. This is where today's work is happening.
 
 | Issue | What | Depends on |
 |---|---|---|
-| [#44](https://github.com/dhk/work-ledger/issues/44) | **Timeline view** — tool/skill/subagent/approach mix over time | Not blocked on #42 for v1 |
+| [#44](https://github.com/dhk/work-ledger/issues/44) | **Timeline view** — tool/skill/subagent/approach mix over time | Implemented; did not block on #42 |
 | [#42](https://github.com/dhk/work-ledger/issues/42) | Local session history store | Backs #3/#4/#5 and periodic runs |
 | [#43](https://github.com/dhk/work-ledger/issues/43) | Local web UI — browse sessions/chapters/activity as a page | Reuses `report.py`; likely eventual home for #44 |
 

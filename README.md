@@ -69,6 +69,12 @@ work-ledger activity --report                          # same visual style as ch
 work-ledger activity --report --format png --out x.png  # same, as a PNG image
 work-ledger activity --report --top 10                  # show only the 10 costliest types, rest folded into "Other"
 
+work-ledger timeline                              # how tool usage and approach have changed, day-bucketed (last 30 days by default)
+work-ledger timeline --since 2026-06-01                # a longer look-back
+work-ledger timeline --json                            # machine-readable output
+work-ledger timeline --report                          # same visual style as chapters --report, as HTML
+work-ledger timeline backfill                          # chapter any uncached sessions in range first (small API cost), then show
+
 work-ledger sessions                              # list every local session: project, last-active, first/last prompt, cost
 work-ledger sessions --since 2026-07-01                # limit to a date range
 work-ledger sessions --json                            # machine-readable output
@@ -237,6 +243,38 @@ already uses), or a plain reply with no tool call at all
   given. The table and `--json` views are unaffected by either — they
   always show every activity type, uncollapsed.
 
+## Timeline (practice over time)
+
+`work-ledger timeline` answers a different question than either `chapters`
+or `activity`: not "what did this cost" but "how has the way I work
+changed" — day-bucketed tool/skill/subagent mix (reusing `activity`'s own
+categorization, just sliced by date) alongside chapter-category mix
+(`feature-build`, `debugging`, ...), so you can see whether your approach
+has shifted over time, not just your spend.
+
+- **Defaults to the last 30 days** if neither `--since` nor `--until` is
+  given — there's no persisted cross-session history store yet (see the
+  `docs/show-tell-do-model.md` design doc), so every run re-derives from
+  transcripts fresh, same as `chapters --all`. `--since 2026-06-01` for a
+  longer look-back.
+- **Makes no API call by itself.** The activity-mix panel needs nothing
+  beyond what's already parsed locally. The chapter-category panel only
+  ever reads chapters that are **already cached** — it never triggers a
+  new Haiku pass as a side effect of looking at a timeline. If some
+  sessions in range aren't chaptered yet, it says so and points you at
+  `timeline backfill` rather than silently showing a partial mix.
+- **`timeline backfill`** chapters any session in range that isn't fully
+  cached yet (same small, disclosed Haiku cost as `chapters --all` —
+  already-cached sessions cost nothing to re-touch), then shows the
+  resulting timeline in one call.
+- **Terminal output is a Unicode sparkline per series**, each scaled
+  independently against its own max — comparing sparkline *height* across
+  two different series isn't meaningful, only one series' own shape over
+  time is. `--report` renders the same day-by-day data as an HTML/PNG
+  page, same visual system as `chapters --report`/`activity --report`.
+- **`--json`** emits the full per-day activity/category counts for
+  programmatic use.
+
 ## Export (anonymized, manual)
 
 ```
@@ -395,10 +433,15 @@ recommendations for a single session). `recommend` can now optionally
 community-sourced fixes alongside its own findings, including a local MCP
 server for live in-session matching — see "Pattern library" above; no
 publicly hosted counter backend exists yet, that part is still
-bring-your-own.
+bring-your-own. `timeline` adds a day-bucketed view of *how* someone
+works (tool/skill/subagent and chapter-category mix over time) rather
+than what it cost, with an explicit `timeline backfill` step to complete
+its category panel rather than paying for chaptering silently.
 
 Not yet done: cross-session/historical rollup (only watches one transcript
-at a time); Sonnet 5 introductory pricing isn't modeled (runs a little high
+at a time, though `timeline` re-derives across all of them on each run
+rather than persisting anything — see `docs/show-tell-do-model.md`);
+Sonnet 5 introductory pricing isn't modeled (runs a little high
 until 2026-08-31); chapter granularity for very short sessions is left
 entirely to the model's judgment (see open question in the design doc);
 `recommend`'s corpus-relative dimension depends on `export` actually
@@ -421,8 +464,10 @@ the `chapters._call_model` seam rather than actually invoked. Covers
 subagent-transcript correlation), `pricing.py`, `chapters.py` (partition
 validation, cache round-trip, the frozen-prefix/continuation-merge
 behavior, and the model-call fallback paths - refusal, malformed shape,
-exception), `export.py`, `recommend.py`, `limits.py`, and `cli.py`'s pure
-helper functions.
+exception, plus the cache-only `cached_chapters`/`has_uncached_turns`
+helpers `timeline` relies on), `export.py`, `recommend.py`, `limits.py`,
+`timeline.py` (day-bucketing, category-mix, top-label ranking), and
+`cli.py`'s pure helper functions.
 
 ## License
 

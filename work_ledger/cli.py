@@ -11,7 +11,7 @@ same per-unit rendering for drill-down (`chapters --detail`).
 import argparse
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from rich.console import Console, Group
@@ -33,6 +33,7 @@ from work_ledger import pattern_client
 from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns, patterns_for_rule
 from work_ledger.recommend import generate_recommendations
 from work_ledger.session_pin import clear_pinned_session, get_pinned_session, set_pinned_session
+from work_ledger.timeline import DEFAULT_WINDOW_DAYS, build_timeline, top_activity_labels, top_category_labels
 from work_ledger.transcript import (
     Turn,
     TranscriptTailer,
@@ -859,6 +860,173 @@ def run_export(since: date | None = None, until: date | None = None, out: str | 
     )
 
 
+_SPARKLINE_BLOCKS = "▁▂▃▄▅▆▇█"
+
+
+def _sparkline(values: list[int]) -> str:
+    """Render values as a Unicode block sparkline, scaled 0-7 against this
+    series' own max. Each series is scaled independently, so comparing
+    sparkline *height* across two different series/rows isn't meaningful -
+    only one series' own shape over time is."""
+    max_v = max(values) if values else 0
+    if max_v <= 0:
+        return _SPARKLINE_BLOCKS[0] * len(values)
+    return "".join(
+        _SPARKLINE_BLOCKS[min(len(_SPARKLINE_BLOCKS) - 1, int(v / max_v * (len(_SPARKLINE_BLOCKS) - 1)))]
+        for v in values
+    )
+
+
+def _render_timeline_sparklines(console: Console, result, top_activity: list[str], top_categories: list[str]) -> None:
+    days = result.days
+    console.print(f"[bold]work-ledger timeline[/bold]  [dim]{days[0].day} to {days[-1].day}[/dim]\n")
+
+    console.print("[bold]Activity mix[/bold] [dim](tool/skill/subagent, by day - activity.py's own categories)[/dim]")
+    for label in top_activity:
+        values = [b.activity_counts.get(label, 0) for b in days]
+        console.print(f"  {label:<32} {_sparkline(values)}  [dim]max {max(values)}/day[/dim]")
+
+    console.print("\n[bold]Approach mix[/bold] [dim](chapter category, by day)[/dim]")
+    if not top_categories:
+        console.print("  [dim](no chaptered sessions in range - run `work-ledger timeline backfill`)[/dim]")
+    else:
+        for label in top_categories:
+            values = [b.category_counts.get(label, 0) for b in days]
+            console.print(f"  {label:<32} {_sparkline(values)}  [dim]max {max(values)}/day[/dim]")
+
+
+def run_timeline(
+    since: date | None = None,
+    until: date | None = None,
+    as_json: bool = False,
+    report: bool = False,
+    report_format: str = "html",
+    report_out: str | None = None,
+):
+    """How tool usage and approach have changed over time - day-bucketed
+    activity mix (activity.py's own tool/skill/subagent categorization,
+    just sliced by day) plus chapter-category mix from whatever's already
+    cached. Defaults to the last DEFAULT_WINDOW_DAYS days if neither
+    --since nor --until is given: there's no persisted cross-session store
+    yet (issue #42 not required for this), so every run re-derives from
+    transcripts fresh, same as `chapters --all` - an unbounded sweep would
+    be slower and answer "all-time" rather than the more useful "recently"
+    default. Makes no API call itself; see `timeline backfill` for the
+    explicit, cost-disclosed way to complete category data for uncached
+    sessions."""
+    console = Console()
+    if since is None and until is None:
+        since = date.today() - timedelta(days=DEFAULT_WINDOW_DAYS)
+
+    transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
+    if not transcripts:
+        console.print("[red]No session transcripts found in that range.[/red]")
+        sys.exit(1)
+
+    result = build_timeline(transcripts)
+    if not result.days:
+        console.print("[yellow]No turns found in that range.[/yellow]")
+        return
+
+    if result.uncached_sessions:
+        console.print(
+            f"[yellow]{result.uncached_sessions} of {result.total_sessions} session(s) in range aren't "
+            "fully chaptered - approach mix will be incomplete for those. Run "
+            "`work-ledger timeline backfill` to fill it in (small Anthropic API cost).[/yellow]\n"
+        )
+
+    top_activity = top_activity_labels(result.days)
+    top_categories = top_category_labels(result.days)
+
+    if report:
+        from work_ledger.report import ReportRenderError, build_timeline_report_html, render_png
+
+        range_label = f"{since.isoformat() if since else 'earliest'} to {until.isoformat() if until else 'now'}"
+        out_path = (
+            Path(report_out) if report_out else Path(f"work-ledger-timeline-{date.today().isoformat()}.{report_format}")
+        )
+        html = build_timeline_report_html(
+            range_label,
+            result.days,
+            top_activity,
+            top_categories,
+            result.total_sessions,
+            result.uncached_sessions,
+        )
+        if report_format == "html":
+            out_path.write_text(html, encoding="utf-8")
+        else:
+            try:
+                render_png(html, out_path)
+            except ReportRenderError as e:
+                console.print(f"[red]{e}[/red]")
+                sys.exit(1)
+        console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
+        return
+
+    if as_json:
+        import json
+
+        data = [
+            {"day": b.day, "activity_counts": b.activity_counts, "category_counts": b.category_counts}
+            for b in result.days
+        ]
+        console.print_json(json.dumps(data))
+        return
+
+    console.print()
+    _render_timeline_sparklines(console, result, top_activity, top_categories)
+
+
+def run_timeline_backfill(since: date | None = None, until: date | None = None) -> None:
+    """Chapter any session in range that isn't fully cached yet, then show
+    the resulting timeline - the explicit, cost-disclosed way to complete
+    the approach-mix panel that plain `timeline` otherwise leaves partial
+    rather than paying for silently. Reuses get_chapters()'s existing
+    cache: an already-fully-chaptered session costs nothing to touch
+    again, same as `chapters --all`."""
+    console = Console()
+    effective_since = since if since is not None else date.today() - timedelta(days=DEFAULT_WINDOW_DAYS)
+    transcripts = [p for p in find_all_transcripts() if _in_date_range(p, effective_since, until)]
+    if not transcripts:
+        console.print("[red]No session transcripts found in that range.[/red]")
+        sys.exit(1)
+
+    console.print(
+        f"[dim]Chaptering {len(transcripts)} session(s) in range - already-cached sessions cost "
+        "nothing to re-run, needs ANTHROPIC_API_KEY for anything genuinely new.[/dim]\n"
+    )
+
+    total_cost = 0.0
+    newly_processed = 0
+    fallback_count = 0
+    for path in transcripts:
+        tailer = TranscriptTailer(path)
+        tailer.poll()
+        if not tailer.ordered_turns():
+            continue
+        result = get_chapters(tailer, path)
+        # pass_cost_usd is 0 both when there was nothing new to chapter
+        # (already fully cached) AND when new turns existed but the model
+        # call fell back (no/invalid key, refusal, etc) - fallback_reason
+        # is what actually distinguishes "new turns were processed" from
+        # "cache hit, untouched", so both count as newly_processed here.
+        if result.pass_cost_usd or result.fallback_reason:
+            newly_processed += 1
+            total_cost += result.pass_cost_usd
+            if result.fallback_reason:
+                fallback_count += 1
+                console.print(f"[yellow]{path.name}: {result.fallback_reason}[/yellow]")
+
+    if newly_processed:
+        note = f" ({fallback_count} fell back to Unsorted, see above)" if fallback_count else ""
+        console.print(f"[green]Processed {newly_processed} session(s) newly for ${total_cost:.4f}{note}.[/green]\n")
+    else:
+        console.print("[green]Everything in range was already cached - nothing new to chapter.[/green]\n")
+
+    run_timeline(since=effective_since, until=until)
+
+
 def run_recommend(transcript_path=None, as_json: bool = False, mark_used: str | None = None):
     console = Console()
 
@@ -1242,6 +1410,59 @@ def main():
         help="Machine-readable output instead of a terminal table",
     )
 
+    timeline_parser = subparsers.add_parser(
+        "timeline",
+        help="How tool usage and approach have changed over time, day-bucketed - not what it "
+        "cost (see chapters/activity for that). Defaults to the last 30 days if no --since/"
+        "--until given",
+    )
+    timeline_parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["show", "backfill"],
+        default="show",
+        help="'show' (default) prints the timeline; 'backfill' chapters any uncached sessions "
+        "in range first (small Anthropic API cost, needs ANTHROPIC_API_KEY), then shows it",
+    )
+    timeline_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/after this date (YYYY-MM-DD). "
+        "Default: 30 days ago, if neither --since nor --until is given.",
+    )
+    timeline_parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/before this date (YYYY-MM-DD)",
+    )
+    timeline_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable output instead of terminal sparklines. Not supported with 'backfill'.",
+    )
+    timeline_parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Generate a visual report (HTML or PNG) to a file instead of terminal sparklines. "
+        "Not supported with 'backfill'.",
+    )
+    timeline_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["html", "png"],
+        default="html",
+        help="Report format for --report (default: html). png needs the optional "
+        "'report' extra: pip install \"work-ledger[report]\" && playwright install chromium",
+    )
+    timeline_parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output file path for --report (default: work-ledger-timeline-<date>.<format>)",
+    )
+
     export_parser = subparsers.add_parser(
         "export",
         help="Write an anonymized, manual usage export (aggregates + chapter-category rollups "
@@ -1318,6 +1539,32 @@ def main():
         since = _parse_date_arg(args.since, "--since") if args.since else None
         until = _parse_date_arg(args.until, "--until") if args.until else None
         run_sessions(since=since, until=until, as_json=args.json)
+        return
+
+    if args.command == "timeline":
+        since = _parse_date_arg(args.since, "--since") if args.since else None
+        until = _parse_date_arg(args.until, "--until") if args.until else None
+        if args.report and args.json:
+            print("error: --report and --json can't be combined", file=sys.stderr)
+            sys.exit(2)
+        if args.action == "backfill":
+            if args.report or args.json:
+                print(
+                    "error: 'timeline backfill' doesn't support --report/--json - run plain "
+                    "`timeline --report`/`timeline --json` after backfilling",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            run_timeline_backfill(since=since, until=until)
+        else:
+            run_timeline(
+                since=since,
+                until=until,
+                as_json=args.json,
+                report=args.report,
+                report_format=args.format,
+                report_out=args.out,
+            )
         return
 
     if args.command == "export":

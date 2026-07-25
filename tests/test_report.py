@@ -85,3 +85,36 @@ def test_build_activity_report_html_zero_cost_with_residual_bucket_does_not_cras
     buckets = [ActivityBucket("Tool: Bash", 0.0), ActivityBucket("Other/final 20% (2 categories)", 0.0)]
     html = build_activity_report_html("s.jsonl", buckets, total_n_buckets=3)
     assert "<!doctype html>" in html
+
+
+def test_build_timeline_report_html_smoke():
+    from work_ledger.timeline import DayBucket
+
+    days = [
+        DayBucket(day="2026-07-01", activity_counts={"Tool: Bash": 2}, category_counts={"bug-fix": 1}),
+        DayBucket(day="2026-07-02", activity_counts={"Tool: Bash": 1, "Skill: dataviz": 1}, category_counts={}),
+    ]
+    from work_ledger.report import build_timeline_report_html
+
+    html = build_timeline_report_html(
+        "2026-07-01 to 2026-07-02",
+        days,
+        top_activity=["Tool: Bash", "Skill: dataviz"],
+        top_categories=["bug-fix"],
+        total_sessions=2,
+        uncached_sessions=1,
+    )
+    assert html.startswith("<!doctype html>")
+    assert "2026-07-01" in html
+    assert "Tool: Bash" in html
+    assert "timeline backfill" in html
+    assert "</html>" in html
+
+
+def test_build_timeline_report_html_zero_days_does_not_crash():
+    from work_ledger.report import build_timeline_report_html
+
+    html = build_timeline_report_html(
+        "empty range", [], top_activity=[], top_categories=[], total_sessions=0, uncached_sessions=0
+    )
+    assert "<!doctype html>" in html
