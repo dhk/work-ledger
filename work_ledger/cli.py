@@ -561,6 +561,31 @@ def run_session(action: str, value: str | None) -> None:
         return
 
 
+def build_session_rows(transcripts: list[Path]) -> list[dict]:
+    """Per-session summary rows (project, last-active time, first/last
+    prompt, turn count, cost) - the same shape `sessions`/`sessions --json`
+    render as a table. Factored out of run_sessions so `work-ledger serve`'s
+    landing page (see server.py) reuses exactly this computation rather than
+    re-deriving it - there's exactly one place this data is assembled."""
+    rows = []
+    for path in transcripts:
+        tailer = TranscriptTailer(path)
+        tailer.poll()
+        turns = tailer.ordered_turns()
+        rows.append(
+            {
+                "session": path.stem,
+                "project": path.parent.name,
+                "last_active": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="minutes"),
+                "num_turns": len(turns),
+                "first_prompt": turns[0].prompt_snippet if turns else "",
+                "last_prompt": turns[-1].prompt_snippet if turns else "",
+                "cost_usd": tailer.total_cost_usd(),
+            }
+        )
+    return rows
+
+
 def run_sessions(since: date | None = None, until: date | None = None, as_json: bool = False):
     """Lightweight listing of every local session transcript, newest first -
     no chaptering, no API call, just what's already parsed locally (last
@@ -582,22 +607,7 @@ def run_sessions(since: date | None = None, until: date | None = None, as_json: 
         console.print(f"[red]No session transcripts found{range_note}.[/red]")
         sys.exit(1)
 
-    rows = []
-    for path in transcripts:
-        tailer = TranscriptTailer(path)
-        tailer.poll()
-        turns = tailer.ordered_turns()
-        rows.append(
-            {
-                "session": path.stem,
-                "project": path.parent.name,
-                "last_active": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="minutes"),
-                "num_turns": len(turns),
-                "first_prompt": turns[0].prompt_snippet if turns else "",
-                "last_prompt": turns[-1].prompt_snippet if turns else "",
-                "cost_usd": tailer.total_cost_usd(),
-            }
-        )
+    rows = build_session_rows(transcripts)
 
     if as_json:
         import json
@@ -1519,6 +1529,35 @@ def main():
         "locally-available entries",
     )
 
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Start a local-only, read-only web UI (binds 127.0.0.1 only, no auth needed) to "
+        "browse every local session and drill into chapters -> turns -> units with real "
+        "clickable navigation, instead of re-running a different flag each time. Long-running, "
+        "like the plain live dashboard - Ctrl-C to stop. Never triggers a chaptering API call "
+        "itself: a session without cached chapters just shows its turns ungrouped until you "
+        "run `work-ledger chapters` for it.",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port to listen on (default: 8765). Always binds 127.0.0.1 - there's no --host "
+        "flag, so this can never be pointed at another address by accident.",
+    )
+    serve_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Only list sessions last modified on/after this date (YYYY-MM-DD) on the landing page",
+    )
+    serve_parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="Only list sessions last modified on/before this date (YYYY-MM-DD) on the landing page",
+    )
+
     args = parser.parse_args()
     _check_transcript_flag_placement(sys.argv[1:], args.command)
 
@@ -1539,6 +1578,14 @@ def main():
         since = _parse_date_arg(args.since, "--since") if args.since else None
         until = _parse_date_arg(args.until, "--until") if args.until else None
         run_sessions(since=since, until=until, as_json=args.json)
+        return
+
+    if args.command == "serve":
+        since = _parse_date_arg(args.since, "--since") if args.since else None
+        until = _parse_date_arg(args.until, "--until") if args.until else None
+        from work_ledger.server import run_serve  # lazy: only this subcommand needs http.server
+
+        run_serve(port=args.port, since=since, until=until)
         return
 
     if args.command == "timeline":
