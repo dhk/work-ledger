@@ -27,6 +27,16 @@ from work_ledger.pricing import estimate_cost_usd
 from work_ledger.transcript import TranscriptTailer, Turn
 
 CHAPTER_MODEL = "claude-haiku-4-5"
+# The exact wording get_chapters uses when no credential can be found at
+# all - factored out so check_credentials() (used by `miso --check-status`
+# and `miso`'s own up-front status notice) reports the identical fact in
+# the identical words, rather than drifting into a second phrasing of the
+# same thing over time.
+NO_CREDENTIALS_MESSAGE = (
+    "No ANTHROPIC_API_KEY found in this environment; new turns grouped as "
+    "Unsorted. Set ANTHROPIC_API_KEY, or run `ant auth login` if you have the "
+    "Anthropic CLI."
+)
 # 16000 is the safe non-streaming ceiling for this API (higher risks HTTP
 # timeouts without switching to streaming). Output scales with turn count
 # (every prompt_id must be enumerated at least once), so a very long
@@ -249,6 +259,36 @@ def has_uncached_turns(tailer: TranscriptTailer, transcript_path: Path) -> bool:
     return any(t.prompt_id not in chaptered_id_set for t in tailer.ordered_turns())
 
 
+def check_credentials() -> tuple[bool, str]:
+    """Cheap, no-network check for whether the Anthropic SDK can resolve
+    *some* credential (`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` env var,
+    or an `ant auth login` profile on disk) - not whether it's actually
+    valid, which only a real API call can prove. That's a deliberate limit,
+    not an oversight: validating for real would mean a second network call
+    on top of the one chaptering pass already makes (see
+    docs/architecture.md's "Network calls" - never a silent extra one), and
+    get_chapters's own AuthenticationError handling above already surfaces
+    an invalid-but-present key distinctly once a real chaptering pass is
+    attempted.
+
+    Constructing `anthropic.Anthropic()` runs the SDK's full credential
+    resolution chain (env vars, `ANTHROPIC_PROFILE`, workload identity
+    federation, the active on-disk profile `ant auth login` writes) but
+    never issues a request itself - verified against the installed SDK
+    (see its docstring's precedence list), so this is safe to call from a
+    status check with no cost and no risk of tripping over network access.
+
+    Used by `miso --check-status` and `miso`'s own up-front notice (see
+    cli.py) - returns the exact wording get_chapters uses for the
+    no-credential fallback so the same fact is never phrased two ways."""
+    import anthropic  # imported lazily - only needed for `chapters`/`miso`, not the live dashboard
+
+    client = anthropic.Anthropic()
+    if client.api_key or client.auth_token or client.credentials:
+        return True, "Anthropic credentials found (env var or `ant auth login` profile)"
+    return False, NO_CREDENTIALS_MESSAGE
+
+
 def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResult:
     """Return the chaptering for this transcript, calling the model only for
     turns not already in the cache. Cached chapters/sections are frozen -
@@ -290,11 +330,7 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
         # installed anthropic SDK, not guessed) - client-side, before any
         # network call, so this costs nothing to check.
         if "Could not resolve authentication method" in str(e):
-            fallback_reason = (
-                "No ANTHROPIC_API_KEY found in this environment; new turns grouped as "
-                "Unsorted. Set ANTHROPIC_API_KEY, or run `ant auth login` if you have the "
-                "Anthropic CLI."
-            )
+            fallback_reason = NO_CREDENTIALS_MESSAGE
         else:
             fallback_reason = f"chaptering call failed ({e}); new turns grouped as Unsorted"
         response = None

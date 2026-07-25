@@ -1,6 +1,15 @@
+import sys
+import types
+
 from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter, Section
-from work_ledger.report import build_activity_report_html, build_report_html, build_waste_report_html
+from work_ledger.report import (
+    PNG_UNAVAILABLE_MESSAGE,
+    build_activity_report_html,
+    build_report_html,
+    build_waste_report_html,
+    png_available,
+)
 from work_ledger.transcript import TranscriptTailer
 from work_ledger.waste import REPEATED_READ, REPEATED_SUBAGENT, WastePattern
 
@@ -119,6 +128,39 @@ def test_build_timeline_report_html_zero_days_does_not_crash():
         "empty range", [], top_activity=[], top_categories=[], total_sessions=0, uncached_sessions=0
     )
     assert "<!doctype html>" in html
+
+
+# --- png_available (used by `miso --check-status`) -------------------------
+#
+# Mocks sys.modules directly rather than depending on whether Playwright is
+# actually installed on whatever machine runs this suite - CI deliberately
+# doesn't install the `report` extra (see .github/workflows/ci.yml), so a
+# test asserting the "available" branch must not depend on a real import
+# succeeding, and one asserting "unavailable" must not depend on it failing.
+
+
+def test_png_available_true_when_importable(monkeypatch):
+    fake_playwright = types.ModuleType("playwright")
+    fake_sync_api = types.ModuleType("playwright.sync_api")
+    fake_playwright.sync_api = fake_sync_api
+    monkeypatch.setitem(sys.modules, "playwright", fake_playwright)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_sync_api)
+
+    ok, msg = png_available()
+    assert ok is True
+    assert "installed" in msg.lower()
+
+
+def test_png_available_false_when_not_importable(monkeypatch):
+    # A None entry in sys.modules blocks that name from importing at all -
+    # this is true regardless of whether "playwright.sync_api" itself is
+    # already cached (real or fake) from an earlier import in this process,
+    # since the parent package import is what's blocked.
+    monkeypatch.setitem(sys.modules, "playwright", None)
+
+    ok, msg = png_available()
+    assert ok is False
+    assert msg == PNG_UNAVAILABLE_MESSAGE
 
 
 def test_build_trend_report_html_smoke():

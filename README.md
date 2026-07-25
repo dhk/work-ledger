@@ -69,6 +69,10 @@ work-ledger activity --report                          # same visual style as ch
 work-ledger activity --report --format png --out x.png  # same, as a PNG image
 work-ledger activity --report --top 10                  # show only the 10 costliest types, rest folded into "Other"
 
+work-ledger miso                                  # "make it so" - chaptering + both HTML/PNG reports, end-to-end
+work-ledger miso --check-status                        # check credentials/report-extra only, touch nothing
+work-ledger miso --all --since 2026-07-01              # chaptering summary across every session (no reports - see below)
+
 work-ledger timeline                              # how tool usage and approach have changed, day-bucketed (last 30 days by default)
 work-ledger timeline --since 2026-06-01                # a longer look-back
 work-ledger timeline --json                            # machine-readable output
@@ -264,6 +268,49 @@ already uses), or a plain reply with no tool call at all
   exactly the 10 costliest types) — `--top` takes precedence if both are
   given. The table and `--json` views are unaffected by either — they
   always show every activity type, uncollapsed.
+
+## Make it so (`miso`, end-to-end)
+
+`work-ledger miso` ("make it so" — [issue #35](https://github.com/dhk/work-ledger/issues/35))
+runs the tool end-to-end in one command instead of remembering the right
+sequence of flags: chaptering, then both the `chapters` and `activity`
+terminal tables, then an HTML report for each, then a PNG for each if
+rendering is available. It's pure orchestration — every step calls the
+exact same functions `chapters`/`activity --report` already call
+(`get_chapters`, `build_report_html`, `build_activity_report_html`,
+`render_png`); nothing is reimplemented, and no new network call happens
+beyond chaptering's existing Haiku pass.
+
+- **Always checks status up front, before doing anything.** Every `miso`
+  run starts by printing whether it has Anthropic credentials for
+  chaptering and whether PNG rendering is available (the `report` extra
+  installed) — so a missing key or a missing dependency is visible before
+  any partial work happens, not discovered halfway through. This mirrors
+  the `git rebase`-style framing the issue asks for: always know where
+  things stand and what to do about it.
+- **`--check-status` runs only that check.** No transcript is read, no API
+  call is made, no file is written — a pure environment diagnostic you can
+  run on its own to answer "is everything set up," printing exactly what
+  a real run would do differently if something's missing (fall back to
+  "Unsorted," skip PNG) and the fix for each.
+- **Degrades, never just fails.** No `ANTHROPIC_API_KEY` (or an
+  `ant auth login` profile)? Chaptering falls back to a single "Unsorted"
+  chapter — the same behavior `chapters` already has, surfaced here as
+  part of `miso`'s own status output rather than only showing up mid-run.
+  No `report` extra installed? PNG rendering is skipped for both reports,
+  with HTML still written and a clear one-line reason why PNG didn't
+  happen — never a hard failure over something optional.
+- **Defaults to the active/pinned session**, same as `chapters`/`activity`
+  — `--transcript`/`--session` pick a specific one.
+- **`--all` reuses `chapters --all`'s existing cross-session sweep**
+  (same `--since`/`--until` convention) for the chaptering summary only —
+  visual reports aren't generated in this mode, the same scope limit
+  `chapters --report` already has (see issue #4/#7). Drop `--all` and
+  pick one session to get its HTML/PNG reports.
+- **Output files**: `work-ledger-miso-chapters-<session>.<html|png>` and
+  `work-ledger-miso-activity-<session>.<html|png>`, written to the current
+  directory — distinct names from `chapters --report`'s own defaults so
+  the two don't collide if you run both.
 
 ## Timeline (practice over time)
 

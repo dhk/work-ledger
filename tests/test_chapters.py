@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from work_ledger.chapters import (
     CATEGORIES,
     DEFAULT_CATEGORY,
+    NO_CREDENTIALS_MESSAGE,
     Chapter,
     Section,
     UNSORTED_TITLE,
@@ -13,6 +14,7 @@ from work_ledger.chapters import (
     _SectionOut,
     _validate_partition,
     cached_chapters,
+    check_credentials,
     get_chapters,
     has_uncached_turns,
 )
@@ -414,3 +416,70 @@ def test_has_uncached_turns_true_when_partially_cached(tmp_path):
         [Chapter(title="Part 1", category="other", sections=[Section(title="s", prompt_ids=["p1"])])],
     )
     assert has_uncached_turns(tailer, transcript_path) is True
+
+
+# --- check_credentials (used by `miso --check-status`) --------------------
+#
+# Mocks anthropic.Anthropic itself (the seam check_credentials calls) rather
+# than depending on this machine's real environment/on-disk profile - a real
+# `ant auth login` profile happening to exist (or not) on whatever host runs
+# this suite must never change the result, per the "fully hermetic" rule in
+# CLAUDE.md/README's Development section.
+
+
+class _FakeAnthropicClient:
+    def __init__(self, api_key=None, auth_token=None, credentials=None):
+        self.api_key = api_key
+        self.auth_token = auth_token
+        self.credentials = credentials
+
+
+def test_check_credentials_true_when_api_key_resolves(monkeypatch):
+    monkeypatch.setattr("anthropic.Anthropic", lambda: _FakeAnthropicClient(api_key="sk-test"))
+    ok, msg = check_credentials()
+    assert ok is True
+    assert "found" in msg.lower()
+
+
+def test_check_credentials_true_when_only_profile_credentials_resolve(monkeypatch):
+    """An `ant auth login` profile resolves via the SDK's `credentials`
+    attribute, not `api_key`/`auth_token` - must count as found too."""
+    monkeypatch.setattr(
+        "anthropic.Anthropic", lambda: _FakeAnthropicClient(credentials=object())
+    )
+    ok, _ = check_credentials()
+    assert ok is True
+
+
+def test_check_credentials_false_when_nothing_resolves(monkeypatch):
+    monkeypatch.setattr("anthropic.Anthropic", lambda: _FakeAnthropicClient())
+    ok, msg = check_credentials()
+    assert ok is False
+    # Exact wording match with get_chapters's own no-credential fallback -
+    # the same fact must never be phrased two different ways (see
+    # NO_CREDENTIALS_MESSAGE's docstring in chapters.py).
+    assert msg == NO_CREDENTIALS_MESSAGE
+
+
+def test_get_chapters_no_key_fallback_reason_matches_check_credentials_wording(tmp_path, monkeypatch):
+    """Regression guard for the "reuse exact wording" requirement (issue
+    #35): get_chapters's own no-credential fallback_reason and
+    check_credentials()'s failure message must be the literal same string,
+    not just similar-sounding ones that could quietly drift apart."""
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    def no_key(outline, prior_titles):
+        raise TypeError(
+            '"Could not resolve authentication method. Expected one of api_key, auth_token, '
+            'or credentials to be set. Or for one of the `X-Api-Key` or `Authorization` '
+            'headers to be explicitly omitted"'
+        )
+
+    monkeypatch.setattr("work_ledger.chapters._call_model", no_key)
+    result = get_chapters(tailer, transcript_path)
+
+    monkeypatch.setattr("anthropic.Anthropic", lambda: _FakeAnthropicClient())
+    _, check_status_msg = check_credentials()
+
+    assert result.fallback_reason == check_status_msg == NO_CREDENTIALS_MESSAGE
