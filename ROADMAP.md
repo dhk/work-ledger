@@ -11,7 +11,7 @@ Staging follows the show/tell/do rubric in `CLAUDE.md` (full writeup:
 the narrative synthesis on top, refreshed when a theme's shape actually
 changes — not mechanically re-synced on every issue edit.
 
-**Current focus:** #44 (timeline view) is implemented - `work-ledger timeline`/`timeline backfill`, day-bucketed activity + chapter-category mix, terminal sparklines and `--report` HTML/PNG. Not yet merged/closed as of this writing.
+**Current focus:** the practice-visibility theme is now fully shipped (#44 timeline, #43 web UI) and the quality/infra batch (#45-48) is closed out. Nothing designated as current focus yet - next candidate is whichever of #42 (history store) or the Tell-stage work (#19/#21/#22-23) gets picked up.
 
 ## Cost/usage reporting — Show, core shipped
 
@@ -28,17 +28,17 @@ below in this theme extends that core rather than replacing it.
 | [#16](https://github.com/dhk/work-ledger/issues/16) | Pluggable local-model chaptering backend (Ollama) + unfreeze chapters | — |
 | [#35](https://github.com/dhk/work-ledger/issues/35) | `miso` — run chapters + reports end-to-end in one command | — |
 
-## Practice visibility — Show, newest theme, active now
+## Practice visibility — Show, shipped
 
 Reframes "what did this cost" as "how has the way I work actually
 changed" — tool selection, delegation, approach mix, browsable rather than
-flag-driven. This is where today's work is happening.
+flag-driven.
 
 | Issue | What | Depends on |
 |---|---|---|
-| [#44](https://github.com/dhk/work-ledger/issues/44) | **Timeline view** — tool/skill/subagent/approach mix over time | Implemented; did not block on #42 |
-| [#42](https://github.com/dhk/work-ledger/issues/42) | Local session history store | Backs #3/#4/#5 and periodic runs |
-| [#43](https://github.com/dhk/work-ledger/issues/43) | Local web UI — browse sessions/chapters/activity as a page | Reuses `report.py`; likely eventual home for #44 |
+| [#44](https://github.com/dhk/work-ledger/issues/44) ✅ | **Timeline view** — tool/skill/subagent/approach mix over time (`work-ledger timeline`/`timeline backfill`) | Shipped; did not block on #42 |
+| [#43](https://github.com/dhk/work-ledger/issues/43) ✅ | **Local web UI** — `work-ledger serve`, browse sessions/chapters as a page | Shipped; reused `report.py`'s visual system |
+| [#42](https://github.com/dhk/work-ledger/issues/42) | Local session history store | Backs #3/#4/#5 and periodic runs — still open, not needed by #44/#43 |
 
 ## Recommendations — Tell, started, thin
 
@@ -75,7 +75,7 @@ real recurring pattern, not just one session's data.
 |---|---|---|
 | [#6](https://github.com/dhk/work-ledger/issues/6) | Deterministic-tool substitution for recurring expensive patterns | **Blocked on #5** surfacing a real pattern first — do not start design work ahead of that data |
 
-## Quality/Infra — cross-cutting, not staged
+## Quality/Infra — cross-cutting, not staged, closed out
 
 Correctness and process gaps found auditing the codebase. These don't sit
 on the show/tell/do axis — they're not feature work, they cut across
@@ -84,10 +84,12 @@ without a stage label.
 
 | Issue | What |
 |---|---|
-| [#45](https://github.com/dhk/work-ledger/issues/45) | `backend/` has no test coverage and isn't part of CI |
-| [#46](https://github.com/dhk/work-ledger/issues/46) | Silent cost loss: `isSidechain` subagents and skill follow-on work aren't attributed |
-| [#47](https://github.com/dhk/work-ledger/issues/47) | Sonnet 5 introductory pricing isn't modeled, nothing forces a fix after it expires |
-| [#48](https://github.com/dhk/work-ledger/issues/48) | No coverage threshold enforced in CI |
+| [#45](https://github.com/dhk/work-ledger/issues/45) ✅ | `backend/` has no test coverage and isn't part of CI |
+| [#46](https://github.com/dhk/work-ledger/issues/46) ✅ | Silent cost loss: `isSidechain` subagents and skill follow-on work aren't attributed |
+| [#47](https://github.com/dhk/work-ledger/issues/47) ✅ | Sonnet 5 introductory pricing isn't modeled, nothing forces a fix after it expires |
+| [#48](https://github.com/dhk/work-ledger/issues/48) ✅ | No coverage threshold enforced in CI |
+
+All four shipped together in one pass (#51).
 
 ## Using this as a guardrail
 
