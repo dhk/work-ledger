@@ -35,7 +35,7 @@ Issues = "https://github.com/dhk/work-ledger/issues"
 # Only needed for `work-ledger chapters --report --format png`. Also run
 # `playwright install chromium` once after installing this extra.
 report = ["playwright>=1.40"]
-test = ["pytest>=8.0"]
+test = ["pytest>=8.0", "pytest-cov>=5.0"]
 # Only needed to run the local pattern-library MCP server
 # (`work-ledger-mcp`) - see docs/pattern-library-design.md.
 patterns = ["mcp>=1.0"]

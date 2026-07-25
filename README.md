@@ -477,6 +477,23 @@ helpers `timeline` relies on), `export.py`, `recommend.py`, `limits.py`,
 `timeline.py` (day-bucketing, category-mix, top-label ranking), and
 `cli.py`'s pure helper functions.
 
+CI (`.github/workflows/ci.yml`) runs the suite with `pytest-cov` and a
+`--cov-fail-under` gate set from what the suite actually measures (not a
+guessed round number - see #48), ratcheted up as coverage gaps close.
+`report.py`'s `render_png` is marked `# pragma: no cover` and excluded from
+that number on purpose - exercising it for real needs the optional `report`
+extra's Chromium download (`playwright install chromium`), which the
+default CI job doesn't install.
+
+`backend/` (the small Vercel/Upstash service behind the pattern-library
+counters and findings submission - see "What this deliberately doesn't do"
+in `backend/README.md`) has its own minimal route-level smoke tests
+(`backend/test/`, run via `node --test` - no extra test framework needed)
+covering the counter-increment and findings-submission endpoints: each
+route responds, and rejects malformed input. Run with `npm ci && npm test`
+from `backend/`. CI runs this as its own non-blocking job (`backend-test`)
+so a regression there doesn't hold up the Python matrix.
+
 ## License
 
 [MIT](LICENSE)

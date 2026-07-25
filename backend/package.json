@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "description": "Counter backend for work-ledger's shared pattern library - see ../docs/pattern-library-design.md. Two routes: increment a pattern's recommended/used count (Redis INCR, atomic), and read current counts back.",
+  "scripts": {
+    "test": "node --test test/"
+  },
   "dependencies": {
     "@upstash/redis": "^1.34.3"
   }
