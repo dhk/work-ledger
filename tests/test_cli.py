@@ -247,7 +247,7 @@ def test_resolve_transcript_arg_session_ambiguous_exits_and_lists_candidates(iso
     assert "0daf2222-0000-0000-0000-000000000000" in err
 
 
-@pytest.mark.parametrize("command", ["chapters", "activity", "recommend"])
+@pytest.mark.parametrize("command", ["chapters", "activity", "recommend", "waste"])
 def test_check_transcript_flag_placement_rejects_session_before_subcommand(command, capsys):
     argv = ["--session", "abc123", command]
     with pytest.raises(SystemExit) as exc_info:
@@ -258,7 +258,7 @@ def test_check_transcript_flag_placement_rejects_session_before_subcommand(comma
     assert command in err
 
 
-@pytest.mark.parametrize("command", ["chapters", "activity", "recommend"])
+@pytest.mark.parametrize("command", ["chapters", "activity", "recommend", "waste"])
 def test_check_transcript_flag_placement_rejects_transcript_before_subcommand(command, capsys):
     argv = ["--transcript", "x.jsonl", command]
     with pytest.raises(SystemExit) as exc_info:
@@ -467,6 +467,126 @@ def test_run_activity_prints_sidechain_warning(transcript_path, capsys):
     out = capsys.readouterr().out
     assert "Warning" in out
     assert "undercount" in out
+
+
+# --- run_waste (#5) ------------------------------------------------------
+
+
+def test_run_waste_reports_no_patterns_message(transcript_path, capsys):
+    entries = [
+        user_entry("p1", "do something"),
+        *assistant_lines("msg-1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run_waste(transcript_path=transcript_path)
+
+    out = capsys.readouterr().out
+    assert "No repeated patterns found" in out
+
+
+def test_run_waste_table_shows_repeated_read(transcript_path, capsys):
+    entries = [
+        user_entry("p1", "read a file"),
+        *assistant_lines(
+            "msg-1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+            [{"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}, "id": "t1"}],
+        ),
+        user_entry("p2", "read it again"),
+        *assistant_lines(
+            "msg-2", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+            [{"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}, "id": "t2"}],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run_waste(transcript_path=transcript_path)
+
+    out = capsys.readouterr().out
+    assert "a.py" in out
+    assert "Repeated file read" in out
+    assert "not what to do about it" in out
+
+
+def test_run_waste_json_output(transcript_path, capsys):
+    entries = [
+        user_entry("p1", "read a file"),
+        *assistant_lines(
+            "msg-1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+            [{"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/foo.py"}, "id": "t1"}],
+        ),
+        user_entry("p2", "read it again"),
+        *assistant_lines(
+            "msg-2", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+            [{"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/foo.py"}, "id": "t2"}],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run_waste(transcript_path=transcript_path, as_json=True)
+
+    import json
+
+    out = capsys.readouterr().out
+    # The dim "Watching:.../note" preamble is printed unconditionally before
+    # --json's output, same as every other subcommand's --json path in this
+    # codebase (see run_activity/run_recommend) - not something this test
+    # should special-case away, just skip past to find the actual JSON.
+    data = json.loads(out[out.index("[") :])
+    assert len(data) == 1
+    assert data[0]["kind"] == "repeated-read"
+    assert data[0]["label"] == "/repo/foo.py"
+    assert data[0]["occurrences"] == 2
+
+
+def test_run_waste_prints_sidechain_warning(transcript_path, capsys):
+    entries = [
+        user_entry("p1", "do something"),
+        {
+            "type": "assistant",
+            "isSidechain": True,
+            "timestamp": "2026-07-12T10:00:01Z",
+            "message": {
+                "id": "sidechain-msg",
+                "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 999, "output_tokens": 999},
+                "content": [{"type": "text", "text": "sidechain"}],
+            },
+        },
+        *assistant_lines("msg-2", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run_waste(transcript_path=transcript_path)
+
+    out = capsys.readouterr().out
+    assert "Warning" in out
+    assert "undercount" in out
+
+
+def test_run_waste_report_writes_well_formed_html(transcript_path, capsys, tmp_path):
+    entries = [
+        user_entry("p1", "read a file"),
+        *assistant_lines(
+            "msg-1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+            [{"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/foo.py"}, "id": "t1"}],
+        ),
+        user_entry("p2", "read it again"),
+        *assistant_lines(
+            "msg-2", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+            [{"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/foo.py"}, "id": "t2"}],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    out_path = tmp_path / "waste-report.html"
+    cli.run_waste(transcript_path=transcript_path, report=True, report_out=str(out_path))
+
+    assert out_path.exists()
+    html = out_path.read_text(encoding="utf-8")
+    assert html.startswith("<!doctype html>")
+    assert html.rstrip().endswith("</html>")
+    assert "/repo/foo.py" in html
 
 
 # --- build_session_rows: duration, tokens, summary ----------------------

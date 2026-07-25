@@ -42,6 +42,7 @@ from work_ledger.transcript import (
     find_all_transcripts,
     find_transcripts_by_session_prefix,
 )
+from work_ledger.waste import find_waste_patterns
 
 POLL_INTERVAL_S = 1.0
 LIMITS_POLL_INTERVAL_S = 5.0
@@ -454,6 +455,127 @@ def run_activity(
     console.print(table)
 
 
+_WASTE_KIND_LABELS = {
+    "repeated-read": "Repeated file read",
+    "repeated-subagent": "Repeated subagent dispatch",
+}
+
+
+def run_waste(
+    transcript_path=None,
+    as_json: bool = False,
+    report: bool = False,
+    report_format: str = "html",
+    report_out: str | None = None,
+):
+    """Within-session waste mining (#5): flags the same file Read more than
+    once, or the same subagent dispatched more than once with a
+    near-identical description, plus their combined cost - a starting
+    point, not a recommendation (that's `recommend`/issue #6). Read-only,
+    no API call, no chaptering required: like `activity`, everything it
+    reads is already parsed locally from the transcript. If this session
+    already has cached chapters (from a prior `work-ledger chapters` run),
+    patterns are scoped to the chapter they fell in rather than just the
+    whole session - `cached_chapters` never triggers a paid Haiku pass as
+    a side effect of running this command."""
+    console = Console()
+    path = transcript_path or find_active_transcript()
+    if path is None:
+        console.print(
+            "[red]No Claude Code session transcripts found under "
+            "~/.claude/projects/. Run a session first, or pass --transcript.[/red]"
+        )
+        sys.exit(1)
+
+    console.print(f"[dim]Watching:[/dim] {path}")
+    console.print(
+        "[dim]Within-session only - the same pattern recurring across separate sessions "
+        "isn't detected here (depends on #3's cross-session clustering; see issue #5). "
+        "No API call, no chaptering required.[/dim]\n"
+    )
+
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    warning = _sidechain_warning(tailer)
+    if warning:
+        console.print(warning)
+
+    chapters = cached_chapters(path)
+    patterns = find_waste_patterns(tailer, chapters)
+
+    if report:
+        from work_ledger.report import ReportRenderError, build_waste_report_html, render_png
+
+        out_path = Path(report_out) if report_out else Path(f"work-ledger-waste-{path.stem}.{report_format}")
+        html = build_waste_report_html(path.name, patterns)
+
+        if report_format == "html":
+            out_path.write_text(html, encoding="utf-8")
+        else:
+            try:
+                render_png(html, out_path)
+            except ReportRenderError as e:
+                console.print(f"[red]{e}[/red]")
+                sys.exit(1)
+
+        console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
+        return
+
+    if as_json:
+        import json
+
+        data = [
+            {
+                "kind": p.kind,
+                "scope": p.scope,
+                "label": p.label,
+                "occurrences": p.occurrences,
+                "cost_usd": p.cost_usd,
+            }
+            for p in patterns
+        ]
+        console.print_json(json.dumps(data))
+        return
+
+    console.print()
+    if not patterns:
+        console.print("[green]No repeated patterns found - nothing matched the current heuristics.[/green]")
+        return
+
+    table = Table(title=f"work-ledger waste — {path.name}", expand=True)
+    table.add_column("Pattern", width=26)
+    table.add_column("Scope", ratio=2, overflow="ellipsis")
+    table.add_column("Detail", ratio=3, overflow="fold")
+    table.add_column("Times", justify="right", width=7)
+    table.add_column("Cost (est.)", justify="right", width=12)
+
+    total_cost = 0.0
+    for p in patterns:
+        total_cost += p.cost_usd
+        table.add_row(
+            _WASTE_KIND_LABELS.get(p.kind, p.kind),
+            p.scope,
+            p.label,
+            str(p.occurrences),
+            f"${p.cost_usd:.4f}",
+        )
+
+    table.add_section()
+    table.add_row(
+        "",
+        "",
+        Text("TOTAL flagged", style="bold"),
+        "",
+        Text(f"${total_cost:.4f}", style="bold green"),
+    )
+    console.print(table)
+    console.print(
+        "[dim]This surfaces the pattern and its cost only - not what to do about it "
+        "(see issue #6, deliberately separate).[/dim]"
+    )
+
+
 def _parse_date_arg(value: str, flag: str) -> date:
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
@@ -481,7 +603,7 @@ def _validate_top(value: int | None) -> None:
 # (via _add_transcript_args) - see _check_transcript_flag_placement for why
 # that duplication matters. limits/export/patterns/sessions don't accept
 # either flag at all, so there's no ambiguity to check for those.
-_COMMANDS_WITH_OWN_TRANSCRIPT_FLAGS = {"chapters", "activity", "recommend"}
+_COMMANDS_WITH_OWN_TRANSCRIPT_FLAGS = {"chapters", "activity", "recommend", "waste"}
 
 
 def _check_transcript_flag_placement(argv: list[str], command: str | None) -> None:
@@ -1815,6 +1937,39 @@ def main():
         "used count. Requires `work-ledger patterns enable` first.",
     )
 
+    waste_parser = subparsers.add_parser(
+        "waste",
+        help="Flag recurring within-session waste - the same file Read more than once, or the "
+        "same subagent dispatched more than once with a near-identical description - and its "
+        "combined cost. No API call, no chaptering required. Not prescriptive about what to do "
+        "(see `recommend`/issue #6)",
+    )
+    _add_transcript_args(waste_parser)
+    waste_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable output instead of a terminal table",
+    )
+    waste_parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Generate a visual report (HTML or PNG) to a file instead of a terminal table",
+    )
+    waste_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["html", "png"],
+        default="html",
+        help="Report format for --report (default: html). png needs the optional "
+        "'report' extra: pip install \"work-ledger[report]\" && playwright install chromium",
+    )
+    waste_parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output file path for --report (default: work-ledger-waste-<session>.<format>)",
+    )
+
     patterns_parser = subparsers.add_parser(
         "patterns",
         help="Manage the shared pattern library (see docs/pattern-library-design.md) - "
@@ -1960,6 +2115,20 @@ def main():
             report_out=args.out,
             other_threshold=args.other_threshold,
             top=args.top,
+        )
+        return
+
+    if args.command == "waste":
+        if args.report and args.json:
+            print("error: --report and --json are mutually exclusive", file=sys.stderr)
+            sys.exit(2)
+        transcript_path = _resolve_transcript_arg(args.transcript, args.session)
+        run_waste(
+            transcript_path=transcript_path,
+            as_json=args.json,
+            report=args.report,
+            report_format=args.format,
+            report_out=args.out,
         )
         return
 

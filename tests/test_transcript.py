@@ -100,6 +100,69 @@ def test_subagent_dispatch_labeled_and_tool_use_id_tracked(transcript_path):
     assert "research X" in unit.label
 
 
+def test_read_tool_use_captures_file_path(transcript_path):
+    entries = [
+        user_entry("p1", "read a file"),
+        *assistant_lines(
+            "msg-1",
+            "claude-haiku-4-5",
+            {"input_tokens": 10, "output_tokens": 5},
+            [{"type": "tool_use", "name": "Read", "input": {"file_path": "/a/b.py"}, "id": "t1"}],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    unit = tailer.ordered_turns()[0].units[0]
+    assert unit.read_paths == ["/a/b.py"]
+
+
+def test_read_tool_use_without_file_path_is_not_recorded(transcript_path):
+    """A malformed/unexpected Read input (no file_path) is skipped rather
+    than recording a None/empty placeholder that would look like a real
+    repeated path to waste.py's detection."""
+    entries = [
+        user_entry("p1", "read a file"),
+        *assistant_lines(
+            "msg-1",
+            "claude-haiku-4-5",
+            {"input_tokens": 10, "output_tokens": 5},
+            [{"type": "tool_use", "name": "Read", "input": {}, "id": "t1"}],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    unit = tailer.ordered_turns()[0].units[0]
+    assert unit.read_paths == []
+
+
+def test_multiple_reads_in_one_unit_all_captured(transcript_path):
+    entries = [
+        user_entry("p1", "read two files"),
+        *assistant_lines(
+            "msg-1",
+            "claude-haiku-4-5",
+            {"input_tokens": 10, "output_tokens": 5},
+            [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}, "id": "t1"},
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/b.py"}, "id": "t2"},
+            ],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    unit = tailer.ordered_turns()[0].units[0]
+    assert unit.read_paths == ["/a.py", "/b.py"]
+
+
 def test_subagent_transcript_usage_rolls_up_into_dispatching_unit(transcript_path):
     entries = [
         user_entry("p1", "spawn a subagent"),

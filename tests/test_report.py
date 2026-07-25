@@ -1,7 +1,8 @@
 from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter, Section
-from work_ledger.report import build_activity_report_html, build_report_html
+from work_ledger.report import build_activity_report_html, build_report_html, build_waste_report_html
 from work_ledger.transcript import TranscriptTailer
+from work_ledger.waste import REPEATED_READ, REPEATED_SUBAGENT, WastePattern
 
 from .conftest import assistant_lines, user_entry, write_jsonl
 
@@ -164,5 +165,26 @@ def test_build_trend_report_html_zero_buckets_does_not_crash():
     from work_ledger.report import build_trend_report_html
 
     html = build_trend_report_html("empty range", [], bucket_size="day", total_sessions=0)
+    assert "<!doctype html>" in html
+    assert "</html>" in html
+
+
+def test_build_waste_report_html_smoke():
+    patterns = [
+        WastePattern(kind=REPEATED_SUBAGENT, scope="Research", label="Explore: research the API", occurrences=3, cost_usd=1.5),
+        WastePattern(kind=REPEATED_READ, scope="Research", label="/repo/foo.py", occurrences=2, cost_usd=0.002),
+    ]
+    html = build_waste_report_html("s.jsonl", patterns)
+    assert html.startswith("<!doctype html>")
+    assert "s.jsonl" in html
+    assert "/repo/foo.py" in html
+    assert "research the API" in html
+    assert "Repeated file read" in html
+    assert "Repeated subagent dispatch" in html
+    assert "</html>" in html
+
+
+def test_build_waste_report_html_zero_patterns_does_not_crash():
+    html = build_waste_report_html("empty.jsonl", [])
     assert "<!doctype html>" in html
     assert "</html>" in html
