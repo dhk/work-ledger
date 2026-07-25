@@ -621,11 +621,18 @@ class ReportRenderError(RuntimeError):
     """Raised when PNG rendering can't proceed (missing Playwright, etc)."""
 
 
-def render_png(html: str, out_path: Path, width: int = 960) -> None:
+def render_png(html: str, out_path: Path, width: int = 960) -> None:  # pragma: no cover
     """Screenshot the report HTML to a PNG using a headless browser. Needs
     the optional `report` extra (`pip install "work-ledger[report]"`) plus
     a one-time `playwright install chromium` - raises ReportRenderError with
-    a clear message rather than crashing if that's missing."""
+    a clear message rather than crashing if that's missing.
+
+    Deliberately excluded from the #48 coverage gate (`# pragma: no cover`
+    above), not silently passing: exercising this for real needs the
+    `report` extra's Chromium download, which the default CI job doesn't
+    install (see .github/workflows/ci.yml's comment on why) - test_report.py
+    only covers build_report_html/build_activity_report_html/
+    build_timeline_report_html, not this function."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as e:

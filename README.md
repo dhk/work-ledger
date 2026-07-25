@@ -133,10 +133,18 @@ format is internal/undocumented and can differ by install or version — an
 older or different setup that instead inlines subagent activity as
 `isSidechain` entries in the main transcript file is not specifically
 handled; those entries are currently just ignored rather than guessed at,
-so subagent cost may not roll up on such installs. Skill invocations run
-inline in the main chain, so only the invoking call itself is labeled — any
-follow-on work the skill drives isn't currently bounded as belonging to that
-skill (transcripts don't mark a clear skill-scope boundary).
+so subagent cost may not roll up on such installs. This isn't just prose —
+`work-ledger`/`chapters`/`activity` count these skipped entries and print a
+`Warning:` line the moment it happens, rather than showing a number that
+looks complete but isn't (`--json`'s `chapters --all` rows also carry a
+`skipped_sidechain_count` field). Skill invocations run inline in the main
+chain, so only the invoking call itself is labeled — any follow-on work the
+skill drives isn't currently bounded as belonging to that skill (transcripts
+don't mark a clear skill-scope boundary, and no other correlatable signal —
+timestamp proximity, tool-call clustering — is solid enough to build a
+heuristic on instead of a real marker). `--detail` and `activity` print a
+`Note:` line whenever a `Skill:` unit is present, as a reminder that its
+follow-on cost is folded into ordinary turn cost rather than the skill.
 
 **Bug fixed in this pass**: Claude Code writes one JSONL line per content
 block (thinking/text/tool_use) rather than one line per full LLM response,
@@ -468,6 +476,23 @@ exception, plus the cache-only `cached_chapters`/`has_uncached_turns`
 helpers `timeline` relies on), `export.py`, `recommend.py`, `limits.py`,
 `timeline.py` (day-bucketing, category-mix, top-label ranking), and
 `cli.py`'s pure helper functions.
+
+CI (`.github/workflows/ci.yml`) runs the suite with `pytest-cov` and a
+`--cov-fail-under` gate set from what the suite actually measures (not a
+guessed round number - see #48), ratcheted up as coverage gaps close.
+`report.py`'s `render_png` is marked `# pragma: no cover` and excluded from
+that number on purpose - exercising it for real needs the optional `report`
+extra's Chromium download (`playwright install chromium`), which the
+default CI job doesn't install.
+
+`backend/` (the small Vercel/Upstash service behind the pattern-library
+counters and findings submission - see "What this deliberately doesn't do"
+in `backend/README.md`) has its own minimal route-level smoke tests
+(`backend/test/`, run via `node --test` - no extra test framework needed)
+covering the counter-increment and findings-submission endpoints: each
+route responds, and rejects malformed input. Run with `npm ci && npm test`
+from `backend/`. CI runs this as its own non-blocking job (`backend-test`)
+so a regression there doesn't hold up the Python matrix.
 
 ## License
 

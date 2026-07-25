@@ -1,6 +1,15 @@
+from datetime import date
+
 from pytest import approx
 
-from work_ledger.pricing import CACHE_READ_MULT, CACHE_WRITE_5M_MULT, estimate_cost_usd, rate_for
+from work_ledger.pricing import (
+    CACHE_READ_MULT,
+    CACHE_WRITE_5M_MULT,
+    RATES,
+    SONNET_5_INTRO_PRICING_CUTOFF,
+    estimate_cost_usd,
+    rate_for,
+)
 
 
 def test_rate_for_known_model():
@@ -65,3 +74,30 @@ def test_estimate_cost_cache_creation_flat_fallback():
     usage = {"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 1_000_000}
     cost = estimate_cost_usd("claude-haiku-4-5", usage)
     assert cost == approx(rate.input_per_mtok * CACHE_WRITE_5M_MULT)
+
+
+def test_sonnet_5_intro_pricing_cutoff_forces_a_revisit():
+    """Forcing function for #47: `claude-sonnet-5`'s $3/$15 RATES entry is
+    Anthropic's confirmed *standard* rate (verified against Anthropic's
+    public pricing pages while investigating #47), already correct for
+    after the introductory-pricing window ($2/$10 per MTok) ends on
+    SONNET_5_INTRO_PRICING_CUTOFF (2026-08-31) - not modeled here, so
+    estimates run slightly high during that ~5-week window, an accepted
+    tradeoff per #47's own open questions.
+
+    This test starts failing the day that cutoff passes - not because the
+    rate is expected to be wrong, but so CI actually forces someone to
+    open pricing.py and re-confirm the rate (pricing can change again)
+    rather than an old assumption staying silently unverified forever.
+    If you're reading this because it just failed: re-check Anthropic's
+    current published Sonnet 5 rate, update RATES/this cutoff/this
+    docstring as needed, then move the cutoff forward or delete this test
+    once it's no longer needed as a forcing function.
+    """
+    assert date.today() <= SONNET_5_INTRO_PRICING_CUTOFF, (
+        "Sonnet 5's introductory-pricing window has ended - re-verify "
+        "work_ledger/pricing.py's claude-sonnet-5 rate against Anthropic's "
+        "current published pricing before updating/removing this test."
+    )
+    assert RATES["claude-sonnet-5"].input_per_mtok == 3.00
+    assert RATES["claude-sonnet-5"].output_per_mtok == 15.00

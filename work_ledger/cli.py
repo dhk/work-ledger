@@ -54,6 +54,40 @@ UNIT_KIND_STYLE = {
 TABLE_COLUMNS = ("Time", "Prompt / task", "Calls", "In tok", "Out tok", "Cost (est.)")
 
 
+# Both notes below back #46: two known attribution gaps in transcript.py
+# that used to be documented only in README prose. Surfacing them in the
+# CLI itself means a user sees the caveat at the moment a number might be
+# an undercount, not only if they happen to read the README first.
+
+
+def _sidechain_warning(tailer: "TranscriptTailer") -> str | None:
+    """Non-None if this transcript had inline isSidechain entries (an
+    older/different transcript format - see transcript.py's module
+    docstring) that were skipped rather than parsed. When that happens,
+    this session's cost is a silent undercount unless we say so."""
+    n = tailer.skipped_sidechain_count
+    if n == 0:
+        return None
+    entry_word = "entry was" if n == 1 else "entries were"
+    return (
+        f"[yellow]Warning: {n} inlined subagent (isSidechain) {entry_word} skipped in "
+        "this transcript - this session's cost may be an undercount. See README's "
+        '"Known limitation on subagent attribution".[/yellow]'
+    )
+
+
+_SKILL_FOLLOWON_NOTE = (
+    "[dim]Note: \"Skill:\" cost reflects only the invoking call - any follow-on work "
+    "a skill drives isn't currently bounded to that skill, since transcripts carry no "
+    "scope marker for where a skill's driven work ends (see README's \"Known "
+    "limitation on subagent attribution\").[/dim]"
+)
+
+
+def _has_skill_units(turns: list["Turn"]) -> bool:
+    return any(unit.kind == "skill" for turn in turns for unit in turn.units)
+
+
 def _unit_cost_str(unit) -> str:
     return "?" if unit.unknown_model_cost and unit.cost_usd == 0 else f"${unit.cost_usd:.4f}"
 
@@ -135,6 +169,12 @@ def run(transcript_path=None, once: bool = False, detail: bool = False):
 
     tailer = TranscriptTailer(path)
     tailer.poll()
+
+    warning = _sidechain_warning(tailer)
+    if warning:
+        console.print(warning)
+    if detail and _has_skill_units(tailer.ordered_turns()):
+        console.print(_SKILL_FOLLOWON_NOTE)
 
     if once:
         console.print(build_table(tailer, path.name, detail=detail))
@@ -267,6 +307,12 @@ def run_chapters(
     tailer = TranscriptTailer(path)
     tailer.poll()
 
+    warning = _sidechain_warning(tailer)
+    if warning:
+        console.print(warning)
+    if detail and _has_skill_units(tailer.ordered_turns()):
+        console.print(_SKILL_FOLLOWON_NOTE)
+
     result = get_chapters(tailer, path)
 
     if result.fallback_reason:
@@ -355,10 +401,17 @@ def run_activity(
     tailer = TranscriptTailer(path)
     tailer.poll()
 
+    warning = _sidechain_warning(tailer)
+    if warning:
+        console.print(warning)
+
     buckets = group_by_activity(tailer)
     if not buckets:
         console.print("[yellow]No units found in this transcript.[/yellow]")
         return
+
+    if any(b.label.startswith("Skill:") for b in buckets):
+        console.print(_SKILL_FOLLOWON_NOTE)
 
     if report:
         from work_ledger.report import ReportRenderError, build_activity_report_html, render_png
@@ -662,6 +715,7 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
                     "top_chapter": None,
                     "cost_usd": 0.0,
                     "unknown_model_cost": False,
+                    "skipped_sidechain_count": tailer.skipped_sidechain_count,
                 }
             )
             continue
@@ -683,6 +737,7 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
                 "top_chapter": top_chapter.title if top_chapter else None,
                 "cost_usd": session_cost,
                 "unknown_model_cost": tailer.has_unknown_model(),
+                "skipped_sidechain_count": tailer.skipped_sidechain_count,
             }
         )
 
@@ -723,6 +778,13 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
     console.print(table)
     if grand_pass_cost:
         console.print(f"[dim]Chaptering across all sessions cost ${grand_pass_cost:.4f} this run.[/dim]")
+    total_skipped_sidechain = sum(row["skipped_sidechain_count"] for row in rows)
+    if total_skipped_sidechain:
+        console.print(
+            f"[yellow]Warning: {total_skipped_sidechain} inlined subagent (isSidechain) "
+            "entries were skipped across these sessions - their cost may be an "
+            'undercount. See README\'s "Known limitation on subagent attribution".[/yellow]'
+        )
 
 
 def build_limits_table(usage: WindowUsage) -> Table:

@@ -35,5 +35,37 @@ jobs:
       - name: Compile check
         run: python -m compileall -q work_ledger
 
+      # --cov-fail-under is set from what the suite actually measures today
+      # (~65.5%, see #48), not a guessed round number - it's a floor to
+      # ratchet up as gaps close, not an aspirational target. `render_png`
+      # (report.py) is marked `# pragma: no cover` and excluded from this
+      # number on purpose - see that function's docstring and this file's
+      # "report extra" comment above for why (needs a real Chromium
+      # download this job doesn't install).
       - name: Run tests
-        run: pytest
+        run: pytest --cov=work_ledger --cov-report=term-missing --cov-fail-under=65
+
+  backend-test:
+    # backend/ (the Vercel + Upstash counter/findings service - see #45) is
+    # a separate deployable with its own tiny test suite (route-level smoke
+    # tests: responds, rejects malformed input - see backend/test/). Kept as
+    # its own job, non-blocking (continue-on-error), so a regression there
+    # is visible without holding up the Python matrix above, which is what
+    # this repo's actual package/tests are.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Run backend tests
+        run: npm test

@@ -23,7 +23,10 @@ Unit that dispatched it. This correlation is verified against this
 environment's transcripts; Claude Code's transcript format is internal and
 undocumented, so older/other installs that instead inline subagent activity
 as `isSidechain` entries in the main file are not specifically handled -
-those entries are just ignored rather than guessed at.
+those entries are just ignored rather than guessed at. They *are* counted
+(`TranscriptTailer.skipped_sidechain_count`), so a caller can at least warn
+that a session's cost may be an undercount instead of looking complete when
+it isn't - see #46.
 """
 
 import json
@@ -247,6 +250,12 @@ class TranscriptTailer:
         self._subagents_dir = path.parent / path.stem / "subagents"
         self._unit_by_tool_use_id: dict[str, Unit] = {}
         self._subagent_mtimes: dict[str, float] = {}
+        # Count (not parse - see module docstring and #46) of inline
+        # isSidechain entries skipped in the main transcript. A nonzero
+        # count means this session's cost is a silent undercount on an
+        # install that uses that older/different transcript format -
+        # surfaced by callers (see cli.py) rather than left invisible.
+        self.skipped_sidechain_count = 0
 
     def poll(self) -> bool:
         """Read any new lines/subagent data since last poll. Returns True if changed."""
@@ -283,6 +292,7 @@ class TranscriptTailer:
             # This environment writes subagent activity to a separate file
             # (see _poll_subagents); inline sidechain entries from other
             # transcript formats aren't correlated here - skip rather than guess.
+            self.skipped_sidechain_count += 1
             return False
 
         if entry_type == "user":
@@ -405,3 +415,9 @@ class TranscriptTailer:
 
     def has_unknown_model(self) -> bool:
         return any(t.unknown_model_cost for t in self.turns.values())
+
+    def has_skipped_sidechain(self) -> bool:
+        """True if any inline isSidechain entry was seen and skipped (see
+        skipped_sidechain_count) - a signal this session's cost may be an
+        undercount on an install that uses that transcript format."""
+        return self.skipped_sidechain_count > 0

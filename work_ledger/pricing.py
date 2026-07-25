@@ -5,9 +5,27 @@ standard multipliers off the base input rate: reads ~0.1x, 5-minute cache
 writes ~1.25x, 1-hour cache writes ~2x. Sonnet 5 has introductory pricing
 ($2/$10 per MTok) through 2026-08-31 — not modeled here; this uses the
 standard rate, so estimates run slightly high during the intro window.
+
+The $3/$15 rate hardcoded below for "claude-sonnet-5" is Anthropic's
+confirmed *standard* (post-intro) rate, verified against Anthropic's public
+pricing pages while investigating #47 — it's not a guess at what the price
+will become. Nothing here re-verifies that after 2026-08-31 passes, though:
+see `SONNET_5_INTRO_PRICING_CUTOFF` and `tests/test_pricing.py`'s dated
+forcing-function test, which starts failing once that date passes, so this
+file gets an actual second look instead of a five-week-old assumption
+quietly going stale forever.
 """
 
 from dataclasses import dataclass
+from datetime import date
+
+
+# See module docstring and #47: the day Sonnet 5's introductory pricing
+# window ends - the RATES entry below already models the post-cutoff
+# standard rate (confirmed, not guessed), but this constant exists so a
+# dated test can force a re-check rather than trusting that confirmation
+# forever.
+SONNET_5_INTRO_PRICING_CUTOFF = date(2026, 8, 31)
 
 
 @dataclass(frozen=True)
