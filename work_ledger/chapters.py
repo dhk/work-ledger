@@ -230,6 +230,25 @@ def _validate_partition(parsed: _ChaptersOut, expected_ids: set[str]) -> list[_C
     return cleaned_chapters
 
 
+def cached_chapters(transcript_path: Path) -> list[Chapter]:
+    """Read only whatever chapters are already cached for this transcript,
+    without calling the model for anything new. For callers (e.g.
+    timeline.py) that want category data if it exists but must never
+    trigger a paid Haiku pass as a side effect of an unrelated command."""
+    _, chapters = _load_cache(transcript_path)
+    return chapters
+
+
+def has_uncached_turns(tailer: TranscriptTailer, transcript_path: Path) -> bool:
+    """Whether this transcript has any turns not yet covered by its
+    chapters cache - used by `timeline backfill` to decide which sessions
+    are worth an actual chaptering pass, and by plain `timeline` to warn
+    that its category mix is incomplete without running one."""
+    chaptered_ids, _ = _load_cache(transcript_path)
+    chaptered_id_set = set(chaptered_ids)
+    return any(t.prompt_id not in chaptered_id_set for t in tailer.ordered_turns())
+
+
 def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResult:
     """Return the chaptering for this transcript, calling the model only for
     turns not already in the cache. Cached chapters/sections are frozen -

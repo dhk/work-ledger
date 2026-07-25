@@ -17,6 +17,7 @@ from pathlib import Path
 
 from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter
+from work_ledger.timeline import DayBucket
 from work_ledger.transcript import TranscriptTailer
 
 # Validated categorical palette (8 slots) - see dataviz skill's
@@ -436,6 +437,180 @@ data.forEach((c, i) => {{
 
   root.appendChild(wrap);
 }});
+</script>
+</body>
+</html>
+"""
+
+
+def _day_rows(day_counts: list[tuple[str, dict[str, int]]], top_labels: list[str]) -> list[dict]:
+    """Shared shape for both timeline panels: one row per day, each with a
+    segment per top label present that day plus one optional "Other"
+    segment folding in everything outside top_labels - same "residual
+    bucket, always the neutral overflow color" convention
+    build_activity_report_html already uses, just per-day instead of
+    once."""
+    rows = []
+    for day, counts in day_counts:
+        segments = []
+        other = 0
+        for label, count in counts.items():
+            if label in top_labels:
+                segments.append({"label": label, "count": count})
+            else:
+                other += count
+        # Stable order: top_labels' own rank, so a label's segment lands
+        # in the same left-to-right position on every day's bar.
+        segments.sort(key=lambda s: top_labels.index(s["label"]))
+        if other:
+            segments.append({"label": f"Other ({other})", "count": other})
+        rows.append({"day": day, "total": sum(s["count"] for s in segments), "segments": segments})
+    return rows
+
+
+def build_timeline_report_html(
+    range_label: str,
+    days: list[DayBucket],
+    top_activity: list[str],
+    top_categories: list[str],
+    total_sessions: int,
+    uncached_sessions: int,
+) -> str:
+    """Day-by-day view of activity mix (tool/skill/subagent) and chapter-
+    category mix, reusing the same stat-tile/bar-track/tooltip visual
+    language as build_report_html/build_activity_report_html rather than a
+    new chart type - each day is rendered the way a chapter's bar is
+    rendered elsewhere, with per-label segments instead of per-section
+    ones. See timeline.py for how the underlying day buckets are built."""
+    activity_rows = _day_rows([(b.day, b.activity_counts) for b in days], top_activity)
+    category_rows = _day_rows([(b.day, b.category_counts) for b in days], top_categories)
+    activity_labels, category_labels = top_activity, top_categories
+
+    n_colors = max(len(activity_labels), len(category_labels), 1)
+    colors = _series_colors(n_colors)
+    css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
+    css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
+    style = _style_block(css_vars_light, css_vars_dark)
+
+    activity_colors = {label: f"var(--series-{i+1})" for i, label in enumerate(activity_labels)}
+    category_colors = {label: f"var(--series-{i+1})" for i, label in enumerate(category_labels)}
+
+    activity_json = json.dumps(activity_rows)
+    category_json = json.dumps(category_rows)
+    activity_colors_json = json.dumps(activity_colors)
+    category_colors_json = json.dumps(category_colors)
+
+    total_days = len(days)
+    uncached_note = (
+        f"{uncached_sessions} of {total_sessions} session(s) in range aren't fully chaptered yet - "
+        "category mix below is incomplete for those. Run `work-ledger timeline backfill` to fill it in."
+        if uncached_sessions
+        else f"All {total_sessions} session(s) in range are fully chaptered."
+    )
+
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>work-ledger timeline — {range_label}</title>
+{style}
+<style>
+  .viz-root {{ --overflow: {_OVERFLOW_LIGHT}; }}
+  @media (prefers-color-scheme: dark) {{ .viz-root {{ --overflow: {_OVERFLOW_DARK}; }} }}
+  .day-row {{ margin-bottom: 14px; }}
+  .day-head {{ display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }}
+  .day-head b {{ color: var(--text-primary); }}
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <div class="wrap">
+    <h1>work-ledger timeline</h1>
+    <p class="subtitle">{range_label} — how tool usage and approach have changed over time, not what it cost</p>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <p class="stat-label">Days with activity</p>
+        <div class="stat-value">{total_days}</div>
+        <p class="stat-note">across {total_sessions} session{'s' if total_sessions != 1 else ''}</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Chaptering coverage</p>
+        <div class="stat-value">{total_sessions - uncached_sessions} of {total_sessions}</div>
+        <p class="stat-note">sessions fully chaptered</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Tracked series</p>
+        <div class="stat-value">{len(activity_labels)}</div>
+        <p class="stat-note">top activity types, rest folded into "Other"</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Activity mix over time</h2>
+      <p class="caption">Which tool/skill/subagent produced each unit of work, per day.</p>
+      <div class="legend" id="activity-legend"></div>
+      <div id="activity-days"></div>
+    </div>
+
+    <div class="panel" style="margin-top:20px;">
+      <h2>Approach (chapter category) mix over time</h2>
+      <p class="caption">{uncached_note}</p>
+      <div class="legend" id="category-legend"></div>
+      <div id="category-days"></div>
+    </div>
+
+    <p class="footnote">
+      Each day's bar is sized relative to the busiest day in range; segments
+      are that day's share by count, not cost - hover a segment for its
+      exact count. Generated by <code>work-ledger timeline --report</code>.
+    </p>
+  </div>
+</div>
+
+<script>
+function renderPanel(rows, colors, legendId, rootId, unitLabel) {{
+  const legend = document.getElementById(legendId);
+  Object.keys(colors).forEach((label) => {{
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    item.innerHTML = `<span class="swatch" style="background:${{colors[label]}}"></span>${{label}}`;
+    legend.appendChild(item);
+  }});
+
+  const root = document.getElementById(rootId);
+  const maxTotal = Math.max(...rows.map(r => r.total), 1e-9);
+
+  rows.forEach((r) => {{
+    const wrap = document.createElement("div");
+    wrap.className = "day-row";
+
+    const head = document.createElement("div");
+    head.className = "day-head";
+    head.innerHTML = `<span>${{r.day}}</span><b>${{r.total}} ${{unitLabel}}</b>`;
+    wrap.appendChild(head);
+
+    const track = document.createElement("div");
+    track.className = "bar-track";
+    track.style.width = ((r.total / maxTotal) * 100).toFixed(1) + "%";
+
+    const dayTotal = r.total || 1e-9;
+    r.segments.forEach((s) => {{
+      const color = colors[s.label] || "var(--overflow)";
+      const seg = document.createElement("div");
+      seg.className = "bar-seg";
+      seg.style.width = ((s.count / dayTotal) * 100).toFixed(1) + "%";
+      seg.style.background = color;
+      seg.innerHTML = `<div class="tooltip"><b>${{s.label}}</b><br>${{s.count}} ${{unitLabel}}</div>`;
+      track.appendChild(seg);
+    }});
+    wrap.appendChild(track);
+    root.appendChild(wrap);
+  }});
+}}
+
+renderPanel({activity_json}, {activity_colors_json}, "activity-legend", "activity-days", "unit(s)");
+renderPanel({category_json}, {category_colors_json}, "category-legend", "category-days", "turn(s)");
 </script>
 </body>
 </html>

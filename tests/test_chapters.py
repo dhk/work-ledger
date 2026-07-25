@@ -12,7 +12,9 @@ from work_ledger.chapters import (
     _save_cache,
     _SectionOut,
     _validate_partition,
+    cached_chapters,
     get_chapters,
+    has_uncached_turns,
 )
 from work_ledger.transcript import TranscriptTailer
 
@@ -361,3 +363,54 @@ def test_get_chapters_continuation_merges_into_last_cached_chapter(tmp_path, mon
 def test_categories_are_all_valid_pydantic_choices():
     for cat in CATEGORIES:
         _ChapterOut(title="t", category=cat, sections=[])
+
+
+def test_cached_chapters_reads_without_calling_model(tmp_path, monkeypatch):
+    transcript_path = tmp_path / "s.jsonl"
+    _make_turns_transcript(transcript_path, ["p1"])
+    _save_cache(
+        transcript_path,
+        ["p1"],
+        [Chapter(title="Fix the bug", category="bug-fix", sections=[Section(title="Fix", prompt_ids=["p1"])])],
+    )
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("cached_chapters must never call the model")
+
+    monkeypatch.setattr("work_ledger.chapters._call_model", _boom)
+
+    chapters = cached_chapters(transcript_path)
+    assert [c.title for c in chapters] == ["Fix the bug"]
+    assert chapters[0].category == "bug-fix"
+
+
+def test_cached_chapters_empty_when_no_cache(tmp_path):
+    assert cached_chapters(tmp_path / "never-chaptered.jsonl") == []
+
+
+def test_has_uncached_turns_true_with_no_cache(tmp_path):
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1", "p2"])
+    assert has_uncached_turns(tailer, transcript_path) is True
+
+
+def test_has_uncached_turns_false_when_fully_cached(tmp_path):
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1", "p2"])
+    _save_cache(
+        transcript_path,
+        ["p1", "p2"],
+        [Chapter(title="All of it", category="other", sections=[Section(title="s", prompt_ids=["p1", "p2"])])],
+    )
+    assert has_uncached_turns(tailer, transcript_path) is False
+
+
+def test_has_uncached_turns_true_when_partially_cached(tmp_path):
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1", "p2"])
+    _save_cache(
+        transcript_path,
+        ["p1"],
+        [Chapter(title="Part 1", category="other", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    assert has_uncached_turns(tailer, transcript_path) is True
