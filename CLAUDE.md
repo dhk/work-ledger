@@ -42,6 +42,26 @@ Don't build "Do" automation on a "Tell" rule that's only ever been
 validated against one session. Wait for a recurring pattern with real
 evidence behind it (this is why issue #6 is deliberately blocked on #5).
 
+## Governance artifacts
+
+Three durable, project-level artifacts, each answering a different
+question and changing at a different rate — don't merge them:
+
+- **`PRODUCT_BRIEF.md`** — what this is, who it's for, and an explicit
+  non-goals list. Changes rarely.
+- **`ROADMAP.md`** — where things stand right now, grouped by theme, not
+  a restated issue list. Changes when a theme's shape changes.
+- **`docs/architecture.md`** — how the system is actually built: the
+  core data model, module map, and structural constraints. Changes when
+  the system's shape changes, not per-feature.
+
+**Before filing a new issue or starting a design doc**, check it against
+`PRODUCT_BRIEF.md`'s non-goals and `docs/architecture.md`'s constraints,
+then place it in a theme in `ROADMAP.md` (adding a new theme if it
+genuinely doesn't fit one). This is a guardrail, not a gate — the point is
+making sure new work doesn't quietly drift the product's intent, not
+blocking work on process.
+
 ## Development
 
 ```sh
