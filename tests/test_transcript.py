@@ -170,6 +170,57 @@ def test_issidechain_entries_are_skipped_not_guessed_at(transcript_path):
     assert turns[0].units == []
 
 
+def test_issidechain_entries_are_counted_for_46(transcript_path):
+    """A skipped isSidechain entry isn't silently invisible (#46) - it's
+    counted so a caller can warn the session's cost may be an undercount."""
+    entries = [
+        user_entry("p1", "do something"),
+        {
+            "type": "assistant",
+            "isSidechain": True,
+            "timestamp": "2026-07-12T10:00:01Z",
+            "message": {
+                "id": "sidechain-msg-1",
+                "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 999, "output_tokens": 999},
+                "content": [{"type": "text", "text": "sidechain"}],
+            },
+        },
+        {
+            "type": "assistant",
+            "isSidechain": True,
+            "timestamp": "2026-07-12T10:00:02Z",
+            "message": {
+                "id": "sidechain-msg-2",
+                "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "content": [{"type": "text", "text": "sidechain 2"}],
+            },
+        },
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert tailer.skipped_sidechain_count == 2
+    assert tailer.has_skipped_sidechain() is True
+
+
+def test_no_sidechain_entries_count_stays_zero(transcript_path):
+    entries = [
+        user_entry("p1", "do something"),
+        *assistant_lines("msg-1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert tailer.skipped_sidechain_count == 0
+    assert tailer.has_skipped_sidechain() is False
+
+
 def test_unknown_model_flagged_not_silently_zero(transcript_path):
     entries = [
         user_entry("p1", "do something"),

@@ -3,12 +3,15 @@ import pytest
 from work_ledger.chapters import Chapter, Section
 from pathlib import Path
 
+from work_ledger import cli
 from work_ledger.cli import (
     _check_transcript_flag_placement,
     _filter_only,
+    _has_skill_units,
     _in_date_range,
     _parse_date_arg,
     _resolve_transcript_arg,
+    _sidechain_warning,
     _threshold_note,
     _turns_cost,
     _turns_unknown,
@@ -16,7 +19,9 @@ from work_ledger.cli import (
     _validate_top,
 )
 from work_ledger.limits import SessionWindowUsage, WindowUsage
-from work_ledger.transcript import Turn, Unit
+from work_ledger.transcript import TranscriptTailer, Turn, Unit
+
+from .conftest import assistant_lines, user_entry, write_jsonl
 
 
 def _turn(prompt_id, cost=1.0, unknown=False):
@@ -276,3 +281,170 @@ def test_check_transcript_flag_placement_handles_flag_equals_form():
     with pytest.raises(SystemExit) as exc_info:
         _check_transcript_flag_placement(argv, "chapters")
     assert exc_info.value.code == 2
+
+
+def test_has_skill_units_true_when_present():
+    skill_unit = Unit(timestamp="t", skill_name="dataviz")
+    turn = Turn(prompt_id="p1", prompt_snippet="x", timestamp="t", units=[skill_unit])
+    assert _has_skill_units([turn]) is True
+
+
+def test_has_skill_units_false_when_absent():
+    plain_unit = Unit(timestamp="t")
+    turn = Turn(prompt_id="p1", prompt_snippet="x", timestamp="t", units=[plain_unit])
+    assert _has_skill_units([turn]) is False
+
+
+def test_sidechain_warning_none_when_nothing_skipped(transcript_path):
+    entries = [
+        user_entry("p1", "do something"),
+        *assistant_lines("msg-1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+    assert _sidechain_warning(tailer) is None
+
+
+def test_sidechain_warning_present_when_entries_skipped(transcript_path):
+    entries = [
+        user_entry("p1", "do something"),
+        {
+            "type": "assistant",
+            "isSidechain": True,
+            "timestamp": "2026-07-12T10:00:01Z",
+            "message": {
+                "id": "sidechain-msg",
+                "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 999, "output_tokens": 999},
+                "content": [{"type": "text", "text": "sidechain"}],
+            },
+        },
+    ]
+    write_jsonl(transcript_path, entries)
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+    warning = _sidechain_warning(tailer)
+    assert warning is not None
+    assert "1" in warning
+    assert "isSidechain" in warning
+
+
+def test_run_prints_sidechain_warning(transcript_path, capsys):
+    """#46: an inline isSidechain entry being skipped shows up as a visible
+    CLI warning, not just as a documented caveat in the README."""
+    entries = [
+        user_entry("p1", "do something"),
+        {
+            "type": "assistant",
+            "isSidechain": True,
+            "timestamp": "2026-07-12T10:00:01Z",
+            "message": {
+                "id": "sidechain-msg",
+                "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 999, "output_tokens": 999},
+                "content": [{"type": "text", "text": "sidechain"}],
+            },
+        },
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run(transcript_path=transcript_path, once=True)
+
+    out = capsys.readouterr().out
+    assert "Warning" in out
+    assert "undercount" in out
+
+
+def test_run_no_sidechain_warning_when_nothing_skipped(transcript_path, capsys):
+    entries = [
+        user_entry("p1", "do something"),
+        *assistant_lines("msg-1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run(transcript_path=transcript_path, once=True)
+
+    out = capsys.readouterr().out
+    assert "Warning" not in out
+
+
+def test_run_detail_prints_skill_followon_note(transcript_path, capsys):
+    """#46: a Skill: unit's follow-on work isn't bounded to that skill - the
+    CLI now says so in --detail output rather than only in README prose."""
+    entries = [
+        user_entry("p1", "run the dataviz skill"),
+        *assistant_lines(
+            "msg-1",
+            "claude-haiku-4-5",
+            {"input_tokens": 10, "output_tokens": 5},
+            [{"type": "tool_use", "name": "Skill", "input": {"skill": "dataviz"}, "id": "t1"}],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run(transcript_path=transcript_path, once=True, detail=True)
+
+    out = capsys.readouterr().out
+    assert "bounded" in out
+
+
+def test_run_no_detail_omits_skill_followon_note(transcript_path, capsys):
+    entries = [
+        user_entry("p1", "run the dataviz skill"),
+        *assistant_lines(
+            "msg-1",
+            "claude-haiku-4-5",
+            {"input_tokens": 10, "output_tokens": 5},
+            [{"type": "tool_use", "name": "Skill", "input": {"skill": "dataviz"}, "id": "t1"}],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run(transcript_path=transcript_path, once=True, detail=False)
+
+    out = capsys.readouterr().out
+    assert "bounded" not in out
+
+
+def test_run_activity_prints_skill_followon_note(transcript_path, capsys):
+    entries = [
+        user_entry("p1", "run the dataviz skill"),
+        *assistant_lines(
+            "msg-1",
+            "claude-haiku-4-5",
+            {"input_tokens": 10, "output_tokens": 5},
+            [{"type": "tool_use", "name": "Skill", "input": {"skill": "dataviz"}, "id": "t1"}],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run_activity(transcript_path=transcript_path)
+
+    out = capsys.readouterr().out
+    assert "bounded" in out
+
+
+def test_run_activity_prints_sidechain_warning(transcript_path, capsys):
+    entries = [
+        user_entry("p1", "do something"),
+        {
+            "type": "assistant",
+            "isSidechain": True,
+            "timestamp": "2026-07-12T10:00:01Z",
+            "message": {
+                "id": "sidechain-msg",
+                "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 999, "output_tokens": 999},
+                "content": [{"type": "text", "text": "sidechain"}],
+            },
+        },
+        *assistant_lines("msg-2", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    cli.run_activity(transcript_path=transcript_path)
+
+    out = capsys.readouterr().out
+    assert "Warning" in out
+    assert "undercount" in out
