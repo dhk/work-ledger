@@ -3,8 +3,15 @@ import types
 
 from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter, Section
-from work_ledger.report import PNG_UNAVAILABLE_MESSAGE, build_activity_report_html, build_report_html, png_available
+from work_ledger.report import (
+    PNG_UNAVAILABLE_MESSAGE,
+    build_activity_report_html,
+    build_report_html,
+    build_waste_report_html,
+    png_available,
+)
 from work_ledger.transcript import TranscriptTailer
+from work_ledger.waste import REPEATED_READ, REPEATED_SUBAGENT, WastePattern
 
 from .conftest import assistant_lines, user_entry, write_jsonl
 
@@ -154,3 +161,72 @@ def test_png_available_false_when_not_importable(monkeypatch):
     ok, msg = png_available()
     assert ok is False
     assert msg == PNG_UNAVAILABLE_MESSAGE
+
+
+def test_build_trend_report_html_smoke():
+    from work_ledger.report import build_trend_report_html
+    from work_ledger.trend import CostBucket
+
+    buckets = [
+        CostBucket(period="2026-07-01", cost_usd=1.5, num_turns=3),
+        CostBucket(period="2026-07-02", cost_usd=3.25, num_turns=5),
+    ]
+    html = build_trend_report_html("2026-07-01 to 2026-07-02", buckets, bucket_size="day", total_sessions=2)
+
+    assert html.startswith("<!doctype html>")
+    assert "work-ledger trend" in html
+    assert "2026-07-01" in html
+    assert "$4.75" in html  # total cost stat tile (1.5 + 3.25)
+    assert "</html>" in html
+
+
+def test_build_trend_report_html_week_bucket_label():
+    from work_ledger.report import build_trend_report_html
+    from work_ledger.trend import CostBucket
+
+    buckets = [CostBucket(period="2026-06-29", cost_usd=10.0, num_turns=4)]
+    html = build_trend_report_html("2026-06-29 to 2026-07-05", buckets, bucket_size="week", total_sessions=1)
+    assert "cost by week" in html
+    assert "Average per week" in html
+
+
+def test_build_trend_report_html_flags_unknown_model_cost():
+    from work_ledger.report import build_trend_report_html
+    from work_ledger.trend import CostBucket
+
+    buckets = [
+        CostBucket(period="2026-07-01", cost_usd=1.0, num_turns=1),
+        CostBucket(period="2026-07-02", cost_usd=0.0, num_turns=1, unknown_model_cost=True),
+    ]
+    html = build_trend_report_html("2026-07-01 to 2026-07-02", buckets, bucket_size="day", total_sessions=1)
+    assert "floor, not exact" in html
+    assert "1 of 2" in html  # pricing coverage stat tile
+
+
+def test_build_trend_report_html_zero_buckets_does_not_crash():
+    from work_ledger.report import build_trend_report_html
+
+    html = build_trend_report_html("empty range", [], bucket_size="day", total_sessions=0)
+    assert "<!doctype html>" in html
+    assert "</html>" in html
+
+
+def test_build_waste_report_html_smoke():
+    patterns = [
+        WastePattern(kind=REPEATED_SUBAGENT, scope="Research", label="Explore: research the API", occurrences=3, cost_usd=1.5),
+        WastePattern(kind=REPEATED_READ, scope="Research", label="/repo/foo.py", occurrences=2, cost_usd=0.002),
+    ]
+    html = build_waste_report_html("s.jsonl", patterns)
+    assert html.startswith("<!doctype html>")
+    assert "s.jsonl" in html
+    assert "/repo/foo.py" in html
+    assert "research the API" in html
+    assert "Repeated file read" in html
+    assert "Repeated subagent dispatch" in html
+    assert "</html>" in html
+
+
+def test_build_waste_report_html_zero_patterns_does_not_crash():
+    html = build_waste_report_html("empty.jsonl", [])
+    assert "<!doctype html>" in html
+    assert "</html>" in html

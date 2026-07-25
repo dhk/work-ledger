@@ -124,6 +124,7 @@ stops; there is no fourth network call hiding behind it.
 | `pattern_client.py` | Opt-in gate, per-install anonymous id, counter reporting to the backend |
 | `limits.py` | Rolling Pro/Max session-window usage; self-calibrated threshold |
 | `timeline.py` | Day-bucketing `activity.py`'s categorization plus cached chapter categories - how practice changed over time, not what it cost |
+| `trend.py` | Day/week-bucketing `Turn.cost_usd` - is spend trending up or down, the cost axis `timeline.py` deliberately excludes |
 | `report.py` | Self-contained HTML/PNG rendering shared by `chapters --report` / `activity --report` |
 | `session_pin.py` | The "pin a session" mechanism |
 | `mcp_server.py` | The local MCP server exposing pattern-library tools over stdio |
