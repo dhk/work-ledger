@@ -1063,6 +1063,31 @@ class ReportRenderError(RuntimeError):
     """Raised when PNG rendering can't proceed (missing Playwright, etc)."""
 
 
+# Shared with png_available() below so a missing `report` extra is
+# described in exactly one form of words, whether it's discovered by an
+# actual --format png attempt (render_png, here) or by miso's up-front
+# --check-status/degradation notice (cli.py).
+PNG_UNAVAILABLE_MESSAGE = (
+    "PNG rendering needs Playwright, which isn't installed. Run: "
+    'pip install "work-ledger[report]" && playwright install chromium'
+)
+
+
+def png_available() -> tuple[bool, str]:
+    """Cheap (import-only, no browser launch) check for whether PNG
+    rendering can be attempted at all - just that the `report` extra is
+    importable. Doesn't prove a Chromium binary is actually downloaded;
+    render_png discovers that lazily, on its own attempt to launch one
+    (launching a browser just to answer a status check isn't "cheap"
+    enough for this). Used by `miso --check-status` and `miso`'s own
+    up-front degradation notice (see cli.py)."""
+    try:
+        import playwright.sync_api  # noqa: F401
+    except ImportError:
+        return False, PNG_UNAVAILABLE_MESSAGE
+    return True, "Playwright is installed (the `report` extra is available)"
+
+
 def render_png(html: str, out_path: Path, width: int = 960) -> None:  # pragma: no cover
     """Screenshot the report HTML to a PNG using a headless browser. Needs
     the optional `report` extra (`pip install "work-ledger[report]"`) plus
@@ -1078,10 +1103,7 @@ def render_png(html: str, out_path: Path, width: int = 960) -> None:  # pragma: 
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as e:
-        raise ReportRenderError(
-            "PNG rendering needs Playwright, which isn't installed. Run: "
-            "pip install \"work-ledger[report]\" && playwright install chromium"
-        ) from e
+        raise ReportRenderError(PNG_UNAVAILABLE_MESSAGE) from e
 
     tmp_html = out_path.with_suffix(".tmp.html")
     tmp_html.write_text(html, encoding="utf-8")

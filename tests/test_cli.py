@@ -530,3 +530,158 @@ def test_build_session_rows_summary_truncates_long_first_prompt(tmp_path):
 
     assert rows[0]["summary"].endswith("…")
     assert len(rows[0]["summary"]) <= 141
+
+
+# --- miso ("make it so" end-to-end mode, issue #35) -------------------------
+
+
+def test_run_miso_check_status_reports_ok_and_makes_no_side_effect(monkeypatch, capsys):
+    """`--check-status` (check_status_only=True) is a pure environment
+    diagnostic: no transcript resolution, no TranscriptTailer, no file
+    written - failing either of those must fail the test."""
+    monkeypatch.setattr("work_ledger.cli.check_credentials", lambda: (True, "Anthropic credentials found (env var or `ant auth login` profile)"))
+    monkeypatch.setattr("work_ledger.report.png_available", lambda: (True, "Playwright is installed (the `report` extra is available)"))
+
+    def fail_if_called(*a, **kw):
+        raise AssertionError("--check-status must not touch any transcript")
+
+    monkeypatch.setattr("work_ledger.cli.find_active_transcript", fail_if_called)
+    monkeypatch.setattr("work_ledger.cli.TranscriptTailer", fail_if_called)
+
+    cli.run_miso(check_status_only=True)
+
+    out = capsys.readouterr().out
+    assert "OK" in out
+    assert "DEGRADED" not in out
+    assert "Both HTML and PNG reports will be generated" in out
+    assert "no transcript was read and no API call was" in out
+
+
+def test_run_miso_check_status_reports_degraded_with_fix_guidance(monkeypatch, capsys):
+    from work_ledger.chapters import NO_CREDENTIALS_MESSAGE
+    from work_ledger.report import PNG_UNAVAILABLE_MESSAGE
+
+    monkeypatch.setattr("work_ledger.cli.check_credentials", lambda: (False, NO_CREDENTIALS_MESSAGE))
+    monkeypatch.setattr("work_ledger.report.png_available", lambda: (False, PNG_UNAVAILABLE_MESSAGE))
+
+    cli.run_miso(check_status_only=True)
+
+    out = capsys.readouterr().out
+    assert "DEGRADED" in out
+    assert "No ANTHROPIC_API_KEY found" in out
+    # Regression check for the rich-markup bug where a literal "[report]"
+    # in a message gets silently swallowed as an (invalid) style tag -
+    # the pip install command must render intact, brackets and all.
+    assert 'work-ledger[report]' in out
+    assert "Only HTML reports will be generated" in out
+
+
+def test_run_miso_single_session_writes_html_reports_and_prints_tables(tmp_path, monkeypatch, capsys):
+    """Full (non-check-status) run against one session: chapters get
+    labeled (mocked _call_model, never a real API call - see
+    tests/test_chapters.py's own convention), both terminal tables print,
+    and both chapters/activity HTML reports are written. PNG is mocked
+    unavailable here so this test doesn't depend on Playwright/Chromium
+    being present in whatever environment runs the suite."""
+    from dataclasses import dataclass
+
+    from work_ledger.chapters import _ChapterOut, _ChaptersOut, _SectionOut
+
+    monkeypatch.chdir(tmp_path)
+    transcript_path = tmp_path / "session-a.jsonl"
+    entries = [
+        user_entry("p1", "build the dashboard"),
+        *assistant_lines(
+            "msg-1",
+            "claude-sonnet-4-5",
+            {"input_tokens": 100, "output_tokens": 50},
+            [{"type": "text", "text": "ok, building it"}],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    @dataclass
+    class FakeUsage:
+        input_tokens: int = 100
+        output_tokens: int = 50
+
+        def model_dump(self):
+            return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
+
+    @dataclass
+    class FakeResponse:
+        parsed_output: object
+        stop_reason: str = "end_turn"
+        model: str = "claude-haiku-4-5"
+        usage: object = None
+
+    fake_parsed = _ChaptersOut(
+        chapters=[
+            _ChapterOut(
+                title="Build the dashboard",
+                category="feature-build",
+                sections=[_SectionOut(title="build it", prompt_ids=["p1"])],
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        "work_ledger.chapters._call_model",
+        lambda outline, prior_titles: FakeResponse(parsed_output=fake_parsed, usage=FakeUsage()),
+    )
+    monkeypatch.setattr("work_ledger.cli.check_credentials", lambda: (True, "Anthropic credentials found"))
+    monkeypatch.setattr("work_ledger.report.png_available", lambda: (False, "PNG unavailable for this test"))
+
+    cli.run_miso(transcript_path=transcript_path)
+
+    out = capsys.readouterr().out
+    # Not asserting the chapter title appears unbroken in `out`: rich wraps
+    # long cell text across lines at whatever width capsys's non-tty
+    # Console renders at, which would make this assertion width-dependent -
+    # the HTML report (checked below) is the reliable place to confirm the
+    # title made it through.
+    assert "1 chapter(s) labeled" in out
+    assert "Reports:" in out
+    assert "PNG skipped" in out
+
+    chapters_html = tmp_path / f"work-ledger-miso-chapters-{transcript_path.stem}.html"
+    activity_html = tmp_path / f"work-ledger-miso-activity-{transcript_path.stem}.html"
+    assert chapters_html.exists()
+    assert activity_html.exists()
+    assert "Build the dashboard" in chapters_html.read_text(encoding="utf-8")
+    # No Playwright mocked in - PNG must not be attempted at all.
+    assert not (tmp_path / f"work-ledger-miso-chapters-{transcript_path.stem}.png").exists()
+
+
+def test_run_miso_no_session_found_errors_clearly(monkeypatch, capsys):
+    monkeypatch.setattr("work_ledger.cli.check_credentials", lambda: (True, "ok"))
+    monkeypatch.setattr("work_ledger.report.png_available", lambda: (True, "ok"))
+    monkeypatch.setattr("work_ledger.cli.find_active_transcript", lambda: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.run_miso(transcript_path=None)
+    assert exc_info.value.code == 1
+    assert "No Claude Code session transcripts found" in capsys.readouterr().out
+
+
+def test_run_miso_all_reuses_chapters_all_and_skips_reports(isolated_transcripts_root, monkeypatch, capsys):
+    """--all must not invent per-session report generation - it reuses
+    run_chapters_all's existing cross-session sweep as-is (chapters --report
+    doesn't support --all yet either - see issue #4/#7) and says clearly
+    that reports aren't part of this mode."""
+    monkeypatch.setattr("work_ledger.cli.check_credentials", lambda: (True, "ok"))
+    monkeypatch.setattr("work_ledger.report.png_available", lambda: (True, "ok"))
+
+    project_dir = isolated_transcripts_root / "proj1"
+    project_dir.mkdir()
+    path = project_dir / "session-a.jsonl"
+    entries = [
+        user_entry("p1", "do something"),
+        *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+    ]
+    write_jsonl(path, entries)
+
+    cli.run_miso(all_sessions=True)
+
+    out = capsys.readouterr().out
+    assert "work-ledger chapters --all" in out
+    assert "aren't generated in --all mode" in out

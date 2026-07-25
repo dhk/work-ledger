@@ -26,7 +26,7 @@ below in this theme extends that core rather than replacing it.
 | [#4](https://github.com/dhk/work-ledger/issues/4) | Trend/time-series view of cost over time | — |
 | [#5](https://github.com/dhk/work-ledger/issues/5) | Recurring-pattern/waste mining across chapters and sessions | — |
 | [#16](https://github.com/dhk/work-ledger/issues/16) | Pluggable local-model chaptering backend (Ollama) + unfreeze chapters | — |
-| [#35](https://github.com/dhk/work-ledger/issues/35) | `miso` — run chapters + reports end-to-end in one command | — |
+| [#35](https://github.com/dhk/work-ledger/issues/35) ✅ | `miso` — run chapters + reports end-to-end in one command, with `--check-status` and graceful degradation | — |
 
 ## Practice visibility — Show, shipped
 

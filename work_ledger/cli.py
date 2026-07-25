@@ -16,11 +16,12 @@ from pathlib import Path
 
 from rich.console import Console, Group
 from rich.live import Live
+from rich.markup import escape
 from rich.table import Table
 from rich.text import Text
 
 from work_ledger.activity import collapse_to_other, group_by_activity, top_n
-from work_ledger.chapters import Chapter, cached_chapters, get_chapters
+from work_ledger.chapters import Chapter, cached_chapters, check_credentials, get_chapters
 from work_ledger.export import build_export_payload
 from work_ledger.limits import (
     DEFAULT_WINDOW_HOURS,
@@ -339,7 +340,12 @@ def run_chapters(
             try:
                 render_png(html, out_path)
             except ReportRenderError as e:
-                console.print(f"[red]{e}[/red]")
+                # escape(): ReportRenderError's own message can contain a
+                # literal "[report]" (the pip extra name) - unescaped, rich
+                # markup parsing silently swallows it as an (invalid) style
+                # tag, corrupting the exact "pip install work-ledger[report]"
+                # command the message is trying to hand the user.
+                console.print(f"[red]{escape(str(e))}[/red]")
                 sys.exit(1)
 
         console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
@@ -426,7 +432,12 @@ def run_activity(
             try:
                 render_png(html, out_path)
             except ReportRenderError as e:
-                console.print(f"[red]{e}[/red]")
+                # escape(): ReportRenderError's own message can contain a
+                # literal "[report]" (the pip extra name) - unescaped, rich
+                # markup parsing silently swallows it as an (invalid) style
+                # tag, corrupting the exact "pip install work-ledger[report]"
+                # command the message is trying to hand the user.
+                console.print(f"[red]{escape(str(e))}[/red]")
                 sys.exit(1)
 
         console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
@@ -480,7 +491,7 @@ def _validate_top(value: int | None) -> None:
 # (via _add_transcript_args) - see _check_transcript_flag_placement for why
 # that duplication matters. limits/export/patterns/sessions don't accept
 # either flag at all, so there's no ambiguity to check for those.
-_COMMANDS_WITH_OWN_TRANSCRIPT_FLAGS = {"chapters", "activity", "recommend"}
+_COMMANDS_WITH_OWN_TRANSCRIPT_FLAGS = {"chapters", "activity", "recommend", "miso"}
 
 
 def _check_transcript_flag_placement(argv: list[str], command: str | None) -> None:
@@ -853,6 +864,215 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
         )
 
 
+def _print_status_checks(console: Console) -> tuple[bool, str, bool, str]:
+    """Print the two `--check-status` checks (chaptering credentials, PNG
+    rendering) and return their (ok, message) pairs so the caller can
+    branch on them. Shared by `miso --check-status` (which stops right
+    here) and plain `miso` (which prints this same block up front, before
+    doing any work, per issue #35's requirement that failures surface
+    before partial work happens - not the middle of a run)."""
+    from work_ledger.report import png_available  # lazy: keeps report.py off the hot path for every other command
+
+    cred_ok, cred_msg = check_credentials()
+    png_ok, png_msg = png_available()
+    # escape(): the PNG-unavailable message contains a literal "[report]"
+    # (the pip extra name) - unescaped, rich's markup parser silently
+    # swallows it as an (invalid) style tag, corrupting the exact
+    # "pip install work-ledger[report]" command the message hands the
+    # user. Escaping once here, and returning the escaped text, means
+    # every later reuse of cred_msg/png_msg (the closing summary, the
+    # --check-status "what this means" block) is already safe to
+    # interpolate into more rich markup without repeating this at each
+    # call site.
+    cred_msg = escape(cred_msg)
+    png_msg = escape(png_msg)
+
+    console.print("[bold]Status check[/bold]")
+    cred_style = "green" if cred_ok else "yellow"
+    console.print(f"  [{cred_style}]{'OK      ' if cred_ok else 'DEGRADED'}[/{cred_style}] Chaptering credentials — {cred_msg}")
+    png_style = "green" if png_ok else "yellow"
+    console.print(f"  [{png_style}]{'OK      ' if png_ok else 'DEGRADED'}[/{png_style}] PNG rendering        — {png_msg}")
+    console.print()
+    return cred_ok, cred_msg, png_ok, png_msg
+
+
+def _write_html_and_maybe_png(html_content: str, base_name: str, png_ok: bool) -> dict:
+    """Write `<base_name>.html` always, and attempt `<base_name>.png` too
+    if PNG rendering looked available at the (cheap, import-only)
+    --check-status level. That check can't see everything though - the
+    `report` extra can be installed while `playwright install chromium`
+    was never run, which only shows up when render_png actually tries to
+    launch a browser. Catching ReportRenderError here means that specific
+    failure degrades this one report to HTML-only rather than aborting the
+    rest of miso's pipeline - graceful degradation applies per-step, not
+    just at the top. Returns what actually happened so run_miso's closing
+    summary can report it precisely rather than repeating the earlier
+    (necessarily approximate) --check-status guess."""
+    from work_ledger.report import ReportRenderError, render_png
+
+    html_path = Path(f"{base_name}.html")
+    html_path.write_text(html_content, encoding="utf-8")
+    outcome = {"html": html_path, "png": None, "png_error": None}
+    if png_ok:
+        png_path = Path(f"{base_name}.png")
+        try:
+            render_png(html_content, png_path)
+            outcome["png"] = png_path
+        except ReportRenderError as e:
+            outcome["png_error"] = str(e)
+    return outcome
+
+
+def run_miso(
+    transcript_path=None,
+    check_status_only: bool = False,
+    all_sessions: bool = False,
+    since: date | None = None,
+    until: date | None = None,
+):
+    """`miso` ("make it so") - issue #35's end-to-end, one-shot command:
+    chaptering plus both HTML/PNG reports in a single run, instead of
+    remembering the right sequence of `chapters --report`/`activity
+    --report` invocations and flags. Pure orchestration over existing
+    Show-stage functionality (see CLAUDE.md's rubric) - every step below
+    calls the exact same functions run_chapters/run_activity already call
+    (get_chapters, build_report_html, build_activity_report_html,
+    render_png); nothing here reimplements any of that, and no new network
+    call is made beyond chaptering's existing Haiku pass.
+
+    Always prints the same checks `--check-status` reports, up front,
+    before touching a transcript or writing a file - so a missing
+    credential or a missing `report` extra is visible before any partial
+    work happens, not discovered midway through (the issue's own
+    `git rebase` comparison: always know where you are and what to do
+    next). `check_status_only=True` (the `--check-status` flag) stops
+    right after printing that block: no transcript is read, no API call
+    is made, no file is written - a pure environment diagnostic.
+
+    `--all` reuses run_chapters_all's existing cross-session sweep as-is
+    rather than inventing a multi-session report shape: `chapters --report`
+    itself doesn't support `--all` yet (issue #4/#7), and generating a
+    report per session here would be new work, not orchestration of
+    something that already exists - so --all gets the chaptering summary
+    only, with a clear pointer to drop --all for a single session's
+    reports."""
+    console = Console()
+    console.print("[bold]work-ledger miso[/bold] [dim]— chapters + reports, end-to-end[/dim]\n")
+
+    cred_ok, cred_msg, png_ok, png_msg = _print_status_checks(console)
+
+    if check_status_only:
+        console.print("[bold]What this means for a real run:[/bold]")
+        if cred_ok:
+            console.print("  - Chaptering will call the Haiku API and label real initiatives.")
+        else:
+            console.print(f"  - Chaptering will fall back to a single \"Unsorted\" chapter. Fix: {cred_msg}")
+        if png_ok:
+            console.print("  - Both HTML and PNG reports will be generated.")
+        else:
+            console.print(f"  - Only HTML reports will be generated (PNG skipped). Fix: {png_msg}")
+        console.print(
+            "\n[dim]This only checked your environment - no transcript was read and no API "
+            "call was made.[/dim]"
+        )
+        return
+
+    if all_sessions:
+        run_chapters_all(since=since, until=until, as_json=False)
+        console.print(
+            "\n[yellow]Visual reports (--report) aren't generated in --all mode[/yellow] - the "
+            "same scope limit `chapters --report` already has (see issue #4/#7). Drop --all and "
+            "pick one session (--transcript/--session, or let miso default to the active/pinned "
+            "one) to get HTML/PNG reports for it."
+        )
+        return
+
+    path = transcript_path or find_active_transcript()
+    if path is None:
+        console.print(
+            "[red]No Claude Code session transcripts found under "
+            "~/.claude/projects/. Run a session first, or pass --transcript.[/red]"
+        )
+        sys.exit(1)
+
+    console.print(f"[dim]Session:[/dim] {path}\n")
+
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    warning = _sidechain_warning(tailer)
+    if warning:
+        console.print(warning)
+
+    # --- Chapters: terminal table + HTML/PNG report -----------------------
+    result = get_chapters(tailer, path)
+    if result.fallback_reason:
+        console.print(f"[yellow]Note: {result.fallback_reason}[/yellow]")
+    if result.pass_cost_usd:
+        console.print(f"[dim]This chaptering pass cost ${result.pass_cost_usd:.4f}[/dim]")
+
+    chapters = _sorted_by_cost(tailer, result.chapters)
+    console.print()
+    console.print(
+        build_chapters_table(tailer, path.name, chapters, grand_total_cost=tailer.total_cost_usd())
+    )
+
+    from work_ledger.report import build_activity_report_html, build_report_html
+
+    chapters_html = build_report_html(path.name, tailer, chapters, result.pass_cost_usd)
+    chapters_files = _write_html_and_maybe_png(
+        chapters_html, f"work-ledger-miso-chapters-{path.stem}", png_ok
+    )
+
+    # --- Activity: terminal table + HTML/PNG report ------------------------
+    buckets = group_by_activity(tailer)
+    activity_files = None
+    if not buckets:
+        console.print("\n[yellow]No units found in this transcript - skipping the activity report.[/yellow]")
+    else:
+        console.print()
+        activity_table = Table(title=f"work-ledger activity — {path.name}", expand=True)
+        activity_table.add_column("activity type", ratio=3)
+        activity_table.add_column("cost (est.)", justify="right", width=14)
+        activity_table.add_column("% of total", justify="right", width=10)
+        grand_total = sum(b.cost_usd for b in buckets) or 1e-9
+        for b in buckets:
+            activity_table.add_row(b.label, f"${b.cost_usd:.4f}", f"{b.cost_usd / grand_total * 100:.1f}%")
+        console.print(activity_table)
+
+        activity_html = build_activity_report_html(path.name, collapse_to_other(buckets), len(buckets))
+        activity_files = _write_html_and_maybe_png(
+            activity_html, f"work-ledger-miso-activity-{path.stem}", png_ok
+        )
+
+    # --- Closing summary: where things stand, what to do next -------------
+    console.print()
+    console.print("[bold]Done — where things stand:[/bold]")
+    if result.fallback_reason:
+        console.print(f"  Chapters: fell back to \"Unsorted\" - fix: {cred_msg}")
+    elif result.pass_cost_usd:
+        console.print(f"  Chapters: {len(chapters)} chapter(s) labeled (${result.pass_cost_usd:.4f} this pass)")
+    else:
+        console.print(f"  Chapters: {len(chapters)} chapter(s) labeled (from cache - no new API cost)")
+
+    report_line = f"chapters -> {chapters_files['html']}"
+    if chapters_files["png"]:
+        report_line += f", {chapters_files['png']}"
+    console.print(f"  Reports:  {report_line}")
+    if activity_files:
+        activity_line = f"activity  -> {activity_files['html']}"
+        if activity_files["png"]:
+            activity_line += f", {activity_files['png']}"
+        console.print(f"            {activity_line}")
+
+    if not png_ok:
+        console.print(f"  [yellow]PNG skipped for both reports - fix: {png_msg}[/yellow]")
+    else:
+        png_errors = [e for e in (chapters_files.get("png_error"), (activity_files or {}).get("png_error")) if e]
+        if png_errors:
+            console.print(f"  [yellow]PNG rendering failed - fix: {escape(png_errors[0])}[/yellow]")
+
+
 def build_limits_table(usage: WindowUsage) -> Table:
     table = Table(title=f"work-ledger limits — rolling {usage.window_hours:g}h window", expand=True)
     table.add_column("Session", ratio=3, overflow="ellipsis")
@@ -1087,7 +1307,12 @@ def run_timeline(
             try:
                 render_png(html, out_path)
             except ReportRenderError as e:
-                console.print(f"[red]{e}[/red]")
+                # escape(): ReportRenderError's own message can contain a
+                # literal "[report]" (the pip extra name) - unescaped, rich
+                # markup parsing silently swallows it as an (invalid) style
+                # tag, corrupting the exact "pip install work-ledger[report]"
+                # command the message is trying to hand the user.
+                console.print(f"[red]{escape(str(e))}[/red]")
                 sys.exit(1)
         console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
         return
@@ -1466,6 +1691,40 @@ def main():
         "if both are given.",
     )
 
+    miso_parser = subparsers.add_parser(
+        "miso",
+        help="\"Make it so\" - run chaptering + both HTML/PNG reports end-to-end in one command "
+        "(issue #35), instead of remembering the chapters/activity --report sequence yourself",
+    )
+    _add_transcript_args(miso_parser)
+    miso_parser.add_argument(
+        "--check-status",
+        action="store_true",
+        help="Only check whether this environment has everything needed to run everything "
+        "(Anthropic credentials for chaptering, the 'report' extra for PNG rendering) and "
+        "print what would happen - reads no transcript, makes no API call, writes no file.",
+    )
+    miso_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Chapter every session transcript found under ~/.claude/projects/ instead of just "
+        "the active/pinned one - same summary `chapters --all` prints. Visual reports aren't "
+        "generated in this mode (same limit `chapters --report` already has - see issue #4/#7). "
+        "Incompatible with --transcript/--session.",
+    )
+    miso_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="With --all: only include sessions last modified on/after this date (YYYY-MM-DD).",
+    )
+    miso_parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="With --all: only include sessions last modified on/before this date (YYYY-MM-DD).",
+    )
+
     limits_parser = subparsers.add_parser(
         "limits",
         help="Track rolling-window token usage across all sessions, as a self-calibrated proxy "
@@ -1796,6 +2055,25 @@ def main():
             report=args.report,
             report_format=args.format,
             report_out=args.out,
+        )
+        return
+
+    if args.command == "miso":
+        if args.all and (args.transcript or args.session):
+            print("error: --all can't be combined with --transcript or --session", file=sys.stderr)
+            sys.exit(2)
+        if not args.all and (args.since or args.until):
+            print("error: --since/--until only apply with --all", file=sys.stderr)
+            sys.exit(2)
+        since = _parse_date_arg(args.since, "--since") if args.since else None
+        until = _parse_date_arg(args.until, "--until") if args.until else None
+        transcript_path = None if args.all else _resolve_transcript_arg(args.transcript, args.session)
+        run_miso(
+            transcript_path=transcript_path,
+            check_status_only=args.check_status,
+            all_sessions=args.all,
+            since=since,
+            until=until,
         )
         return
 
