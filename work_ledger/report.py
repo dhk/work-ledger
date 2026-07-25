@@ -113,7 +113,7 @@ def _style_block(css_vars_light: str, css_vars_dark: str) -> str:
   .chapter-figs {{ font-size: 12.5px; color: var(--text-secondary); white-space: nowrap; }}
   .chapter-figs b {{ color: var(--text-primary); font-weight: 650; }}
 
-  .bar-track {{ position: relative; height: 22px; background: var(--gridline); border-radius: 4px; overflow: hidden; display: flex; }}
+  .bar-track {{ position: relative; height: 22px; background: var(--gridline); border-radius: 4px; overflow: visible; display: flex; }}
   .bar-seg {{ height: 100%; position: relative; cursor: default; }}
   .bar-seg + .bar-seg {{ margin-left: 2px; }}
   .bar-seg:first-child {{ border-radius: 4px 0 0 4px; }}
@@ -618,20 +618,39 @@ renderPanel({category_json}, {category_colors_json}, "category-legend", "categor
 """
 
 
+_SESSION_SORT_FIELDS = [
+    # (key into `data`, button label) - order here is the button display
+    # order. Each sorts descending ("most X first") since that's the
+    # interesting direction for all four; no asc/desc toggle - not asked
+    # for, and a single sensible default per field keeps this simple.
+    ("cost", "Cost"),
+    ("last_active", "Recency"),
+    ("duration_minutes", "Duration"),
+    ("total_tokens", "Tokens"),
+]
+
+
 def build_sessions_index_html(rows: list[dict]) -> str:
     """`work-ledger serve`'s landing page - every local session rendered as
-    one clickable, cost-sized bar, reusing the exact same stat-tile/
-    bar-track/tooltip visual language as build_report_html/
-    build_activity_report_html rather than inventing a second look. A
-    session isn't broken into per-section segments the way a chapter's bar
-    is - that finer drill-down lives one click away, on its own page via
-    build_session_detail_html - so each bar here is a single solid segment,
-    same shape as build_activity_report_html's bars.
+    one clickable bar, reusing the exact same stat-tile/bar-track/tooltip
+    visual language as build_report_html/build_activity_report_html rather
+    than inventing a second look. A session isn't broken into per-section
+    segments the way a chapter's bar is - that finer drill-down lives one
+    click away, on its own page via build_session_detail_html - so each bar
+    here is a single solid segment, same shape as
+    build_activity_report_html's bars.
+
+    Sortable by cost (default, matching the tool's original behavior),
+    recency, duration, or total tokens - client-side only (all data is
+    already on the page), so switching sort is instant with no server
+    round-trip. The bar length itself reflects whichever metric is
+    currently selected, not always cost, so e.g. "sort by duration" is a
+    real per-duration view, not just cost bars in a different order.
 
     `rows` is the exact shape cli.build_session_rows() returns (session,
-    project, last_active, num_turns, first_prompt, last_prompt, cost_usd) -
-    this function adds only presentation (color, href, escaping), no new
-    data derivation."""
+    project, last_active, num_turns, first_prompt, last_prompt, cost_usd,
+    duration_minutes, total_tokens) - this function adds only presentation
+    (color, href, escaping, formatting), no new data derivation."""
     n = len(rows)
     total_cost = sum(r["cost_usd"] for r in rows)
     total_turns = sum(r["num_turns"] for r in rows)
@@ -650,11 +669,15 @@ def build_sessions_index_html(rows: list[dict]) -> str:
             "num_turns": r["num_turns"],
             "first_prompt": html.escape(r["first_prompt"] or "(empty)"),
             "last_prompt": html.escape(r["last_prompt"] or "(empty)"),
+            "duration_minutes": r["duration_minutes"],
+            "total_tokens": r["total_tokens"],
+            "summary": html.escape(r.get("summary") or r["first_prompt"] or "(empty)"),
         }
         for r in rows
     ]
     data_json = json.dumps(data)
     colors_json = json.dumps([f"var(--series-{i+1})" for i in range(n)])
+    sort_fields_json = json.dumps(_SESSION_SORT_FIELDS)
     most_recent = rows[0]["last_active"] if rows else "—"
 
     return f"""<!doctype html>
@@ -666,6 +689,14 @@ def build_sessions_index_html(rows: list[dict]) -> str:
 <style>
   .session-row a {{ color: inherit; text-decoration: none; display: block; }}
   .session-row a:hover .chapter-title {{ text-decoration: underline; }}
+  .session-summary {{ font-size: 12.5px; color: var(--text-secondary); margin: 2px 0 6px; }}
+  .sort-bar {{ display: flex; align-items: center; gap: 8px; margin-bottom: 18px; font-size: 12.5px; }}
+  .sort-bar span.label {{ color: var(--text-secondary); }}
+  .sort-btn {{
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    border-radius: 999px; padding: 4px 12px; cursor: pointer; font: inherit;
+  }}
+  .sort-btn.active {{ background: var(--text-primary); color: var(--page); border-color: var(--text-primary); }}
 </style>
 </head>
 <body>
@@ -693,14 +724,17 @@ def build_sessions_index_html(rows: list[dict]) -> str:
     </div>
 
     <div class="panel">
-      <h2>Sessions by cost</h2>
-      <p class="caption">Sorted by cost, most expensive first — hover a bar for a quick summary, click it (or its row) to open that session.</p>
+      <h2>Sessions</h2>
+      <p class="caption" id="sort-caption">Hover a bar for turn count/prompts, click a session (or its row) to open it.</p>
+      <div class="sort-bar"><span class="label">Sort by:</span><div id="sort-buttons"></div></div>
       <div id="sessions"></div>
     </div>
 
     <p class="footnote">
       Read-only - nothing on this page can edit a transcript or trigger a chaptering API call.
-      Cost is the same token-pricing estimate the CLI shows, not itemized billing. Served
+      Cost is the same token-pricing estimate the CLI shows, not itemized billing. Summaries reuse
+      already-cached chapter titles when available (never a fresh chaptering call) - see
+      <code>work-ledger chapters</code> for sessions still shown by their first prompt. Served
       locally by <code>work-ledger serve</code>; never leaves 127.0.0.1.
     </p>
   </div>
@@ -709,41 +743,100 @@ def build_sessions_index_html(rows: list[dict]) -> str:
 <script>
 const data = {data_json};
 const seriesColor = {colors_json};
+const sortFields = {sort_fields_json};  // [[key, label], ...]
 const maxCost = Math.max(...data.map(d => d.cost), 1e-9);
-const sorted = [...data].map((d, i) => ({{ ...d, color: seriesColor[i] }})).sort((a, b) => b.cost - a.cost);
+let currentField = "cost";
+
+function formatDuration(minutes) {{
+  if (!minutes || minutes <= 0) return "—";
+  if (minutes < 60) return Math.round(minutes) + " min";
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return m > 0 ? `${{h}}h ${{m}}m` : `${{h}}h`;
+}}
+function formatTokens(n) {{
+  return n.toLocaleString() + " tok";
+}}
+function formatField(d, field) {{
+  if (field === "cost") return "$" + d.cost.toFixed(2);
+  if (field === "last_active") return d.last_active;
+  if (field === "duration_minutes") return formatDuration(d.duration_minutes);
+  if (field === "total_tokens") return formatTokens(d.total_tokens);
+  return "";
+}}
 
 const root = document.getElementById("sessions");
-sorted.forEach((d) => {{
-  const widthPct = (d.cost / maxCost) * 100;
+const buttonsRoot = document.getElementById("sort-buttons");
+const caption = document.getElementById("sort-caption");
 
-  const wrap = document.createElement("div");
-  wrap.className = "chapter session-row";
+function render(field) {{
+  currentField = field;
+  [...buttonsRoot.children].forEach((btn) => btn.classList.toggle("active", btn.dataset.field === field));
+  const fieldLabel = sortFields.find(([k]) => k === field)[1];
+  caption.textContent = `Sorted by ${{fieldLabel}}, most first — hover a bar for turn count/prompts, click a session to open it.`;
 
-  const link = document.createElement("a");
-  link.href = d.href;
+  // Sort descending on the selected field - last_active is an ISO string,
+  // so string comparison already sorts newest-first correctly.
+  const ordered = [...data].map((d, i) => ({{ ...d, color: seriesColor[i] }})).sort((a, b) => {{
+    if (field === "last_active") return a.last_active < b.last_active ? 1 : -1;
+    return b[field] - a[field];
+  }});
 
-  const head = document.createElement("div");
-  head.className = "chapter-head";
-  head.innerHTML = `
-    <div class="chapter-title"><span class="swatch" style="background:${{d.color}}"></span>${{d.label}}</div>
-    <div class="chapter-figs"><b>$${{d.cost.toFixed(2)}}</b></div>
-  `;
-  link.appendChild(head);
+  root.innerHTML = "";
+  ordered.forEach((d) => {{
+    // Bar length always reflects cost (a consistent visual scale across
+    // every sort field, including recency, which has no numeric magnitude
+    // of its own to size a bar by) - sort order and the figure shown are
+    // what change per field.
+    const widthPct = (d.cost / maxCost) * 100;
 
-  const track = document.createElement("div");
-  track.className = "bar-track";
-  track.style.width = widthPct.toFixed(1) + "%";
-  const seg = document.createElement("div");
-  seg.className = "bar-seg";
-  seg.style.width = "100%";
-  seg.style.background = d.color;
-  seg.innerHTML = `<div class="tooltip"><b>${{d.num_turns}} turn${{d.num_turns === 1 ? "" : "s"}}</b> · last active ${{d.last_active}}<br>${{d.first_prompt}}<br>${{d.last_prompt}}</div>`;
-  track.appendChild(seg);
-  link.appendChild(track);
+    const wrap = document.createElement("div");
+    wrap.className = "chapter session-row";
 
-  wrap.appendChild(link);
-  root.appendChild(wrap);
+    const link = document.createElement("a");
+    link.href = d.href;
+
+    const head = document.createElement("div");
+    head.className = "chapter-head";
+    const secondaryCost = field !== "cost" ? ` <span style="color:var(--text-muted);font-weight:400;">· $${{d.cost.toFixed(2)}}</span>` : "";
+    head.innerHTML = `
+      <div class="chapter-title"><span class="swatch" style="background:${{d.color}}"></span>${{d.label}}</div>
+      <div class="chapter-figs"><b>${{formatField(d, field)}}</b>${{secondaryCost}}</div>
+    `;
+    link.appendChild(head);
+
+    const summary = document.createElement("p");
+    summary.className = "session-summary";
+    summary.textContent = d.summary;
+    link.appendChild(summary);
+
+    const track = document.createElement("div");
+    track.className = "bar-track";
+    track.style.width = widthPct.toFixed(1) + "%";
+    const seg = document.createElement("div");
+    seg.className = "bar-seg";
+    seg.style.width = "100%";
+    seg.style.background = d.color;
+    seg.innerHTML = `<div class="tooltip"><b>${{d.num_turns}} turn${{d.num_turns === 1 ? "" : "s"}}</b> · last active ${{d.last_active}}<br>${{d.first_prompt}}<br>${{d.last_prompt}}</div>`;
+    track.appendChild(seg);
+    link.appendChild(track);
+
+    wrap.appendChild(link);
+    root.appendChild(wrap);
+  }});
+}}
+
+sortFields.forEach(([field, label]) => {{
+  const btn = document.createElement("button");
+  btn.className = "sort-btn" + (field === currentField ? " active" : "");
+  btn.type = "button";
+  btn.dataset.field = field;
+  btn.textContent = label;
+  btn.addEventListener("click", () => render(field));
+  buttonsRoot.appendChild(btn);
 }});
+
+render(currentField);
 </script>
 </body>
 </html>

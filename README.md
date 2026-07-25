@@ -75,6 +75,9 @@ work-ledger timeline --json                            # machine-readable output
 work-ledger timeline --report                          # same visual style as chapters --report, as HTML
 work-ledger timeline backfill                          # chapter any uncached sessions in range first (small API cost), then show
 
+work-ledger serve                                 # local-only web UI - browse every session, drill into chapters/turns/units
+work-ledger serve --port 9000                          # different port (default 8765)
+
 work-ledger sessions                              # list every local session: project, last-active, first/last prompt, cost
 work-ledger sessions --since 2026-07-01                # limit to a date range
 work-ledger sessions --json                            # machine-readable output
@@ -282,6 +285,31 @@ has shifted over time, not just your spend.
   page, same visual system as `chapters --report`/`activity --report`.
 - **`--json`** emits the full per-day activity/category counts for
   programmatic use.
+
+## Local web UI
+
+`work-ledger serve` starts a small, local-only web server (bound to
+`127.0.0.1` — there's no `--host` flag, so it can never be pointed
+anywhere else) for browsing session data as a page instead of re-running
+CLI flags. A landing page lists every local session, sorted by cost by
+default; click one to drill into its chapters → sections → turns → units,
+the same grouping `chapters --detail` shows in the terminal.
+
+- **Sortable** by cost, recency, duration, or total tokens — a row of
+  buttons above the list, client-side (no server round-trip), each
+  showing the sessions with the most of that metric first. The bar length
+  itself always reflects cost regardless of sort (a consistent visual
+  scale — recency in particular has no numeric "size" of its own to scale
+  a bar by), so sort order and the figure shown are what change per
+  metric, not the bars' relative lengths.
+- **Each session gets a one-line summary** — reused from its cached
+  chapter titles when it's already been chaptered (free, since it only
+  reads the cache), or its first prompt as a fallback for a session that
+  isn't chaptered yet.
+- **Read-only and makes no API call.** Browsing only ever reads chapters
+  that are already cached (same as `timeline`) — opening this UI can
+  never trigger a paid chaptering pass as a side effect.
+- **Long-running**, like the plain live dashboard — `Ctrl-C` to stop.
 
 ## Export (anonymized, manual)
 

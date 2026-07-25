@@ -20,7 +20,7 @@ from rich.table import Table
 from rich.text import Text
 
 from work_ledger.activity import collapse_to_other, group_by_activity, top_n
-from work_ledger.chapters import Chapter, get_chapters
+from work_ledger.chapters import Chapter, cached_chapters, get_chapters
 from work_ledger.export import build_export_payload
 from work_ledger.limits import (
     DEFAULT_WINDOW_HOURS,
@@ -614,26 +614,82 @@ def run_session(action: str, value: str | None) -> None:
         return
 
 
+def _parse_turn_timestamp(ts: str) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _session_duration_minutes(turns: list[Turn]) -> float:
+    """Wall-clock span from the first turn's timestamp to the last's - 0 for
+    a single-turn (or empty) session, not just "no data". Real per-turn
+    timestamps, not the transcript file's mtime `last_active` already uses -
+    same distinction timeline.py draws between the two."""
+    if len(turns) < 2:
+        return 0.0
+    start = _parse_turn_timestamp(turns[0].timestamp)
+    end = _parse_turn_timestamp(turns[-1].timestamp)
+    if start is None or end is None:
+        return 0.0
+    return max(0.0, (end - start).total_seconds() / 60)
+
+
+_SUMMARY_MAX_CHAPTER_TITLES = 3
+_SUMMARY_PROMPT_TRUNCATE = 140
+
+
+def _session_summary(path: Path, first_prompt: str) -> str:
+    """A one-line "what was this session about" - free, since it only ever
+    reads whatever's already cached (cached_chapters never calls the
+    model, same invariant server.py's browsing relies on). Chapter titles
+    are themselves short initiative descriptions, so joining them is a
+    reasonable summary; falls back to the first prompt for a session
+    that isn't chaptered yet, same fallback `sessions`'s own listing
+    already leans on for "what is this session" discovery."""
+    chapters = cached_chapters(path)
+    if chapters:
+        titles = [c.title for c in chapters]
+        shown = titles[:_SUMMARY_MAX_CHAPTER_TITLES]
+        summary = "; ".join(shown)
+        remaining = len(titles) - len(shown)
+        if remaining > 0:
+            summary += f" (+{remaining} more)"
+        return summary
+    if not first_prompt:
+        return "(no prompts)"
+    if len(first_prompt) > _SUMMARY_PROMPT_TRUNCATE:
+        return first_prompt[:_SUMMARY_PROMPT_TRUNCATE].rstrip() + "…"
+    return first_prompt
+
+
 def build_session_rows(transcripts: list[Path]) -> list[dict]:
     """Per-session summary rows (project, last-active time, first/last
-    prompt, turn count, cost) - the same shape `sessions`/`sessions --json`
-    render as a table. Factored out of run_sessions so `work-ledger serve`'s
-    landing page (see server.py) reuses exactly this computation rather than
+    prompt, turn count, cost, duration, total tokens, a one-line summary)
+    - the same shape `sessions`/`sessions --json` render as a table.
+    Factored out of run_sessions so `work-ledger serve`'s landing page
+    (see server.py) reuses exactly this computation rather than
     re-deriving it - there's exactly one place this data is assembled."""
     rows = []
     for path in transcripts:
         tailer = TranscriptTailer(path)
         tailer.poll()
         turns = tailer.ordered_turns()
+        first_prompt = turns[0].prompt_snippet if turns else ""
         rows.append(
             {
                 "session": path.stem,
                 "project": path.parent.name,
                 "last_active": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="minutes"),
                 "num_turns": len(turns),
-                "first_prompt": turns[0].prompt_snippet if turns else "",
+                "first_prompt": first_prompt,
                 "last_prompt": turns[-1].prompt_snippet if turns else "",
                 "cost_usd": tailer.total_cost_usd(),
+                "duration_minutes": _session_duration_minutes(turns),
+                "total_tokens": tailer.total_input_tokens() + tailer.total_output_tokens(),
+                "summary": _session_summary(path, first_prompt),
             }
         )
     return rows

@@ -43,12 +43,16 @@ def test_build_sessions_index_html_smoke():
             "first_prompt": "start the thing",
             "last_prompt": "finish the thing",
             "cost_usd": 1.2345,
+            "duration_minutes": 12.5,
+            "total_tokens": 4200,
+            "summary": "Build the thing",
         }
     ]
     out = build_sessions_index_html(rows)
     assert out.startswith("<!doctype html>")
     assert "my-project" in out
     assert '/session/0daf9882-076e-53aa-84a0-0db25e6d57a2' in out
+    assert "Build the thing" in out
     assert "</html>" in out
 
 
@@ -67,11 +71,37 @@ def test_build_sessions_index_html_escapes_prompt_text():
             "first_prompt": "<script>alert(1)</script>",
             "last_prompt": "ok",
             "cost_usd": 0.0,
+            "duration_minutes": 0.0,
+            "total_tokens": 0,
+            "summary": "<script>alert(1)</script>",
         }
     ]
     out = build_sessions_index_html(rows)
     assert "<script>alert(1)</script>" not in out
     assert "&lt;script&gt;" in out
+
+
+def test_build_sessions_index_html_sort_buttons_present():
+    rows = [
+        {
+            "session": "s1",
+            "project": "proj",
+            "last_active": "2026-07-20T10:00",
+            "num_turns": 1,
+            "first_prompt": "x",
+            "last_prompt": "y",
+            "cost_usd": 1.0,
+            "duration_minutes": 5.0,
+            "total_tokens": 100,
+            "summary": "x",
+        }
+    ]
+    out = build_sessions_index_html(rows)
+    assert "sort-buttons" in out
+    assert '"Cost"' in out
+    assert '"Recency"' in out
+    assert '"Duration"' in out
+    assert '"Tokens"' in out
 
 
 def test_build_session_detail_html_smoke(tmp_path):
