@@ -11,12 +11,14 @@ from work_ledger.cli import (
     _in_date_range,
     _parse_date_arg,
     _resolve_transcript_arg,
+    _session_duration_minutes,
     _sidechain_warning,
     _threshold_note,
     _turns_cost,
     _turns_unknown,
     _validate_other_threshold,
     _validate_top,
+    build_session_rows,
 )
 from work_ledger.limits import SessionWindowUsage, WindowUsage
 from work_ledger.transcript import TranscriptTailer, Turn, Unit
@@ -448,3 +450,83 @@ def test_run_activity_prints_sidechain_warning(transcript_path, capsys):
     out = capsys.readouterr().out
     assert "Warning" in out
     assert "undercount" in out
+
+
+# --- build_session_rows: duration, tokens, summary ----------------------
+
+
+def test_session_duration_minutes_multi_turn():
+    turns = [
+        Turn(prompt_id="p1", prompt_snippet="a", timestamp="2026-07-12T10:00:00Z"),
+        Turn(prompt_id="p2", prompt_snippet="b", timestamp="2026-07-12T10:15:00Z"),
+    ]
+    assert _session_duration_minutes(turns) == 15.0
+
+
+def test_session_duration_minutes_single_turn_is_zero():
+    turns = [Turn(prompt_id="p1", prompt_snippet="a", timestamp="2026-07-12T10:00:00Z")]
+    assert _session_duration_minutes(turns) == 0.0
+
+
+def test_session_duration_minutes_empty_is_zero():
+    assert _session_duration_minutes([]) == 0.0
+
+
+def test_build_session_rows_includes_duration_tokens_and_summary(tmp_path):
+    path = tmp_path / "s.jsonl"
+    entries = [
+        user_entry("p1", "first ask", timestamp="2026-07-12T10:00:00Z"),
+        *assistant_lines(
+            "m1", "claude-haiku-4-5", {"input_tokens": 100, "output_tokens": 50},
+            [{"type": "text", "text": "ok"}], timestamp="2026-07-12T10:00:01Z",
+        ),
+        user_entry("p2", "second ask", timestamp="2026-07-12T10:30:00Z"),
+        *assistant_lines(
+            "m2", "claude-haiku-4-5", {"input_tokens": 200, "output_tokens": 75},
+            [{"type": "text", "text": "ok again"}], timestamp="2026-07-12T10:30:01Z",
+        ),
+    ]
+    write_jsonl(path, entries)
+
+    rows = build_session_rows([path])
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["total_tokens"] == 100 + 50 + 200 + 75
+    assert row["duration_minutes"] == 30.0
+    assert row["summary"] == "first ask"  # no cached chapters -> falls back to first prompt
+
+
+def test_build_session_rows_summary_prefers_cached_chapter_titles(tmp_path):
+    from work_ledger.chapters import _save_cache
+
+    path = tmp_path / "s.jsonl"
+    entries = [
+        user_entry("p1", "fix the bug"),
+        *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+    ]
+    write_jsonl(path, entries)
+    _save_cache(
+        path,
+        ["p1"],
+        [Chapter(title="Fix the double-counting bug", category="bug-fix", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+
+    rows = build_session_rows([path])
+
+    assert rows[0]["summary"] == "Fix the double-counting bug"
+
+
+def test_build_session_rows_summary_truncates_long_first_prompt(tmp_path):
+    path = tmp_path / "s.jsonl"
+    long_prompt = "x" * 200
+    entries = [
+        user_entry("p1", long_prompt),
+        *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+    ]
+    write_jsonl(path, entries)
+
+    rows = build_session_rows([path])
+
+    assert rows[0]["summary"].endswith("…")
+    assert len(rows[0]["summary"]) <= 141
