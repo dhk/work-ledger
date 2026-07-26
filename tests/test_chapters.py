@@ -1,20 +1,35 @@
-from dataclasses import dataclass
+import json
+import sys
+import types
+
+import pytest
 
 from work_ledger.chapters import (
     CATEGORIES,
+    CHAPTER_MODEL,
+    DEFAULT_BACKEND,
     DEFAULT_CATEGORY,
     NO_CREDENTIALS_MESSAGE,
+    OLLAMA_DEFAULT_HOST,
+    OLLAMA_DEFAULT_MAX_TOKENS,
+    AnthropicBackend,
+    BackendResponse,
+    BackendUnavailableError,
     Chapter,
+    ChapterResult,
+    OllamaBackend,
     Section,
     UNSORTED_TITLE,
     _ChapterOut,
     _ChaptersOut,
     _load_cache,
     _save_cache,
+    _select_backend,
     _SectionOut,
     _validate_partition,
     cached_chapters,
     check_credentials,
+    format_pass_note,
     get_chapters,
     has_uncached_turns,
 )
@@ -129,23 +144,22 @@ def test_save_cache_survives_write_failure(tmp_path, monkeypatch):
 
 
 # --- get_chapters, with the model call mocked ----------------------------
+#
+# _call_model now returns a BackendResponse (parsed/stop_reason/cost_usd/
+# wall_clock_s) regardless of which backend produced it - see chapters.py's
+# ChapterBackend/BackendResponse. Building one directly here is the
+# backend-agnostic equivalent of the old FakeResponse/FakeUsage pair, which
+# modeled the raw Anthropic SDK response shape _call_model no longer
+# returns directly.
 
 
-@dataclass
-class FakeUsage:
-    input_tokens: int = 100
-    output_tokens: int = 50
-
-    def model_dump(self):
-        return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
-
-
-@dataclass
-class FakeResponse:
-    parsed_output: _ChaptersOut | None
-    stop_reason: str = "end_turn"
-    model: str = "claude-haiku-4-5"
-    usage: FakeUsage | None = None
+def _fake_response(
+    parsed: _ChaptersOut | None,
+    stop_reason: str = "end_turn",
+    cost_usd: float = 0.0031,
+    wall_clock_s: float = 1.2,
+) -> BackendResponse:
+    return BackendResponse(parsed=parsed, stop_reason=stop_reason, cost_usd=cost_usd, wall_clock_s=wall_clock_s)
 
 
 def test_get_chapters_success_builds_chapters_and_cost(tmp_path, monkeypatch):
@@ -163,7 +177,7 @@ def test_get_chapters_success_builds_chapters_and_cost(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "work_ledger.chapters._call_model",
-        lambda outline, prior_titles: FakeResponse(parsed_output=fake_parsed, usage=FakeUsage()),
+        lambda outline, prior_titles: _fake_response(fake_parsed),
     )
 
     result = get_chapters(tailer, transcript_path)
@@ -173,6 +187,7 @@ def test_get_chapters_success_builds_chapters_and_cost(tmp_path, monkeypatch):
     assert result.chapters[0].title == "Build the thing"
     assert result.chapters[0].category == "feature-build"
     assert result.pass_cost_usd > 0
+    assert result.wall_clock_s > 0
 
     # Cached to disk, and category survives a fresh load.
     _, cached = _load_cache(transcript_path)
@@ -281,7 +296,7 @@ def test_get_chapters_refusal_falls_back_to_unsorted(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "work_ledger.chapters._call_model",
-        lambda outline, prior_titles: FakeResponse(parsed_output=None, stop_reason="refusal", usage=FakeUsage()),
+        lambda outline, prior_titles: _fake_response(None, stop_reason="refusal"),
     )
 
     result = get_chapters(tailer, transcript_path)
@@ -299,7 +314,7 @@ def test_get_chapters_malformed_shape_falls_back_to_unsorted(tmp_path, monkeypat
 
     monkeypatch.setattr(
         "work_ledger.chapters._call_model",
-        lambda outline, prior_titles: FakeResponse(parsed_output=None, stop_reason="max_tokens", usage=FakeUsage()),
+        lambda outline, prior_titles: _fake_response(None, stop_reason="max_tokens"),
     )
 
     result = get_chapters(tailer, transcript_path)
@@ -322,7 +337,7 @@ def test_get_chapters_missing_prompt_ids_become_unsorted(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "work_ledger.chapters._call_model",
-        lambda outline, prior_titles: FakeResponse(parsed_output=fake_parsed, usage=FakeUsage()),
+        lambda outline, prior_titles: _fake_response(fake_parsed),
     )
 
     result = get_chapters(tailer, transcript_path)
@@ -353,7 +368,7 @@ def test_get_chapters_continuation_merges_into_last_cached_chapter(tmp_path, mon
     )
     monkeypatch.setattr(
         "work_ledger.chapters._call_model",
-        lambda outline, prior_titles: FakeResponse(parsed_output=fake_parsed, usage=FakeUsage()),
+        lambda outline, prior_titles: _fake_response(fake_parsed),
     )
 
     result = get_chapters(tailer, transcript_path)
@@ -483,3 +498,395 @@ def test_get_chapters_no_key_fallback_reason_matches_check_credentials_wording(t
     _, check_status_msg = check_credentials()
 
     assert result.fallback_reason == check_status_msg == NO_CREDENTIALS_MESSAGE
+
+
+# --- Backend selection (issue #16) ----------------------------------------
+#
+# WORK_LEDGER_CHAPTER_BACKEND/WORK_LEDGER_CHAPTER_MODEL/OLLAMA_HOST/
+# WORK_LEDGER_OLLAMA_MAX_TOKENS are read fresh by _select_backend() on every
+# call (see its docstring) - monkeypatch.setenv/delenv is enough, no need to
+# reload the module between tests.
+
+
+def test_select_backend_defaults_to_anthropic(monkeypatch):
+    monkeypatch.delenv("WORK_LEDGER_CHAPTER_BACKEND", raising=False)
+    monkeypatch.delenv("WORK_LEDGER_CHAPTER_MODEL", raising=False)
+    backend = _select_backend()
+    assert isinstance(backend, AnthropicBackend)
+    assert backend.model == CHAPTER_MODEL
+
+
+def test_select_backend_anthropic_explicit(monkeypatch):
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "anthropic")
+    backend = _select_backend()
+    assert isinstance(backend, AnthropicBackend)
+
+
+def test_select_backend_anthropic_respects_model_override(monkeypatch):
+    monkeypatch.delenv("WORK_LEDGER_CHAPTER_BACKEND", raising=False)
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_MODEL", "claude-haiku-9000")
+    backend = _select_backend()
+    assert isinstance(backend, AnthropicBackend)
+    assert backend.model == "claude-haiku-9000"
+
+
+def test_select_backend_ollama_uses_defaults_for_host_and_max_tokens(monkeypatch):
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "ollama")
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_MODEL", "qwen2.5:14b")
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    monkeypatch.delenv("WORK_LEDGER_OLLAMA_MAX_TOKENS", raising=False)
+
+    backend = _select_backend()
+    assert isinstance(backend, OllamaBackend)
+    assert backend.model == "qwen2.5:14b"
+    assert backend.host == OLLAMA_DEFAULT_HOST
+    assert backend.max_tokens == OLLAMA_DEFAULT_MAX_TOKENS
+
+
+def test_select_backend_ollama_respects_host_and_max_tokens_env(monkeypatch):
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "ollama")
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_MODEL", "llama3.1")
+    monkeypatch.setenv("OLLAMA_HOST", "http://example.local:9999")
+    monkeypatch.setenv("WORK_LEDGER_OLLAMA_MAX_TOKENS", "1024")
+
+    backend = _select_backend()
+    assert backend.host == "http://example.local:9999"
+    assert backend.max_tokens == 1024
+
+
+def test_select_backend_is_case_insensitive(monkeypatch):
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "OLLAMA")
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_MODEL", "qwen2.5:14b")
+    assert isinstance(_select_backend(), OllamaBackend)
+
+
+def test_select_backend_unknown_name_raises_backend_unavailable(monkeypatch):
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "openai")
+    with pytest.raises(BackendUnavailableError, match="unknown WORK_LEDGER_CHAPTER_BACKEND"):
+        _select_backend()
+
+
+def test_default_backend_constant_is_anthropic():
+    assert DEFAULT_BACKEND == "anthropic"
+
+
+# --- OllamaBackend ---------------------------------------------------------
+#
+# Ollama isn't a hard dependency (it's the `local-chapters` extra), so every
+# test here injects a fake `ollama` module into sys.modules rather than
+# requiring the real package to be installed - hermetic per CLAUDE.md's
+# Development section, and deterministic regardless of what's installed on
+# whatever machine runs the suite.
+
+
+def _install_fake_ollama(monkeypatch):
+    """Install a fake `ollama` module with a configurable Client.chat() -
+    set .chat_return or .chat_exc on the returned module's Client class
+    before calling OllamaBackend.call()."""
+    fake = types.ModuleType("ollama")
+
+    class ResponseError(Exception):
+        pass
+
+    class Client:
+        chat_return = None
+        chat_exc = None
+
+        def __init__(self, host=None):
+            self.host = host
+
+        def chat(self, **kwargs):
+            if Client.chat_exc is not None:
+                raise Client.chat_exc
+            return Client.chat_return
+
+    fake.ResponseError = ResponseError
+    fake.Client = Client
+    monkeypatch.setitem(sys.modules, "ollama", fake)
+    return fake
+
+
+def test_ollama_backend_missing_package_raises_backend_unavailable(monkeypatch):
+    # Setting a sys.modules entry to None makes `import ollama` raise
+    # ImportError regardless of whether the real package happens to be
+    # installed on this machine - the deterministic way to hit this branch.
+    monkeypatch.setitem(sys.modules, "ollama", None)
+    backend = OllamaBackend(model="qwen2.5:14b")
+    with pytest.raises(BackendUnavailableError, match="isn't installed"):
+        backend.call("outline", [])
+
+
+def test_ollama_backend_requires_a_model(monkeypatch):
+    backend = OllamaBackend(model=None)
+    with pytest.raises(BackendUnavailableError, match="WORK_LEDGER_CHAPTER_MODEL"):
+        backend.call("outline", [])
+
+
+def test_ollama_backend_unreachable_server_raises_backend_unavailable(monkeypatch):
+    fake = _install_fake_ollama(monkeypatch)
+    fake.Client.chat_exc = ConnectionError("Connection refused")
+    backend = OllamaBackend(model="qwen2.5:14b", host="http://localhost:11434")
+    with pytest.raises(BackendUnavailableError, match="could not reach"):
+        backend.call("outline", [])
+
+
+def test_ollama_backend_response_error_raises_backend_unavailable(monkeypatch):
+    fake = _install_fake_ollama(monkeypatch)
+    fake.Client.chat_exc = fake.ResponseError("model 'qwen2.5:14b' not found")
+    backend = OllamaBackend(model="qwen2.5:14b")
+    with pytest.raises(BackendUnavailableError, match="rejected the request"):
+        backend.call("outline", [])
+
+
+def test_ollama_backend_malformed_content_raises_backend_unavailable(monkeypatch):
+    fake = _install_fake_ollama(monkeypatch)
+    fake.Client.chat_return = {"message": {"content": "not valid json"}, "done_reason": "stop"}
+    backend = OllamaBackend(model="qwen2.5:14b")
+    with pytest.raises(BackendUnavailableError, match="didn't match the expected schema"):
+        backend.call("outline", [])
+
+
+def test_ollama_backend_success_parses_structured_output(monkeypatch):
+    """The load-bearing property: Ollama's `format` field (a JSON schema)
+    enforces the response's shape server-side, same in spirit as the
+    Anthropic SDK's output_format=. This just verifies the client-side
+    parsing of that guaranteed-valid JSON works."""
+    fake = _install_fake_ollama(monkeypatch)
+    chapters_json = json.dumps(
+        {
+            "chapters": [
+                {
+                    "title": "Local chapter",
+                    "category": "bug-fix",
+                    "sections": [{"title": "s1", "prompt_ids": ["p1"]}],
+                }
+            ]
+        }
+    )
+    fake.Client.chat_return = {"message": {"content": chapters_json}, "done_reason": "stop"}
+
+    backend = OllamaBackend(model="qwen2.5:14b")
+    response = backend.call("outline", [])
+
+    assert response.cost_usd == 0.0
+    assert response.wall_clock_s >= 0.0
+    assert response.stop_reason == "end_turn"
+    assert response.parsed is not None
+    assert response.parsed.chapters[0].title == "Local chapter"
+    assert response.parsed.chapters[0].sections[0].prompt_ids == ["p1"]
+
+
+def test_ollama_backend_length_done_reason_maps_to_max_tokens_stop_reason(monkeypatch):
+    fake = _install_fake_ollama(monkeypatch)
+    fake.Client.chat_return = {
+        "message": {"content": json.dumps({"chapters": []})},
+        "done_reason": "length",
+    }
+    backend = OllamaBackend(model="qwen2.5:14b")
+    response = backend.call("outline", [])
+    assert response.stop_reason == "max_tokens"
+
+
+def test_ollama_backend_passes_schema_and_model_to_client(monkeypatch):
+    """Confirms the structured-output contract: the request must carry
+    _ChaptersOut's JSON schema in `format`, not a prompted "return JSON"
+    convention - see docs/local-model-chaptering-design.md."""
+    fake = _install_fake_ollama(monkeypatch)
+    fake.Client.chat_return = {"message": {"content": json.dumps({"chapters": []})}, "done_reason": "stop"}
+    captured = {}
+
+    original_chat = fake.Client.chat
+
+    def spying_chat(self, **kwargs):
+        captured.update(kwargs)
+        return original_chat(self, **kwargs)
+
+    fake.Client.chat = spying_chat
+
+    backend = OllamaBackend(model="qwen2.5:14b", max_tokens=2048)
+    backend.call("outline text", ["Prior chapter"])
+
+    assert captured["model"] == "qwen2.5:14b"
+    assert captured["format"] == _ChaptersOut.model_json_schema()
+    assert captured["options"]["num_predict"] == 2048
+    assert "Prior chapter" in captured["messages"][-1]["content"]
+    assert "outline text" in captured["messages"][-1]["content"]
+
+
+# --- Graceful degradation, end-to-end through get_chapters -----------------
+
+
+def test_get_chapters_ollama_backend_success_end_to_end(tmp_path, monkeypatch):
+    """Full path through the real dispatcher (_select_backend, not a
+    monkeypatched _call_model) - confirms the env-var config surface and
+    OllamaBackend are actually wired together, and that the cache is
+    written in the exact same format as the Anthropic backend uses."""
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1", "p2"])
+
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "ollama")
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_MODEL", "qwen2.5:14b")
+
+    fake = _install_fake_ollama(monkeypatch)
+    chapters_json = json.dumps(
+        {
+            "chapters": [
+                {
+                    "title": "Local work",
+                    "category": "feature-build",
+                    "sections": [{"title": "s", "prompt_ids": ["p1", "p2"]}],
+                }
+            ]
+        }
+    )
+    fake.Client.chat_return = {"message": {"content": chapters_json}, "done_reason": "stop"}
+
+    result = get_chapters(tailer, transcript_path)
+
+    assert result.fallback_reason is None
+    assert result.pass_cost_usd == 0.0
+    assert result.wall_clock_s >= 0.0
+    assert result.chapters[0].title == "Local work"
+
+    # Same cache file shape/contents as the Anthropic backend - frozen-prefix
+    # caching is completely backend-agnostic (see docs/architecture.md).
+    chaptered_ids, cached = _load_cache(transcript_path)
+    assert chaptered_ids == ["p1", "p2"]
+    assert cached[0].title == "Local work"
+    assert cached[0].category == "feature-build"
+
+
+def test_get_chapters_ollama_missing_package_falls_back_to_unsorted(tmp_path, monkeypatch):
+    """Never a raw stack trace, never a silent fallback to the Anthropic
+    backend - just a specific message and the usual Unsorted chapter."""
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "ollama")
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_MODEL", "qwen2.5:14b")
+    monkeypatch.setitem(sys.modules, "ollama", None)
+
+    result = get_chapters(tailer, transcript_path)
+    assert result.fallback_reason is not None
+    assert "isn't installed" in result.fallback_reason
+    assert result.chapters[0].title == UNSORTED_TITLE
+    assert result.chapters[0].category == DEFAULT_CATEGORY
+
+
+def test_get_chapters_ollama_unreachable_server_falls_back_to_unsorted(tmp_path, monkeypatch):
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "ollama")
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_MODEL", "qwen2.5:14b")
+    fake = _install_fake_ollama(monkeypatch)
+    fake.Client.chat_exc = ConnectionError("Connection refused")
+
+    result = get_chapters(tailer, transcript_path)
+    assert "could not reach" in result.fallback_reason
+    assert result.chapters[0].title == UNSORTED_TITLE
+
+
+def test_get_chapters_unknown_backend_falls_back_to_unsorted(tmp_path, monkeypatch):
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "openai")
+
+    result = get_chapters(tailer, transcript_path)
+    assert "unknown WORK_LEDGER_CHAPTER_BACKEND" in result.fallback_reason
+    assert result.chapters[0].title == UNSORTED_TITLE
+
+
+# --- check_credentials, Ollama backend --------------------------------------
+
+
+def test_check_credentials_ollama_missing_package(monkeypatch):
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "ollama")
+    monkeypatch.setitem(sys.modules, "ollama", None)
+    ok, msg = check_credentials()
+    assert ok is False
+    assert "isn't installed" in msg
+
+
+def test_check_credentials_ollama_package_present(monkeypatch):
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "ollama")
+    _install_fake_ollama(monkeypatch)
+    ok, msg = check_credentials()
+    assert ok is True
+    assert "installed" in msg
+
+
+def test_check_credentials_still_checks_anthropic_when_backend_unset(monkeypatch):
+    """Zero regression: check_credentials()'s default behavior (no
+    WORK_LEDGER_CHAPTER_BACKEND set) must still exercise the Anthropic
+    check, unchanged."""
+    monkeypatch.delenv("WORK_LEDGER_CHAPTER_BACKEND", raising=False)
+    monkeypatch.setattr("anthropic.Anthropic", lambda: _FakeAnthropicClient(api_key="sk-test"))
+    ok, msg = check_credentials()
+    assert ok is True
+    assert "Anthropic" in msg
+
+
+# --- format_pass_note --------------------------------------------------------
+
+
+def test_format_pass_note_none_when_nothing_happened():
+    result = ChapterResult(chapters=[], pass_cost_usd=0.0)
+    assert format_pass_note(result) is None
+
+
+def test_format_pass_note_shows_cost_for_hosted_backend():
+    result = ChapterResult(chapters=[], pass_cost_usd=0.0031)
+    assert format_pass_note(result) == "cost $0.0031"
+
+
+def test_format_pass_note_shows_wall_clock_for_local_backend():
+    """Cost is always $0.0 for OllamaBackend - wall_clock_s is what should
+    show in its place, per docs/local-model-chaptering-design.md's "Cost"
+    note."""
+    result = ChapterResult(chapters=[], pass_cost_usd=0.0, wall_clock_s=12.3)
+    note = format_pass_note(result)
+    assert "12.3s locally" in note
+    assert "no API cost" in note
+
+
+# --- AnthropicBackend behavior is unchanged ---------------------------------
+
+
+def test_anthropic_backend_defaults_to_chapter_model_and_max_tokens():
+    backend = AnthropicBackend()
+    assert backend.model == CHAPTER_MODEL
+
+
+def test_anthropic_backend_call_computes_cost_from_usage(monkeypatch):
+    """AnthropicBackend.call() must still compute cost via
+    estimate_cost_usd(response.model, response.usage) exactly as the old
+    _call_model + get_chapters combination did - just wrapped in a
+    BackendResponse now instead of returned as a raw SDK response."""
+
+    class _FakeUsage:
+        def model_dump(self):
+            return {"input_tokens": 100, "output_tokens": 50}
+
+    class _FakeParseResponse:
+        parsed_output = _ChaptersOut(chapters=[])
+        stop_reason = "end_turn"
+        model = "claude-haiku-4-5"
+        usage = _FakeUsage()
+
+    class _FakeMessages:
+        def parse(self, **kwargs):
+            return _FakeParseResponse()
+
+    class _FakeClient:
+        messages = _FakeMessages()
+
+    monkeypatch.setattr("anthropic.Anthropic", lambda: _FakeClient())
+
+    backend = AnthropicBackend()
+    response = backend.call("outline", [])
+
+    assert response.cost_usd > 0
+    assert response.parsed == _ChaptersOut(chapters=[])
+    assert response.stop_reason == "end_turn"
+    assert response.wall_clock_s >= 0.0

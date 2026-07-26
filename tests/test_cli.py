@@ -720,9 +720,7 @@ def test_run_miso_single_session_writes_html_reports_and_prints_tables(tmp_path,
     and both chapters/activity HTML reports are written. PNG is mocked
     unavailable here so this test doesn't depend on Playwright/Chromium
     being present in whatever environment runs the suite."""
-    from dataclasses import dataclass
-
-    from work_ledger.chapters import _ChapterOut, _ChaptersOut, _SectionOut
+    from work_ledger.chapters import BackendResponse, _ChapterOut, _ChaptersOut, _SectionOut
 
     monkeypatch.chdir(tmp_path)
     transcript_path = tmp_path / "session-a.jsonl"
@@ -737,21 +735,6 @@ def test_run_miso_single_session_writes_html_reports_and_prints_tables(tmp_path,
     ]
     write_jsonl(transcript_path, entries)
 
-    @dataclass
-    class FakeUsage:
-        input_tokens: int = 100
-        output_tokens: int = 50
-
-        def model_dump(self):
-            return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
-
-    @dataclass
-    class FakeResponse:
-        parsed_output: object
-        stop_reason: str = "end_turn"
-        model: str = "claude-haiku-4-5"
-        usage: object = None
-
     fake_parsed = _ChaptersOut(
         chapters=[
             _ChapterOut(
@@ -761,9 +744,14 @@ def test_run_miso_single_session_writes_html_reports_and_prints_tables(tmp_path,
             )
         ]
     )
+    # _call_model now returns a backend-agnostic BackendResponse (see
+    # tests/test_chapters.py's own convention) rather than a raw Anthropic
+    # SDK response shape.
     monkeypatch.setattr(
         "work_ledger.chapters._call_model",
-        lambda outline, prior_titles: FakeResponse(parsed_output=fake_parsed, usage=FakeUsage()),
+        lambda outline, prior_titles: BackendResponse(
+            parsed=fake_parsed, stop_reason="end_turn", cost_usd=0.0031, wall_clock_s=1.1
+        ),
     )
     monkeypatch.setattr("work_ledger.cli.check_credentials", lambda: (True, "Anthropic credentials found"))
     monkeypatch.setattr("work_ledger.report.png_available", lambda: (False, "PNG unavailable for this test"))

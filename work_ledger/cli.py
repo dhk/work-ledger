@@ -21,7 +21,7 @@ from rich.table import Table
 from rich.text import Text
 
 from work_ledger.activity import collapse_to_other, group_by_activity, top_n
-from work_ledger.chapters import Chapter, cached_chapters, check_credentials, get_chapters
+from work_ledger.chapters import Chapter, cached_chapters, check_credentials, format_pass_note, get_chapters
 from work_ledger.export import build_export_payload
 from work_ledger.history import sync_history, get_status as get_history_status
 from work_ledger.limits import (
@@ -323,8 +323,9 @@ def run_chapters(
 
     if result.fallback_reason:
         console.print(f"[yellow]Note: {result.fallback_reason}[/yellow]")
-    if result.pass_cost_usd:
-        console.print(f"[dim]This chaptering pass cost ${result.pass_cost_usd:.4f}[/dim]")
+    pass_note = format_pass_note(result)
+    if pass_note:
+        console.print(f"[dim]This chaptering pass {pass_note}[/dim]")
 
     chapters = _sorted_by_cost(tailer, result.chapters)
     if only:
@@ -1254,8 +1255,9 @@ def run_miso(
     result = get_chapters(tailer, path)
     if result.fallback_reason:
         console.print(f"[yellow]Note: {result.fallback_reason}[/yellow]")
-    if result.pass_cost_usd:
-        console.print(f"[dim]This chaptering pass cost ${result.pass_cost_usd:.4f}[/dim]")
+    pass_note = format_pass_note(result)
+    if pass_note:
+        console.print(f"[dim]This chaptering pass {pass_note}[/dim]")
 
     chapters = _sorted_by_cost(tailer, result.chapters)
     console.print()
@@ -1296,8 +1298,8 @@ def run_miso(
     console.print("[bold]Done — where things stand:[/bold]")
     if result.fallback_reason:
         console.print(f"  Chapters: fell back to \"Unsorted\" - fix: {cred_msg}")
-    elif result.pass_cost_usd:
-        console.print(f"  Chapters: {len(chapters)} chapter(s) labeled (${result.pass_cost_usd:.4f} this pass)")
+    elif result.pass_cost_usd or result.wall_clock_s:
+        console.print(f"  Chapters: {len(chapters)} chapter(s) labeled ({format_pass_note(result)} this pass)")
     else:
         console.print(f"  Chapters: {len(chapters)} chapter(s) labeled (from cache - no new API cost)")
 
@@ -1818,8 +1820,9 @@ def run_recommend(transcript_path=None, as_json: bool = False, mark_used: str | 
     result = get_chapters(tailer, path)
     if result.fallback_reason:
         console.print(f"[yellow]Note: {result.fallback_reason}[/yellow]")
-    if result.pass_cost_usd:
-        console.print(f"[dim]This chaptering pass cost ${result.pass_cost_usd:.4f}[/dim]")
+    pass_note = format_pass_note(result)
+    if pass_note:
+        console.print(f"[dim]This chaptering pass {pass_note}[/dim]")
 
     recs = generate_recommendations(result.chapters, tailer)
 
