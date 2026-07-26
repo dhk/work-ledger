@@ -77,3 +77,17 @@ def isolated_config_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(limits_mod, "CONFIG_DIR", config_dir)
     monkeypatch.setattr(limits_mod, "THRESHOLD_PATH", config_dir / "limits_threshold.json")
     return config_dir
+
+
+@pytest.fixture
+def isolated_history_db(tmp_path, monkeypatch):
+    """Point history.py's sqlite database at a tmp path instead of the real
+    ~/.config/work-ledger/history.db - same isolation pattern as
+    isolated_config_dir above, just for history.py's own module
+    attributes."""
+    import work_ledger.history as history_mod
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(history_mod, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(history_mod, "DB_PATH", config_dir / "history.db")
+    return config_dir / "history.db"
