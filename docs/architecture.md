@@ -68,9 +68,14 @@ model-pricing change (see #47) needs to be reflected.
   already-labeled chapters/prompt-ids. Deliberately **frozen-prefix
   forever**: re-running only chapters newly-added turns, never re-pays
   for or retitles something already cached. Known, accepted tradeoff: an
-  early mis-titled chapter can't self-correct later. See
-  `docs/session-chaptering-design.md` and #16 (the local-model backend
-  proposal that would remove the cost reason for freezing).
+  early mis-titled chapter can't self-correct later. This holds
+  identically regardless of which `ChapterBackend` produced a chapter —
+  #16 added a second backend (`OllamaBackend`, local-only) behind the
+  same `get_chapters()`/cache code path, but deliberately did **not**
+  touch this freeze behavior; unfreezing is a separate, still-open
+  design question (see `docs/local-model-chaptering-design.md`'s "Open
+  questions" and "Unfreezing chapters" — not decided, not implemented).
+  See `docs/session-chaptering-design.md` for the original rationale.
 - **Session pin** (`session_pin.py`) — a small local file remembering
   which session `chapters`/`activity`/`recommend` should default to,
   separate from the per-transcript cache above.
@@ -90,22 +95,35 @@ model-pricing change (see #47) needs to be reflected.
 
 ## Network calls (the exhaustive list)
 
-Everything above this line is 100% local. There are exactly three places
+Everything above this line is 100% local. There are exactly four places
 work-ledger talks to a network, all opt-in or explicitly disclosed, never
 silent:
 
-1. **`chapters`' Haiku pass** — the only place real session content
-   (prompt/unit snippets) leaves the machine at all. Requires the user's
-   own `ANTHROPIC_API_KEY` (or `ant auth login`); on any failure
+1. **`chapters`' hosted Haiku pass** (`AnthropicBackend`, the default
+   `ChapterBackend`) — the only place real session content (prompt/unit
+   snippets) leaves the machine to a third party at all. Requires the
+   user's own `ANTHROPIC_API_KEY` (or `ant auth login`); on any failure
    (missing/invalid key, refusal, malformed response, exception) falls
    back to a single "Unsorted" chapter rather than crashing, with a
    specific, distinguishable error message per failure mode.
-2. **Pattern-library counters** (`pattern_client.py`) — two anonymous
+2. **`chapters`' local Ollama pass** (`OllamaBackend`, opt-in via
+   `WORK_LEDGER_CHAPTER_BACKEND=ollama`) — talks to a local Ollama server
+   (default `http://localhost:11434`, `OLLAMA_HOST` to override) instead
+   of the hosted API. Session content still travels over localhost to a
+   separate process, but never off the machine — this is the local-only
+   counterpart to #1, added by #16.
+   Requires the optional `ollama` PyPI package (`pip install
+   "work-ledger[local-chapters]"`); missing package or unreachable server
+   both fail with a specific, distinguishable message (same "never a raw
+   stack trace, never silent" contract as #1) and fall back to
+   "Unsorted" — never a silent fallback to the Anthropic backend. See
+   `docs/local-model-chaptering-design.md`.
+3. **Pattern-library counters** (`pattern_client.py`) — two anonymous
    counter increments (`report_recommended` / `report_used`) to a
    personally-run backend, only when `patterns enable` has been run and
    `WORK_LEDGER_PATTERN_BACKEND_URL` is set. Silent no-op, never an
    error, if either is missing.
-3. **Findings submission** (`mcp_server.py`'s `submit_review_findings`) —
+4. **Findings submission** (`mcp_server.py`'s `submit_review_findings`) —
    forwards `ReportFindings`-shaped code-review output to the same
    backend. Needs both the URL above and a separate
    `WORK_LEDGER_FINDINGS_TOKEN` bearer credential, on top of the
@@ -113,14 +131,14 @@ silent:
    one carries free text. Same silent-no-op-if-unconfigured behavior.
 
 `export` is explicitly **not** on this list — it writes a local file and
-stops; there is no fourth network call hiding behind it.
+stops; there is no fifth network call hiding behind it.
 
 ## Module map
 
 | Module | Owns |
 |---|---|
 | `transcript.py` | Locating/tailing transcripts; `Unit`/`Turn`; the message.id dedup fix; subagent sidecar correlation |
-| `chapters.py` | `Section`/`Chapter`; the Haiku labeling pass; frozen-prefix cache |
+| `chapters.py` | `Section`/`Chapter`; the labeling pass behind a pluggable `ChapterBackend` (`AnthropicBackend` default, `OllamaBackend` opt-in - #16); frozen-prefix cache, backend-agnostic |
 | `activity.py` | Grouping cost by `Unit.kind`/`skill_name`/`subagent_agent_type`/`tool_names` — no API call |
 | `pricing.py` | The `RATES` table and `estimate_cost_usd` — the only tokens→dollars conversion in the codebase |
 | `export.py` | Building the local anonymized export JSON — never sends it anywhere |

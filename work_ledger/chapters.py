@@ -17,9 +17,11 @@ prefix").
 """
 
 import json
+import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -45,6 +47,21 @@ NO_CREDENTIALS_MESSAGE = (
 # get_chapters), but the result is worse than a shorter session's.
 MAX_TOKENS = 16000
 UNSORTED_TITLE = "Unsorted"
+
+# --- Backend configuration (see docs/local-model-chaptering-design.md) ----
+#
+# Environment-variable driven, not CLI flags: backend choice is a one-time
+# setup decision (like ANTHROPIC_API_KEY itself), not a per-invocation one.
+DEFAULT_BACKEND = "anthropic"
+OLLAMA_DEFAULT_HOST = "http://localhost:11434"
+# A local model generating MAX_TOKENS's worth of output (16000, tuned for
+# the hosted API's non-streaming HTTP timeout) could take minutes on modest
+# hardware rather than seconds - see the design doc's "Latency
+# implications". Kept as its own, separately-configurable ceiling rather
+# than shared with MAX_TOKENS above; deliberately conservative default,
+# trading a higher chance of Unsorted fallback on long sessions for a
+# bounded wait.
+OLLAMA_DEFAULT_MAX_TOKENS = 4096
 
 # Fixed, closed taxonomy - not free text. This is what lets `export` report
 # category rollups without ever transmitting a chapter's actual title (which
@@ -132,6 +149,28 @@ class ChapterResult:
     chapters: list[Chapter]
     pass_cost_usd: float
     fallback_reason: str | None = None
+    # Wall-clock time the model call itself took this run - 0.0 when
+    # nothing new was chaptered (cache hit) or the call failed before
+    # producing a response. Always 0.0 for the Anthropic backend too
+    # (cost is the meaningful number there); only OllamaBackend populates
+    # this with something worth showing, since its cost_usd is always 0.0
+    # (see BackendResponse/OllamaBackend below) - see format_pass_note.
+    wall_clock_s: float = 0.0
+
+
+def format_pass_note(result: ChapterResult) -> str | None:
+    """One-liner describing what this chaptering pass's own model call
+    cost - dollars for a hosted backend, wall-clock time in its place for
+    a local backend (whose cost_usd is always $0.0, but which still isn't
+    free of overhead - see docs/local-model-chaptering-design.md's "Cost"
+    note). Returns None when nothing was actually called this run (a full
+    cache hit, or a failed call - fallback_reason already covers that
+    case)."""
+    if result.pass_cost_usd:
+        return f"cost ${result.pass_cost_usd:.4f}"
+    if result.wall_clock_s:
+        return f"took {result.wall_clock_s:.1f}s locally (no API cost)"
+    return None
 
 
 def _cache_path(transcript_path: Path) -> Path:
@@ -195,25 +234,219 @@ def _build_outline(turns: list[Turn]) -> str:
     return "\n".join(lines)
 
 
-def _call_model(outline: str, prior_chapter_titles: list[str]):
-    import anthropic  # imported lazily - only needed for `chapters`, not the live dashboard
-
-    client = anthropic.Anthropic()
-    context = ""
-    if prior_chapter_titles:
-        titled = "; ".join(prior_chapter_titles)
-        context = (
-            f"Turns before this point were already grouped into these chapters "
-            f"(in order): {titled}. Only assign chapters/sections for the NEW "
-            f"turns below - do not re-list any earlier turn.\n\n"
-        )
-    return client.messages.parse(
-        model=CHAPTER_MODEL,
-        max_tokens=MAX_TOKENS,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": context + outline}],
-        output_format=_ChaptersOut,
+def _build_context(prior_chapter_titles: list[str]) -> str:
+    """Shared between every backend: the "here's what came before" preamble
+    prepended to the outline so a fresh model call knows not to re-list an
+    already-cached turn. Backend-agnostic - factored out of the old
+    Anthropic-only `_call_model` rather than duplicated in OllamaBackend."""
+    if not prior_chapter_titles:
+        return ""
+    titled = "; ".join(prior_chapter_titles)
+    return (
+        f"Turns before this point were already grouped into these chapters "
+        f"(in order): {titled}. Only assign chapters/sections for the NEW "
+        f"turns below - do not re-list any earlier turn.\n\n"
     )
+
+
+@dataclass
+class BackendResponse:
+    """What every ChapterBackend.call() returns - backend-agnostic shape
+    that get_chapters works with from here on (_validate_partition, the
+    Unsorted fallback, and cache read/write never look at a backend-specific
+    response type). See docs/local-model-chaptering-design.md's
+    Architecture section."""
+
+    parsed: "_ChaptersOut | None"
+    stop_reason: str
+    cost_usd: float  # always 0.0 for a local backend
+    wall_clock_s: float
+
+
+class ChapterBackend(Protocol):
+    """A pluggable chaptering model call. `AnthropicBackend` (today's
+    hosted default) and `OllamaBackend` (local, optional) both implement
+    this - see docs/local-model-chaptering-design.md."""
+
+    def call(self, outline: str, prior_chapter_titles: list[str]) -> BackendResponse: ...
+
+
+class BackendUnavailableError(Exception):
+    """Raised by a backend's call() for an anticipated, nameable failure
+    mode - a missing optional dependency, an unreachable local server, a
+    local response that doesn't match the expected schema - as opposed to
+    a genuinely unexpected exception. The message is already user-facing;
+    get_chapters uses it verbatim as fallback_reason rather than wrapping
+    it in the generic "chaptering call failed (...)" phrasing reserved for
+    truly unexpected errors. Never triggers a switch to a different
+    backend - a backend failure always falls back to a single "Unsorted"
+    chapter, exactly like today's Anthropic-only failure handling, per the
+    design doc's explicit no-auto-fallback-between-backends non-goal."""
+
+
+class AnthropicBackend:
+    """The hosted, default backend - today's `_call_model` body, moved here
+    unchanged in behavior. Deliberately does NOT catch/wrap
+    anthropic.AuthenticationError or the credential-missing TypeError into
+    BackendUnavailableError: get_chapters already has specific, tested
+    handling for exactly those two shapes (see its docstring), and letting
+    them propagate as-is preserves that handling verbatim rather than
+    duplicating the same distinction inside this class."""
+
+    def __init__(self, model: str | None = None, max_tokens: int = MAX_TOKENS):
+        self.model = model or CHAPTER_MODEL
+        self.max_tokens = max_tokens
+
+    def call(self, outline: str, prior_chapter_titles: list[str]) -> BackendResponse:
+        import anthropic  # imported lazily - only needed for `chapters`, not the live dashboard
+
+        client = anthropic.Anthropic()
+        context = _build_context(prior_chapter_titles)
+        start = time.monotonic()
+        response = client.messages.parse(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": context + outline}],
+            output_format=_ChaptersOut,
+        )
+        elapsed = time.monotonic() - start
+
+        cost = 0.0
+        if response.usage:
+            c = estimate_cost_usd(response.model, response.usage.model_dump())
+            cost = c if c is not None else 0.0
+
+        return BackendResponse(
+            parsed=response.parsed_output,
+            stop_reason=response.stop_reason,
+            cost_usd=cost,
+            wall_clock_s=elapsed,
+        )
+
+
+class OllamaBackend:
+    """Local-inference backend - talks to a local Ollama server and never
+    sends session content over the network. Uses Ollama's `format` field
+    (a JSON schema, not the string "json") to constrain decoding to
+    `_ChaptersOut`'s shape server-side - the local equivalent of the
+    Anthropic SDK's `output_format=`, and the load-bearing property this
+    backend exists to preserve: enforced structured output, not a prompted
+    "return JSON" convention. See
+    docs/local-model-chaptering-design.md's "OllamaBackend specifics".
+
+    Requires the optional `ollama` PyPI package (`pip install
+    "work-ledger[local-chapters]"`) and a running local server - both
+    checked lazily inside call(), never at import time, so importing
+    chapters.py never requires either.
+    """
+
+    def __init__(
+        self,
+        model: str | None,
+        host: str = OLLAMA_DEFAULT_HOST,
+        max_tokens: int = OLLAMA_DEFAULT_MAX_TOKENS,
+    ):
+        self.model = model
+        self.host = host
+        self.max_tokens = max_tokens
+
+    def call(self, outline: str, prior_chapter_titles: list[str]) -> BackendResponse:
+        if not self.model:
+            raise BackendUnavailableError(
+                "WORK_LEDGER_CHAPTER_BACKEND=ollama requires WORK_LEDGER_CHAPTER_MODEL to name "
+                "a model pulled into your local Ollama server (e.g. `qwen2.5:14b`); new turns "
+                "grouped as Unsorted."
+            )
+        try:
+            import ollama
+        except ImportError as e:
+            raise BackendUnavailableError(
+                "the `ollama` package isn't installed; new turns grouped as Unsorted. Run "
+                '`pip install "work-ledger[local-chapters]"`, or unset '
+                "WORK_LEDGER_CHAPTER_BACKEND to use the Anthropic backend instead."
+            ) from e
+
+        context = _build_context(prior_chapter_titles)
+        schema = _ChaptersOut.model_json_schema()
+        client = ollama.Client(host=self.host)
+
+        start = time.monotonic()
+        try:
+            response = client.chat(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": context + outline},
+                ],
+                format=schema,
+                options={"num_predict": self.max_tokens},
+            )
+        except ollama.ResponseError as e:
+            # A structured error response *from* the server - e.g. the
+            # named model isn't pulled locally - distinct from the server
+            # not being reachable at all (below).
+            raise BackendUnavailableError(
+                f"the Ollama server rejected the request ({e}); new turns grouped as "
+                f"Unsorted. Check `ollama list` includes {self.model!r}, or pull it with "
+                f"`ollama pull {self.model}`."
+            ) from e
+        except Exception as e:  # noqa: BLE001 - anything else here means we couldn't talk to it at all
+            raise BackendUnavailableError(
+                f"could not reach the local Ollama server at {self.host} ({e}); new turns "
+                "grouped as Unsorted. Make sure `ollama serve` is running, or set OLLAMA_HOST "
+                "if it's listening somewhere else."
+            ) from e
+        elapsed = time.monotonic() - start
+
+        try:
+            content = response["message"]["content"]
+            parsed = _ChaptersOut.model_validate_json(content)
+        except Exception as e:  # noqa: BLE001 - malformed/truncated local output, not a crash
+            raise BackendUnavailableError(
+                f"the local model's response didn't match the expected schema ({e}); new turns "
+                "grouped as Unsorted. This is more likely with a smaller local model - see "
+                "docs/local-model-chaptering-design.md's 'Reliability implications'."
+            ) from e
+
+        stop_reason = "max_tokens" if response.get("done_reason") == "length" else "end_turn"
+        return BackendResponse(
+            parsed=parsed,
+            stop_reason=stop_reason,
+            cost_usd=0.0,
+            wall_clock_s=elapsed,
+        )
+
+
+def _select_backend() -> ChapterBackend:
+    """Choose and instantiate a backend from environment configuration -
+    the "thin dispatcher" the design doc describes `_call_model` becoming.
+    Re-read fresh on every call (not cached at import time) so changing
+    WORK_LEDGER_CHAPTER_BACKEND/WORK_LEDGER_CHAPTER_MODEL/OLLAMA_HOST takes
+    effect without restarting anything - and so tests can monkeypatch
+    os.environ per-test without import-order games."""
+    backend_name = os.environ.get("WORK_LEDGER_CHAPTER_BACKEND", DEFAULT_BACKEND).strip().lower()
+    model = os.environ.get("WORK_LEDGER_CHAPTER_MODEL") or None
+
+    if backend_name == "anthropic":
+        return AnthropicBackend(model=model)
+    if backend_name == "ollama":
+        host = os.environ.get("OLLAMA_HOST") or OLLAMA_DEFAULT_HOST
+        max_tokens_str = os.environ.get("WORK_LEDGER_OLLAMA_MAX_TOKENS")
+        max_tokens = int(max_tokens_str) if max_tokens_str else OLLAMA_DEFAULT_MAX_TOKENS
+        return OllamaBackend(model=model, host=host, max_tokens=max_tokens)
+    raise BackendUnavailableError(
+        f"unknown WORK_LEDGER_CHAPTER_BACKEND={backend_name!r} (expected 'anthropic' or "
+        "'ollama'); new turns grouped as Unsorted."
+    )
+
+
+def _call_model(outline: str, prior_chapter_titles: list[str]) -> BackendResponse:
+    """Thin dispatcher: pick a backend from config, call it, return its
+    BackendResponse. Everything downstream in get_chapters
+    (_validate_partition, the Unsorted fallback, cache read/write) is
+    backend-agnostic and unchanged by which backend actually ran."""
+    return _select_backend().call(outline, prior_chapter_titles)
 
 
 def _validate_partition(parsed: _ChaptersOut, expected_ids: set[str]) -> list[_ChapterOut]:
@@ -259,16 +492,42 @@ def has_uncached_turns(tailer: TranscriptTailer, transcript_path: Path) -> bool:
     return any(t.prompt_id not in chaptered_id_set for t in tailer.ordered_turns())
 
 
+def _check_ollama_credentials() -> tuple[bool, str]:
+    """The Ollama-backend analog of the Anthropic check below: cheap,
+    no-network. Only verifies the optional `ollama` package is importable -
+    it deliberately does NOT try to reach the local server (that would be
+    a real network call from a status check, which the Anthropic check
+    above also avoids), so a "credentials found" result here still doesn't
+    guarantee a chaptering pass will succeed if `ollama serve` isn't
+    actually running - same limitation the Anthropic check has for an
+    invalid-but-present key."""
+    try:
+        import ollama  # noqa: F401
+    except ImportError:
+        return False, (
+            "the `ollama` package isn't installed; new turns will fall back to Unsorted. Run "
+            '`pip install "work-ledger[local-chapters]"`, or unset WORK_LEDGER_CHAPTER_BACKEND '
+            "to use the Anthropic backend instead."
+        )
+    return True, (
+        "ollama package installed (this doesn't confirm the local server is running - a "
+        "chaptering pass will still fail distinctly if it isn't)"
+    )
+
+
 def check_credentials() -> tuple[bool, str]:
-    """Cheap, no-network check for whether the Anthropic SDK can resolve
-    *some* credential (`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` env var,
-    or an `ant auth login` profile on disk) - not whether it's actually
-    valid, which only a real API call can prove. That's a deliberate limit,
-    not an oversight: validating for real would mean a second network call
-    on top of the one chaptering pass already makes (see
+    """Cheap, no-network check for whether the *configured* backend
+    (`WORK_LEDGER_CHAPTER_BACKEND`, default "anthropic") looks usable.
+
+    For the Anthropic backend: whether the SDK can resolve *some*
+    credential (`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` env var, or an
+    `ant auth login` profile on disk) - not whether it's actually valid,
+    which only a real API call can prove. That's a deliberate limit, not
+    an oversight: validating for real would mean a second network call on
+    top of the one chaptering pass already makes (see
     docs/architecture.md's "Network calls" - never a silent extra one), and
-    get_chapters's own AuthenticationError handling above already surfaces
-    an invalid-but-present key distinctly once a real chaptering pass is
+    get_chapters's own AuthenticationError handling already surfaces an
+    invalid-but-present key distinctly once a real chaptering pass is
     attempted.
 
     Constructing `anthropic.Anthropic()` runs the SDK's full credential
@@ -278,9 +537,15 @@ def check_credentials() -> tuple[bool, str]:
     (see its docstring's precedence list), so this is safe to call from a
     status check with no cost and no risk of tripping over network access.
 
+    For the Ollama backend: see _check_ollama_credentials above.
+
     Used by `miso --check-status` and `miso`'s own up-front notice (see
     cli.py) - returns the exact wording get_chapters uses for the
     no-credential fallback so the same fact is never phrased two ways."""
+    backend_name = os.environ.get("WORK_LEDGER_CHAPTER_BACKEND", DEFAULT_BACKEND).strip().lower()
+    if backend_name == "ollama":
+        return _check_ollama_credentials()
+
     import anthropic  # imported lazily - only needed for `chapters`/`miso`, not the live dashboard
 
     client = anthropic.Anthropic()
@@ -307,6 +572,7 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
     new_ids = {t.prompt_id for t in new_turns}
 
     cost = 0.0
+    wall_clock_s = 0.0
     fallback_reason = None
     new_chapter_dicts: list[_ChapterOut] = []
 
@@ -318,7 +584,9 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
         # A real 401 from the server - a key was sent and rejected (invalid,
         # revoked, or malformed), distinct from no key being present at all
         # (see the TypeError branch below) - worth flagging differently
-        # since the fix is "check the key," not "set a key."
+        # since the fix is "check the key," not "set a key." Only ever
+        # raised by AnthropicBackend, but harmless to catch regardless of
+        # which backend is configured.
         fallback_reason = (
             f"ANTHROPIC_API_KEY was rejected by the server ({e}); new turns grouped as "
             "Unsorted. Check the key is still valid at console.anthropic.com."
@@ -334,6 +602,15 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
         else:
             fallback_reason = f"chaptering call failed ({e}); new turns grouped as Unsorted"
         response = None
+    except BackendUnavailableError as e:
+        # A backend-specific, anticipated failure mode (e.g. OllamaBackend's
+        # missing package / unreachable server / schema mismatch) - the
+        # message is already user-facing, so it's used verbatim rather than
+        # wrapped in the generic "chaptering call failed (...)" phrasing
+        # below. Never falls back to a different backend - just Unsorted,
+        # same as every other failure mode here.
+        fallback_reason = str(e)
+        response = None
     except Exception as e:  # noqa: BLE001 - any other failure here falls back, never crashes
         fallback_reason = f"chaptering call failed ({e}); new turns grouped as Unsorted"
         response = None
@@ -348,10 +625,9 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
         ]
 
     if response is not None:
-        if response.usage:
-            c = estimate_cost_usd(response.model, response.usage.model_dump())
-            cost = c if c is not None else 0.0
-        parsed = response.parsed_output
+        cost = response.cost_usd
+        wall_clock_s = response.wall_clock_s
+        parsed = response.parsed
         if response.stop_reason == "refusal":
             fallback_reason = "chaptering call was refused; new turns grouped as Unsorted"
             new_chapter_dicts = _all_unsorted()
@@ -398,4 +674,9 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
     all_chaptered_ids = chaptered_ids + [t.prompt_id for t in new_turns]
     _save_cache(transcript_path, all_chaptered_ids, merged_chapters)
 
-    return ChapterResult(chapters=merged_chapters, pass_cost_usd=cost, fallback_reason=fallback_reason)
+    return ChapterResult(
+        chapters=merged_chapters,
+        pass_cost_usd=cost,
+        fallback_reason=fallback_reason,
+        wall_clock_s=wall_clock_s,
+    )

@@ -11,7 +11,7 @@ Staging follows the show/tell/do rubric in `CLAUDE.md` (full writeup:
 the narrative synthesis on top, refreshed when a theme's shape actually
 changes — not mechanically re-synced on every issue edit.
 
-**Current focus:** the practice-visibility theme is now fully shipped (#44 timeline, #43 web UI), the cost/usage theme picked up a time-series view (#4 trend), an end-to-end orchestration command (#35 `miso`), cross-session initiative rollup (#3, `work-ledger rollup`), and the within-session half of waste mining (#5, `work-ledger waste`) - #3 shipping also unblocks #5's cross-session half, though that half hasn't been started. The quality/infra batch (#45-48) is closed out. Nothing designated as current focus yet - next candidates are #42 (history store), #5's cross-session half (now unblocked by #3), or the remaining Tell-stage work (#16/#19).
+**Current focus:** the practice-visibility theme is now fully shipped (#44 timeline, #43 web UI), the cost/usage theme picked up a time-series view (#4 trend), an end-to-end orchestration command (#35 `miso`), cross-session initiative rollup (#3, `work-ledger rollup`), and the within-session half of waste mining (#5, `work-ledger waste`) - #3 shipping also unblocks #5's cross-session half, though that half hasn't been started. The quality/infra batch (#45-48) is closed out. #16's backend-abstraction half also shipped (`AnthropicBackend`/`OllamaBackend`), leaving its unfreeze-policy half open pending the repo owner's call. Nothing designated as current focus yet - next candidates are #42 (history store), #5's cross-session half (now unblocked by #3), #16's unfreeze-policy decision, or the remaining Tell-stage work (#19).
 
 ## Cost/usage reporting — Show, core shipped
 
@@ -25,7 +25,7 @@ below in this theme extends that core rather than replacing it.
 | [#3](https://github.com/dhk/work-ledger/issues/3) ✅ | **Cross-session rollup** — cluster the same initiative across sessions by deterministic title normalization, total cost per cluster (`work-ledger rollup`); v1 deliberately skips an LLM/embedding matching pass, see rollup.py | Shipped; did not block on #42 |
 | [#4](https://github.com/dhk/work-ledger/issues/4) ✅ | **Trend view** — cost bucketed by day/week across all sessions (`work-ledger trend`) | Shipped; did not block on #42 |
 | [#5](https://github.com/dhk/work-ledger/issues/5) | Recurring-pattern/waste mining across chapters and sessions | Within-session half shipped (`work-ledger waste`: repeated file reads, repeated near-identical subagent dispatches, scoped to session/chapter); the cross-session half is now unblocked by #3 but not yet started |
-| [#16](https://github.com/dhk/work-ledger/issues/16) | Pluggable local-model chaptering backend (Ollama) + unfreeze chapters | — |
+| [#16](https://github.com/dhk/work-ledger/issues/16) | Pluggable local-model chaptering backend (Ollama) + unfreeze chapters | Backend half shipped: `ChapterBackend`/`AnthropicBackend`/`OllamaBackend`, `WORK_LEDGER_CHAPTER_BACKEND` config; frozen-prefix cache deliberately untouched for either backend. Unfreeze-policy half still open — needs the repo owner's call on Option A/B/C in `docs/local-model-chaptering-design.md` before it's implemented |
 | [#35](https://github.com/dhk/work-ledger/issues/35) ✅ | `miso` — run chapters + reports end-to-end in one command, with `--check-status` and graceful degradation | — |
 
 ## Practice visibility — Show, shipped

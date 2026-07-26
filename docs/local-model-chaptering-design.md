@@ -1,6 +1,12 @@
 # Design: Pluggable Chaptering Backend (Local Models)
 
-Status: proposed, not yet built.
+Status: **Architecture section implemented** (#16) - `ChapterBackend`
+Protocol, `BackendResponse`, `AnthropicBackend` (default, zero behavior
+change), and `OllamaBackend` (opt-in, local-only) all exist in
+`work_ledger/chapters.py`, config surface as sketched below. **"Unfreezing
+chapters" is still proposed, not built** - Open question 1 is deliberately
+left open for the repo owner's call; nothing in the frozen-prefix cache
+changed for either backend. Open questions 2-5 are unaffected/unresolved.
 Author: written by Claude, from a design conversation with the repo owner.
 Related: `docs/session-chaptering-design.md` (the chaptering feature this
 extends - read that first), `work_ledger/chapters.py`, PR #14 (chapter
@@ -202,9 +208,16 @@ is a one-time setup decision, not a per-invocation one:
 WORK_LEDGER_CHAPTER_BACKEND=ollama        # default: anthropic
 WORK_LEDGER_CHAPTER_MODEL=qwen2.5:14b     # backend-specific model name
 OLLAMA_HOST=http://localhost:11434        # default if unset
+WORK_LEDGER_OLLAMA_MAX_TOKENS=4096        # added during implementation - see below
 
 work-ledger chapters                      # uses the configured backend transparently
 ```
+
+**Implementation note:** `WORK_LEDGER_OLLAMA_MAX_TOKENS` wasn't in the
+original sketch above but was added alongside `OllamaBackend` to make the
+"Latency implications" section's lower max-tokens ceiling actually
+configurable (default `4096`, vs. the hosted `MAX_TOKENS=16000`) rather
+than hardcoding one number for all local hardware/models.
 
 ## Migration / compatibility
 

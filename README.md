@@ -217,6 +217,39 @@ this tool uses — no new cost math, just a grouping label on top.
   server (invalid/revoked) get distinctly worded messages, so you know
   whether to set a key or check an existing one, rather than one generic
   "chaptering call failed" for both.
+- **Optional local backend (Ollama), so session content never has to leave
+  the machine.** Set `WORK_LEDGER_CHAPTER_BACKEND=ollama` (default:
+  `anthropic`) to chapter against a local [Ollama](https://ollama.com)
+  server instead of the hosted API — no `ANTHROPIC_API_KEY` needed, and
+  cost is always `$0.0` (wall-clock time is shown in its place, since a
+  local pass isn't free of overhead). Configure with:
+  - `WORK_LEDGER_CHAPTER_MODEL` — the model name as pulled into Ollama
+    (e.g. `qwen2.5:14b`), required for this backend.
+  - `OLLAMA_HOST` — defaults to `http://localhost:11434`.
+  - `WORK_LEDGER_OLLAMA_MAX_TOKENS` — output-token ceiling for the local
+    call (default `4096`, lower than the hosted backend's 16000, since a
+    long generation can take minutes rather than seconds on modest local
+    hardware).
+
+  Requires the optional `ollama` PyPI package: `pip install
+  "work-ledger[local-chapters]"`. If that package isn't installed, or the
+  local server isn't reachable, chaptering fails with a specific message
+  and falls back to "Unsorted" — it never silently falls back to the
+  Anthropic backend instead. A smaller local model is meaningfully more
+  likely to violate the chapter-partition constraint than Haiku, so seeing
+  "Unsorted" more often is expected, not a bug — see
+  `docs/local-model-chaptering-design.md`'s "Reliability implications".
+
+  No specific local model is benchmarked or recommended here yet — **Qwen
+  2.5 14B** and **Llama 3.1** (8B or larger) are reasonable, untested
+  starting points if you want to try this out, not a vetted
+  recommendation (see the design doc's open question on quality vs.
+  Haiku 4.5, which hasn't been evaluated against real sessions).
+
+  The frozen-prefix caching behavior below is identical for both backends
+  — using Ollama does not change when/whether a chapter gets revised;
+  that's a separate, still-open design question (see the design doc's
+  "Unfreezing chapters").
 - **Results are cached and frozen.** A `<session-id>.chapters.json` file
   next to the transcript remembers what's already been chaptered.
   Re-running only chapters newly-added prompts; it never re-pays for or
