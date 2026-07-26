@@ -822,3 +822,138 @@ def test_run_miso_all_reuses_chapters_all_and_skips_reports(isolated_transcripts
     out = capsys.readouterr().out
     assert "work-ledger chapters --all" in out
     assert "aren't generated in --all mode" in out
+
+
+def test_run_rollup_clusters_across_sessions_json(isolated_transcripts_root, capsys):
+    from work_ledger.chapters import _save_cache
+
+    proj1 = isolated_transcripts_root / "proj1"
+    proj1.mkdir()
+    proj2 = isolated_transcripts_root / "proj2"
+    proj2.mkdir()
+
+    path_a = proj1 / "session-a.jsonl"
+    path_b = proj2 / "session-b.jsonl"
+    write_jsonl(
+        path_a,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    write_jsonl(
+        path_b,
+        [
+            user_entry("p2", "fix it again"),
+            *assistant_lines("m2", "claude-haiku-4-5", {"input_tokens": 2000, "output_tokens": 400}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(
+        path_a,
+        ["p1"],
+        [Chapter(title="Fix the double-counting bug", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        ["p2"],
+        [Chapter(title="fix double counting bug", sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+
+    cli.run_rollup(as_json=True)
+
+    out_json = capsys.readouterr().out
+    import json
+
+    data = json.loads(out_json)
+    assert len(data) == 1
+    # Which session's exact-case spelling wins as the display title depends
+    # on find_all_transcripts()'s mtime order (both sessions are written in
+    # this test at effectively the same instant) - both are valid, only the
+    # normalized clustering itself is asserted to be deterministic.
+    assert data[0]["title"] in ("Fix the double-counting bug", "fix double counting bug")
+    assert data[0]["num_sessions"] == 2
+    assert data[0]["num_chapters"] == 2
+    assert sorted(data[0]["sessions"]) == sorted([path_a.stem, path_b.stem])
+    assert data[0]["cost_usd"] > 0
+
+
+def test_run_rollup_no_transcripts_exits(isolated_transcripts_root, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.run_rollup()
+    assert exc_info.value.code == 1
+    assert "No session transcripts found" in capsys.readouterr().out
+
+
+def test_run_rollup_no_cached_chapters_prints_hint(isolated_transcripts_root, capsys):
+    proj = isolated_transcripts_root / "proj1"
+    proj.mkdir()
+    path = proj / "session-a.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "do something"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    # No .chapters.json cache written for this session at all.
+
+    cli.run_rollup()
+
+    out = capsys.readouterr().out
+    assert "No cached chapters found" in out
+    assert "chapters --all" in out
+
+
+def test_run_rollup_since_filters_out_older_sessions(isolated_transcripts_root, capsys):
+    import os
+    from datetime import date, datetime, timedelta
+
+    from work_ledger.chapters import _save_cache
+
+    proj = isolated_transcripts_root / "proj1"
+    proj.mkdir()
+    path = proj / "session-a.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "old work"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path, ["p1"], [Chapter(title="Old initiative", sections=[Section(title="s", prompt_ids=["p1"])])])
+
+    old_date = date.today() - timedelta(days=30)
+    old_time = datetime(old_date.year, old_date.month, old_date.day).timestamp()
+    os.utime(path, (old_time, old_time))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.run_rollup(since=date.today() - timedelta(days=1))
+    assert exc_info.value.code == 1
+    assert "No session transcripts found in that date range" in capsys.readouterr().out
+
+
+def test_run_rollup_table_shows_grand_total(isolated_transcripts_root, capsys):
+    from work_ledger.chapters import _save_cache
+
+    proj = isolated_transcripts_root / "proj1"
+    proj.mkdir()
+    path = proj / "session-a.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path, ["p1"], [Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])])
+
+    cli.run_rollup()
+
+    out = capsys.readouterr().out
+    assert "work-ledger rollup" in out
+    # rich may wrap "GRAND TOTAL" across two lines in capsys's non-tty
+    # narrow rendering (see the same caveat in test_run_miso_* above) -
+    # check both words landed rather than the exact joined substring.
+    assert "GRAND" in out
+    assert "TOTAL" in out
+    assert "Fix the bug" in out

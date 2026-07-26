@@ -106,6 +106,10 @@ work-ledger waste                                 # within-session waste mining 
 work-ledger waste --json                               # machine-readable output
 work-ledger waste --report                             # same visual style as chapters --report, as HTML
 work-ledger waste --report --format png --out x.png     # same, as a PNG image
+
+work-ledger rollup                                # cluster the same recurring initiative's chapters across every session, total cost
+work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date range
+work-ledger rollup --json                              # machine-readable output
 ```
 
 By default, cost/tokens are shown per prompt turn (one row per message you
@@ -491,6 +495,46 @@ first. Cross-session correlation (the same pattern recurring across
 [issue #3](https://github.com/dhk/work-ledger/issues/3)'s cross-session
 clustering and may ship independently later.
 
+## Rollup (cross-session, experimental)
+
+```
+work-ledger rollup                                         # total cost per recurring initiative, across every session
+work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date range
+work-ledger rollup --json                                  # machine-readable output
+```
+
+`chapters --all` already lists every session side by side with its own
+chapters, but each session's chapters stay siloed — there's no way to
+answer "how much has 'Fix the double-counting bug' cost in total, across
+every session it touched" from that flat list alone. `rollup` answers
+exactly that ([issue #3](https://github.com/dhk/work-ledger/issues/3)):
+it clusters chapter titles that recur across sessions and sums cost per
+cluster, sorted most-expensive-first.
+
+- **Clustering is deterministic title normalization, not an LLM or
+  embedding pass.** Titles are lowercased, punctuation/whitespace
+  collapsed, a short stopword list stripped, and lightly stemmed
+  (plurals only); two titles that reduce to the same normalized string
+  are treated as one initiative. This is the same call
+  [issue #5](https://github.com/dhk/work-ledger/issues/5)'s
+  subagent-matching (`waste`) already made for a similar "near-identical"
+  matching problem — no second paid API surface until simple matching is
+  actually proven too weak. Genuinely-reworded titles ("Fix the
+  double-counting bug" vs. "resolve the cost overcount issue") won't
+  match — an accepted false-negative tradeoff for staying local/free/
+  deterministic; see `work_ledger/rollup.py`'s module docstring and
+  `tests/test_rollup.py` for the tradeoffs found validating this.
+- **`Unsorted` chapters are excluded from clustering** — chaptering's own
+  fallback label isn't a real initiative, and matching two sessions'
+  unrelated fallback chapters together would be a pure false positive.
+- **Never triggers a new chaptering pass.** Only whatever's already
+  cached per session is clustered — run `chapters`/`chapters --all` first
+  for any session you want reflected here; uncached sessions are called
+  out explicitly rather than silently under-counted.
+- **No default date window** (unlike `trend`/`timeline`'s 30-day
+  default): the point of a rollup is a true total across every session an
+  initiative touched, not a recent slice.
+
 ## Pattern library (opt-in, experimental)
 
 ```
@@ -599,10 +643,17 @@ works (tool/skill/subagent and chapter-category mix over time) rather
 than what it cost, with an explicit `timeline backfill` step to complete
 its category panel rather than paying for chaptering silently.
 
-Not yet done: cross-session/historical rollup (only watches one transcript
-at a time, though `timeline` re-derives across all of them on each run
-rather than persisting anything — see `docs/show-tell-do-model.md`);
-Sonnet 5 introductory pricing isn't modeled (runs a little high
+`rollup` adds a cross-session view on top of that: total cost per
+recurring initiative, clustered across every session it touched via
+deterministic title normalization (v1 — see "Rollup" above and
+[issue #3](https://github.com/dhk/work-ledger/issues/3)), not yet an
+LLM/embedding pass. Still no persisted cross-session history store
+(`docs/show-tell-do-model.md`'s open question, tracked as
+[issue #42](https://github.com/dhk/work-ledger/issues/42)) — `rollup`,
+like `timeline`/`trend`/`chapters --all`, re-derives from transcripts
+fresh on every run rather than reading anything persisted.
+
+Not yet done: Sonnet 5 introductory pricing isn't modeled (runs a little high
 until 2026-08-31); chapter granularity for very short sessions is left
 entirely to the model's judgment (see open question in the design doc);
 `recommend`'s corpus-relative dimension depends on `export` actually
@@ -632,8 +683,10 @@ helpers `timeline` relies on), `export.py`, `recommend.py`, `waste.py`
 (repeated-read/repeated-subagent detection, chapter-vs-whole-session
 scoping, the normalized-exact subagent-description match), `limits.py`,
 `timeline.py` (day-bucketing, category-mix, top-label ranking),
-`trend.py` (day/week cost-bucketing, unknown-model-cost flagging), and
-`cli.py`'s pure helper functions.
+`trend.py` (day/week cost-bucketing, unknown-model-cost flagging),
+`rollup.py` (title normalization/stemming, cross-session clustering,
+`Unsorted`-exclusion, cost/session/chapter rollup), and `cli.py`'s pure
+helper functions.
 
 CI (`.github/workflows/ci.yml`) runs the suite with `pytest-cov` and a
 `--cov-fail-under` gate set from what the suite actually measures (not a

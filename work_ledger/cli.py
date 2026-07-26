@@ -33,6 +33,7 @@ from work_ledger.limits import (
 from work_ledger import pattern_client
 from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns, patterns_for_rule
 from work_ledger.recommend import generate_recommendations
+from work_ledger.rollup import build_rollup
 from work_ledger.session_pin import clear_pinned_session, get_pinned_session, set_pinned_session
 from work_ledger.timeline import DEFAULT_WINDOW_DAYS, build_timeline, top_activity_labels, top_category_labels
 from work_ledger.trend import BUCKET_SIZES, build_trend
@@ -984,6 +985,94 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
             f"[yellow]Warning: {total_skipped_sidechain} inlined subagent (isSidechain) "
             "entries were skipped across these sessions - their cost may be an "
             'undercount. See README\'s "Known limitation on subagent attribution".[/yellow]'
+        )
+
+
+def run_rollup(since: date | None = None, until: date | None = None, as_json: bool = False):
+    """Cluster the same recurring initiative's chapters across every
+    session it touched and total its cost - issue #3. Unlike `chapters
+    --all`'s flat per-session listing, this answers "how much has 'Fix
+    the double-counting bug' cost in total" directly, by matching
+    normalized chapter titles across sessions (see rollup.py's module
+    docstring for exactly how, and why that's deterministic-only for v1,
+    not an LLM/embedding pass).
+
+    Reuses whatever chapters are already cached for each session in
+    range - never triggers a new chaptering pass itself, so running this
+    costs nothing beyond having already run `chapters`/`chapters --all`
+    at some point. No default date window (unlike `trend`/`timeline`):
+    the whole point of a rollup is a true total across every session an
+    initiative touched, not a recent slice."""
+    console = Console()
+    transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
+    if not transcripts:
+        range_note = " in that date range" if (since or until) else ""
+        console.print(f"[red]No session transcripts found{range_note}.[/red]")
+        sys.exit(1)
+
+    clusters = build_rollup(transcripts)
+    uncached = sum(1 for p in transcripts if not cached_chapters(p))
+
+    if not clusters:
+        console.print(
+            "[yellow]No cached chapters found across these sessions.[/yellow] Run "
+            "`work-ledger chapters --all` first (small Anthropic API cost) to chapter them."
+        )
+        return
+
+    if as_json:
+        import json
+
+        data = [
+            {
+                "title": c.display_title,
+                "num_sessions": c.num_sessions,
+                "num_chapters": c.num_chapters,
+                "sessions": c.sessions,
+                "cost_usd": c.cost_usd,
+                "unknown_model_cost": c.unknown_model_cost,
+            }
+            for c in clusters
+        ]
+        console.print_json(json.dumps(data))
+        return
+
+    console.print(
+        f"[dim]Clustering chapters across {len(transcripts)} session(s) found under "
+        "~/.claude/projects/, using whatever's already cached (never re-chapters).[/dim]\n"
+    )
+
+    table = Table(title="work-ledger rollup", expand=True)
+    table.add_column("Initiative", ratio=2, overflow="ellipsis")
+    table.add_column("Sessions", justify="right", width=9)
+    table.add_column("Chapters", justify="right", width=9)
+    table.add_column("Cost (est.)", justify="right", width=12)
+
+    grand_total_cost = 0.0
+    any_unknown = False
+    for c in clusters:
+        any_unknown = any_unknown or c.unknown_model_cost
+        grand_total_cost += c.cost_usd
+        table.add_row(
+            c.display_title,
+            str(c.num_sessions),
+            str(c.num_chapters),
+            _turn_cost_str(c.cost_usd, c.unknown_model_cost),
+        )
+
+    unknown_note = " (some models unpriced)" if any_unknown else ""
+    table.add_section()
+    table.add_row(
+        "",
+        "",
+        Text("GRAND TOTAL", style="bold"),
+        Text(f"${grand_total_cost:.4f}{unknown_note}", style="bold green"),
+    )
+    console.print(table)
+    if uncached:
+        console.print(
+            f"[dim]{uncached} of {len(transcripts)} session(s) have no cached chapters yet and "
+            "aren't reflected above - run `work-ledger chapters --all` to include them.[/dim]"
         )
 
 
@@ -2152,6 +2241,32 @@ def main():
         help="Output file path for --report (default: work-ledger-trend-<date>.<format>)",
     )
 
+    rollup_parser = subparsers.add_parser(
+        "rollup",
+        help="Cluster the same recurring initiative's chapters across every session it "
+        "touched and total its cost (issue #3) - unlike `chapters --all`'s flat per-session "
+        "list, answers \"how much has X cost in total\" directly. Uses deterministic title-"
+        "normalization matching, not an LLM/embedding pass (see rollup.py). Reuses already-"
+        "cached chapters only - never triggers a new chaptering pass",
+    )
+    rollup_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/after this date (YYYY-MM-DD)",
+    )
+    rollup_parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="Only include sessions last modified on/before this date (YYYY-MM-DD)",
+    )
+    rollup_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable output instead of a terminal table",
+    )
+
     export_parser = subparsers.add_parser(
         "export",
         help="Write an anonymized, manual usage export (aggregates + chapter-category rollups "
@@ -2341,6 +2456,12 @@ def main():
             report_format=args.format,
             report_out=args.out,
         )
+        return
+
+    if args.command == "rollup":
+        since = _parse_date_arg(args.since, "--since") if args.since else None
+        until = _parse_date_arg(args.until, "--until") if args.until else None
+        run_rollup(since=since, until=until, as_json=args.json)
         return
 
     if args.command == "export":
