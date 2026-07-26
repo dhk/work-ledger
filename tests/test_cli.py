@@ -589,6 +589,136 @@ def test_run_waste_report_writes_well_formed_html(transcript_path, capsys, tmp_p
     assert "/repo/foo.py" in html
 
 
+# --- run_waste_cross_session: the #5 half that depends on #3 ------------
+
+
+def test_run_waste_cross_session_no_transcripts_exits(isolated_transcripts_root, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli.run_waste_cross_session()
+    assert exc_info.value.code == 1
+    assert "No session transcripts found" in capsys.readouterr().out
+
+
+def test_run_waste_cross_session_json_output(isolated_transcripts_root, capsys):
+    from work_ledger.chapters import _save_cache
+
+    proj1 = isolated_transcripts_root / "proj1"
+    proj1.mkdir()
+    proj2 = isolated_transcripts_root / "proj2"
+    proj2.mkdir()
+
+    path_a = proj1 / "session-a.jsonl"
+    path_b = proj2 / "session-b.jsonl"
+    write_jsonl(
+        path_a,
+        [
+            user_entry("p1", "read a file"),
+            *assistant_lines(
+                "m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+                [{"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/foo.py"}, "id": "t1"}],
+            ),
+        ],
+    )
+    write_jsonl(
+        path_b,
+        [
+            user_entry("p2", "read it again"),
+            *assistant_lines(
+                "m2", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+                [{"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/foo.py"}, "id": "t2"}],
+            ),
+        ],
+    )
+    _save_cache(
+        path_a,
+        ["p1"],
+        [Chapter(title="Fix the double-counting bug", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        ["p2"],
+        [Chapter(title="fix double counting bug", sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+
+    cli.run_waste_cross_session(as_json=True)
+
+    import json
+
+    data = json.loads(capsys.readouterr().out)
+    assert len(data) == 1
+    assert data[0]["kind"] == "repeated-read"
+    assert data[0]["label"] == "/repo/foo.py"
+    assert data[0]["occurrences"] == 2
+    assert data[0]["num_sessions"] == 2
+    assert data[0]["cost_usd"] > 0
+
+
+def test_run_waste_cross_session_table_shows_pattern(isolated_transcripts_root, capsys):
+    from work_ledger.chapters import _save_cache
+
+    proj1 = isolated_transcripts_root / "proj1"
+    proj1.mkdir()
+    proj2 = isolated_transcripts_root / "proj2"
+    proj2.mkdir()
+
+    path_a = proj1 / "session-a.jsonl"
+    path_b = proj2 / "session-b.jsonl"
+    write_jsonl(
+        path_a,
+        [
+            user_entry("p1", "read a file"),
+            *assistant_lines(
+                "m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+                [{"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}, "id": "t1"}],
+            ),
+        ],
+    )
+    write_jsonl(
+        path_b,
+        [
+            user_entry("p2", "read it again"),
+            *assistant_lines(
+                "m2", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 500},
+                [{"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}, "id": "t2"}],
+            ),
+        ],
+    )
+    _save_cache(
+        path_a,
+        ["p1"],
+        [Chapter(title="Fix the double-counting bug", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        ["p2"],
+        [Chapter(title="fix double counting bug", sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+
+    cli.run_waste_cross_session()
+
+    out = capsys.readouterr().out
+    assert "a.py" in out
+    assert "TOTAL flagged" in out
+    assert "not what to do about it" in out
+
+
+def test_run_waste_cross_session_no_patterns_message(isolated_transcripts_root, capsys):
+    proj = isolated_transcripts_root / "proj1"
+    proj.mkdir()
+    path = proj / "session-a.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "do something"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+
+    cli.run_waste_cross_session()
+
+    assert "No repeated patterns found" in capsys.readouterr().out
+
+
 # --- build_session_rows: duration, tokens, summary ----------------------
 
 
