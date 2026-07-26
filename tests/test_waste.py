@@ -1,9 +1,10 @@
-from work_ledger.chapters import Chapter, Section
+from work_ledger.chapters import Chapter, Section, UNSORTED_TITLE, _save_cache
 from work_ledger.transcript import TranscriptTailer, Turn, Unit
 from work_ledger.waste import (
     REPEATED_READ,
     REPEATED_SUBAGENT,
     UNCHAPTERED_SCOPE,
+    find_cross_session_waste_patterns,
     find_repeated_reads,
     find_repeated_subagents,
     find_waste_patterns,
@@ -267,3 +268,203 @@ def test_find_waste_patterns_no_chapters_still_detects_with_whole_session_scope(
     patterns = find_waste_patterns(tailer, chapters=[])
     assert len(patterns) == 1
     assert patterns[0].scope == UNCHAPTERED_SCOPE
+
+
+# --- Cross-session waste mining (the #5 half that depends on #3) ----------
+
+
+def _write_cross_session(path, prompt_id, blocks, timestamp="2026-07-01T10:00:00Z"):
+    entries = [user_entry(prompt_id, "do work", timestamp)]
+    entries += assistant_lines(
+        f"m-{prompt_id}",
+        "claude-haiku-4-5",
+        {"input_tokens": 1000, "output_tokens": 500},
+        blocks,
+        timestamp,
+    )
+    write_jsonl(path, entries)
+
+
+def _read_blocks(file_path):
+    return [{"type": "tool_use", "name": "Read", "input": {"file_path": file_path}, "id": "t1"}]
+
+
+def test_cross_session_repeated_read_flagged_across_sessions_of_same_initiative(tmp_path):
+    path_a = tmp_path / "session-a.jsonl"
+    path_b = tmp_path / "session-b.jsonl"
+    _write_cross_session(path_a, "p1", _read_blocks("/repo/foo.py"))
+    _write_cross_session(path_b, "p2", _read_blocks("/repo/foo.py"))
+
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title="Fix the double-counting bug", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        chaptered_ids=["p2"],
+        chapters=[Chapter(title="fix double counting bug", sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+
+    patterns = find_cross_session_waste_patterns([path_a, path_b])
+    assert len(patterns) == 1
+    p = patterns[0]
+    assert p.kind == REPEATED_READ
+    assert p.initiative == "Fix the double-counting bug"
+    assert p.label == "/repo/foo.py"
+    assert p.occurrences == 2
+    assert p.num_sessions == 2
+    assert p.cost_usd > 0
+
+
+def test_cross_session_single_session_repeat_not_flagged(tmp_path):
+    """A file read twice within one session is already fully covered by
+    find_waste_patterns - surfacing it again here (spanning only 1 session)
+    would be a duplicate, not new information."""
+    path_a = tmp_path / "session-a.jsonl"
+    _write_cross_session(path_a, "p1", _read_blocks("/repo/foo.py"))
+
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+
+    assert find_cross_session_waste_patterns([path_a]) == []
+
+
+def test_cross_session_unrelated_initiatives_not_merged(tmp_path):
+    path_a = tmp_path / "session-a.jsonl"
+    path_b = tmp_path / "session-b.jsonl"
+    _write_cross_session(path_a, "p1", _read_blocks("/repo/foo.py"))
+    _write_cross_session(path_b, "p2", _read_blocks("/repo/foo.py"))
+
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title="Fix the login bug", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        chaptered_ids=["p2"],
+        chapters=[Chapter(title="Build the v1 dashboard", sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+
+    assert find_cross_session_waste_patterns([path_a, path_b]) == []
+
+
+def test_cross_session_uncached_session_contributes_nothing(tmp_path):
+    """A session with no cached chapters at all can't be attributed to any
+    initiative - matches rollup.py's own "run chapters first" precedent."""
+    path_a = tmp_path / "session-a.jsonl"
+    path_b = tmp_path / "session-b.jsonl"
+    _write_cross_session(path_a, "p1", _read_blocks("/repo/foo.py"))
+    _write_cross_session(path_b, "p2", _read_blocks("/repo/foo.py"))
+
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    # path_b deliberately never chaptered.
+
+    assert find_cross_session_waste_patterns([path_a, path_b]) == []
+
+
+def test_cross_session_unsorted_chapters_excluded(tmp_path):
+    """UNSORTED_TITLE is chaptering's own fallback label, not a real
+    initiative - two sessions' unrelated Unsorted chapters must not be
+    treated as the same recurring pattern, same exclusion rollup.py makes."""
+    path_a = tmp_path / "session-a.jsonl"
+    path_b = tmp_path / "session-b.jsonl"
+    _write_cross_session(path_a, "p1", _read_blocks("/repo/foo.py"))
+    _write_cross_session(path_b, "p2", _read_blocks("/repo/foo.py"))
+
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title=UNSORTED_TITLE, sections=[Section(title=UNSORTED_TITLE, prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        chaptered_ids=["p2"],
+        chapters=[Chapter(title=UNSORTED_TITLE, sections=[Section(title=UNSORTED_TITLE, prompt_ids=["p2"])])],
+    )
+
+    assert find_cross_session_waste_patterns([path_a, path_b]) == []
+
+
+def test_cross_session_repeated_subagent_across_sessions(tmp_path):
+    path_a = tmp_path / "session-a.jsonl"
+    path_b = tmp_path / "session-b.jsonl"
+    subagent_blocks = [{"type": "tool_use", "name": "Task", "input": {"description": "research the API"}, "id": "t1"}]
+    _write_cross_session(path_a, "p1", subagent_blocks)
+    _write_cross_session(path_b, "p2", subagent_blocks)
+
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title="Research the widget API", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        chaptered_ids=["p2"],
+        chapters=[Chapter(title="research widget api", sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+
+    patterns = find_cross_session_waste_patterns([path_a, path_b])
+    assert len(patterns) == 1
+    p = patterns[0]
+    assert p.kind == REPEATED_SUBAGENT
+    assert p.num_sessions == 2
+    assert p.occurrences == 2
+
+
+def test_cross_session_no_transcripts_returns_empty():
+    assert find_cross_session_waste_patterns([]) == []
+
+
+def test_cross_session_sorted_by_cost_descending(tmp_path):
+    path_a = tmp_path / "session-a.jsonl"
+    path_b = tmp_path / "session-b.jsonl"
+    path_c = tmp_path / "session-c.jsonl"
+    path_d = tmp_path / "session-d.jsonl"
+
+    _write_cross_session(path_a, "p1", _read_blocks("/repo/foo.py"))
+    _write_cross_session(path_b, "p2", _read_blocks("/repo/foo.py"))
+    subagent_blocks = [
+        {
+            "type": "tool_use",
+            "name": "Task",
+            "input": {"description": "research the API"},
+            "id": "t1",
+        }
+    ]
+    _write_cross_session(path_c, "p3", subagent_blocks)
+    _write_cross_session(path_d, "p4", subagent_blocks)
+
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        chaptered_ids=["p2"],
+        chapters=[Chapter(title="fix bug", sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+    _save_cache(
+        path_c,
+        chaptered_ids=["p3"],
+        chapters=[Chapter(title="Research the API", sections=[Section(title="s", prompt_ids=["p3"])])],
+    )
+    _save_cache(
+        path_d,
+        chaptered_ids=["p4"],
+        chapters=[Chapter(title="research api", sections=[Section(title="s", prompt_ids=["p4"])])],
+    )
+
+    patterns = find_cross_session_waste_patterns([path_a, path_b, path_c, path_d])
+    assert len(patterns) == 2
+    costs = [p.cost_usd for p in patterns]
+    assert costs == sorted(costs, reverse=True)

@@ -11,7 +11,7 @@ Staging follows the show/tell/do rubric in `CLAUDE.md` (full writeup:
 the narrative synthesis on top, refreshed when a theme's shape actually
 changes — not mechanically re-synced on every issue edit.
 
-**Current focus:** the practice-visibility theme is now fully shipped (#44 timeline, #43 web UI), the cost/usage theme picked up a time-series view (#4 trend), an end-to-end orchestration command (#35 `miso`), cross-session initiative rollup (#3, `work-ledger rollup`), and the within-session half of waste mining (#5, `work-ledger waste`) - #3 shipping also unblocks #5's cross-session half, though that half hasn't been started. The quality/infra batch (#45-48) is closed out. #16's backend-abstraction half also shipped (`AnthropicBackend`/`OllamaBackend`), leaving its unfreeze-policy half open pending the repo owner's call. Nothing designated as current focus yet - next candidates are #42 (history store), #5's cross-session half (now unblocked by #3), #16's unfreeze-policy decision, or the remaining Tell-stage work (#19).
+**Current focus:** the practice-visibility theme is now fully shipped (#44 timeline, #43 web UI), the cost/usage theme picked up a time-series view (#4 trend), an end-to-end orchestration command (#35 `miso`), cross-session initiative rollup (#3, `work-ledger rollup`), and waste mining is now fully shipped both within-session and cross-session (#5, `work-ledger waste`/`waste --cross-session`) - the cross-session half reuses #3's clustering to compare "the same pattern" across every session of a recurring initiative. The quality/infra batch (#45-48) is closed out, and #42's local session history store shipped as additive infrastructure. #16's backend-abstraction half also shipped (`AnthropicBackend`/`OllamaBackend`), leaving its unfreeze-policy half open pending the repo owner's call. Nothing designated as current focus yet - next candidates are #6 (deliberately still pending #5's evidence accumulating from real usage), #16's unfreeze-policy decision, or the remaining Tell-stage work (#19).
 
 ## Cost/usage reporting — Show, core shipped
 
@@ -24,7 +24,7 @@ below in this theme extends that core rather than replacing it.
 |---|---|---|
 | [#3](https://github.com/dhk/work-ledger/issues/3) ✅ | **Cross-session rollup** — cluster the same initiative across sessions by deterministic title normalization, total cost per cluster (`work-ledger rollup`); v1 deliberately skips an LLM/embedding matching pass, see rollup.py | Shipped; did not block on #42 |
 | [#4](https://github.com/dhk/work-ledger/issues/4) ✅ | **Trend view** — cost bucketed by day/week across all sessions (`work-ledger trend`) | Shipped; did not block on #42 |
-| [#5](https://github.com/dhk/work-ledger/issues/5) | Recurring-pattern/waste mining across chapters and sessions | Within-session half shipped (`work-ledger waste`: repeated file reads, repeated near-identical subagent dispatches, scoped to session/chapter); the cross-session half is now unblocked by #3 but not yet started |
+| [#5](https://github.com/dhk/work-ledger/issues/5) ✅ | **Recurring-pattern/waste mining** — repeated file reads, repeated near-identical subagent dispatches, within one session/chapter (`work-ledger waste`) and across every session of the same recurring initiative (`work-ledger waste --cross-session`, via #3's clustering) | Shipped, both halves |
 | [#16](https://github.com/dhk/work-ledger/issues/16) | Pluggable local-model chaptering backend (Ollama) + unfreeze chapters | Backend half shipped: `ChapterBackend`/`AnthropicBackend`/`OllamaBackend`, `WORK_LEDGER_CHAPTER_BACKEND` config; frozen-prefix cache deliberately untouched for either backend. Unfreeze-policy half still open — needs the repo owner's call on Option A/B/C in `docs/local-model-chaptering-design.md` before it's implemented |
 | [#35](https://github.com/dhk/work-ledger/issues/35) ✅ | `miso` — run chapters + reports end-to-end in one command, with `--check-status` and graceful degradation | — |
 
@@ -38,7 +38,7 @@ flag-driven.
 |---|---|---|
 | [#44](https://github.com/dhk/work-ledger/issues/44) ✅ | **Timeline view** — tool/skill/subagent/approach mix over time (`work-ledger timeline`/`timeline backfill`) | Shipped; did not block on #42 |
 | [#43](https://github.com/dhk/work-ledger/issues/43) ✅ | **Local web UI** — `work-ledger serve`, browse sessions/chapters as a page | Shipped; reused `report.py`'s visual system |
-| [#42](https://github.com/dhk/work-ledger/issues/42) | Local session history store | Backs #3/#4/#5 and periodic runs — still open, not needed by #44/#43 |
+| [#42](https://github.com/dhk/work-ledger/issues/42) ✅ | **Local session history store** — sqlite store with incremental, mtime-gated sync (`history.py`) | Shipped; additive infrastructure for future cross-session features, not yet read by #3/#4/#5/#44/#43 |
 
 ## Recommendations — Tell, started, thin
 

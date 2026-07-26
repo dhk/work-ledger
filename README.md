@@ -106,6 +106,7 @@ work-ledger waste                                 # within-session waste mining 
 work-ledger waste --json                               # machine-readable output
 work-ledger waste --report                             # same visual style as chapters --report, as HTML
 work-ledger waste --report --format png --out x.png     # same, as a PNG image
+work-ledger waste --cross-session                      # same pattern kinds, across every session of the same initiative
 
 work-ledger rollup                                # cluster the same recurring initiative's chapters across every session, total cost
 work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date range
@@ -523,18 +524,22 @@ instead), and found no signal either way for the second. A corpus-relative
 dimension ("compared to other users' bug-fix chapters") is future work
 that depends on `export` above actually accumulating a corpus first.
 
-## Waste mining (within-session, experimental)
+## Waste mining (within-session and cross-session, experimental)
 
 ```
 work-ledger waste                                       # flag repeated within-session patterns and their cost
 work-ledger waste --json                                # machine-readable output
 work-ledger waste --report                              # same visual style as chapters --report, as HTML
 work-ledger waste --report --format png --out x.png      # same, as a PNG image
+
+work-ledger waste --cross-session                        # same pattern kinds, across every session of the same initiative
+work-ledger waste --cross-session --since 2026-07-01     # limit the cross-session sweep to a date range
+work-ledger waste --cross-session --json                 # machine-readable output
 ```
 
 `work-ledger` can tell you *what* something cost; `waste` starts answering
-*whether it was wasteful, and whether it keeps happening* — within one
-session, for now (see [issue #5](https://github.com/dhk/work-ledger/issues/5)).
+*whether it was wasteful, and whether it keeps happening*
+(see [issue #5](https://github.com/dhk/work-ledger/issues/5)).
 Like `activity`, it's Show-stage: read-only, no API call, no chaptering
 required. It flags two recurring patterns and reports "this happened N
 times, costing $X total" for each:
@@ -549,19 +554,31 @@ times, costing $X total" for each:
   comparison — no embedding/LLM call, no new paid dependency) dispatched
   more than once.
 
-If this session already has cached chapters (from a prior `work-ledger
-chapters` run — `waste` never triggers that pass itself), each pattern is
-scoped to the chapter it fell in rather than just the whole session;
-without cached chapters, everything is scoped to "whole session."
+Plain `waste` looks within one session. If that session already has cached
+chapters (from a prior `work-ledger chapters` run — `waste` never triggers
+that pass itself), each pattern is scoped to the chapter it fell in rather
+than just the whole session; without cached chapters, everything is
+scoped to "whole session."
 
-**Deliberately not prescriptive.** `waste` surfaces the pattern and its
-cost and stops there — it doesn't suggest what to do about it, that's
-[issue #6](https://github.com/dhk/work-ledger/issues/6), which is
-explicitly blocked on this command surfacing real, recurring evidence
-first. Cross-session correlation (the same pattern recurring across
-*separate* sessions) is out of scope here too — it depends on
-[issue #3](https://github.com/dhk/work-ledger/issues/3)'s cross-session
-clustering and may ship independently later.
+**`--cross-session` looks across every session of the same recurring
+initiative**, using [issue #3](https://github.com/dhk/work-ledger/issues/3)'s
+deterministic title-normalization clustering to decide what counts as
+"the same initiative" in the first place — the same file re-read across
+three unrelated sessions is a coincidence, not a pattern, unless those
+three sessions are actually the same ongoing initiative. It only reads
+chapters already cached (never triggers a chaptering pass, same as
+`rollup`), and only reports a pattern once it spans 2+ distinct sessions —
+a repeat confined to one session is already fully covered by plain
+`waste`, so it isn't reported twice. Can't be combined with
+`--transcript`/`--session`/`--report`; use `--since`/`--until` to limit
+the sweep, same as `rollup`.
+
+**Deliberately not prescriptive**, for both halves. `waste` surfaces the
+pattern and its cost and stops there — it doesn't suggest what to do
+about it, that's [issue #6](https://github.com/dhk/work-ledger/issues/6),
+which stays deliberately blocked until real, recurring evidence has
+accumulated from actual usage of this command, not just a design opinion
+about what the tool likely reveals.
 
 ## Rollup (cross-session, experimental)
 

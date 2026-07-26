@@ -149,6 +149,8 @@ stops; there is no fifth network call hiding behind it.
 | `history.py` | Local sqlite session-history store (`~/.config/work-ledger/history.db`); incremental, mtime-gated sync - additive, not yet read by anything else (#42) |
 | `timeline.py` | Day-bucketing `activity.py`'s categorization plus cached chapter categories - how practice changed over time, not what it cost |
 | `trend.py` | Day/week-bucketing `Turn.cost_usd` - is spend trending up or down, the cost axis `timeline.py` deliberately excludes |
+| `rollup.py` | Clustering chapters into recurring initiatives across sessions by deterministic title normalization, and summing cost per cluster (#3) - reads only already-cached chapters, never triggers a chaptering pass |
+| `waste.py` | Flagging repeated-read/repeated-subagent patterns and their cost, within one session/chapter and (via `rollup.py`'s clustering) across every session of the same initiative (#5) - Show-stage, not prescriptive (that's #6) |
 | `report.py` | Self-contained HTML/PNG rendering shared by `chapters --report` / `activity --report` |
 | `session_pin.py` | The "pin a session" mechanism |
 | `mcp_server.py` | The local MCP server exposing pattern-library tools over stdio |

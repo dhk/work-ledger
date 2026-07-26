@@ -46,7 +46,7 @@ from work_ledger.transcript import (
     find_all_transcripts,
     find_transcripts_by_session_prefix,
 )
-from work_ledger.waste import find_waste_patterns
+from work_ledger.waste import find_cross_session_waste_patterns, find_waste_patterns
 
 POLL_INTERVAL_S = 1.0
 LIMITS_POLL_INTERVAL_S = 5.0
@@ -505,7 +505,7 @@ def run_waste(
     console.print(f"[dim]Watching:[/dim] {path}")
     console.print(
         "[dim]Within-session only - the same pattern recurring across separate sessions "
-        "isn't detected here (depends on #3's cross-session clustering; see issue #5). "
+        "of the same initiative isn't detected here, see `waste --cross-session`. "
         "No API call, no chaptering required.[/dim]\n"
     )
 
@@ -589,6 +589,105 @@ def run_waste(
         "[dim]This surfaces the pattern and its cost only - not what to do about it "
         "(see issue #6, deliberately separate).[/dim]"
     )
+
+
+def run_waste_cross_session(
+    since: date | None = None,
+    until: date | None = None,
+    as_json: bool = False,
+):
+    """Cross-session half of #5: the same two waste-mining pattern kinds
+    as `waste`, but scoped to a recurring initiative (a #3 rollup cluster)
+    across every session it touched, instead of one chapter/session. Only
+    reads whatever chapters are already cached - never triggers a new
+    chaptering pass, same invariant as `rollup`. A pattern only shows up
+    here once it spans 2+ distinct sessions; a single-session repeat is
+    already fully covered by plain `waste`."""
+    console = Console()
+    transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
+    if not transcripts:
+        range_note = " in that date range" if (since or until) else ""
+        console.print(f"[red]No session transcripts found{range_note}.[/red]")
+        sys.exit(1)
+
+    uncached = sum(1 for p in transcripts if not cached_chapters(p))
+    patterns = find_cross_session_waste_patterns(transcripts)
+
+    if as_json:
+        import json
+
+        data = [
+            {
+                "kind": p.kind,
+                "initiative": p.initiative,
+                "label": p.label,
+                "occurrences": p.occurrences,
+                "num_sessions": p.num_sessions,
+                "cost_usd": p.cost_usd,
+            }
+            for p in patterns
+        ]
+        console.print_json(json.dumps(data))
+        return
+
+    console.print(
+        f"[dim]Cross-session waste mining across {len(transcripts)} session(s) found under "
+        "~/.claude/projects/, using whatever's already cached (never re-chapters). Clusters "
+        "sessions into initiatives the same way `rollup` does (issue #3).[/dim]\n"
+    )
+
+    if not patterns:
+        console.print(
+            "[green]No repeated patterns found spanning 2+ sessions of the same "
+            "initiative - nothing matched the current heuristics.[/green]"
+        )
+        if uncached:
+            console.print(
+                f"[dim]{uncached} of {len(transcripts)} session(s) have no cached chapters yet "
+                "and aren't reflected above - run `work-ledger chapters --all` to include "
+                "them.[/dim]"
+            )
+        return
+
+    table = Table(title="work-ledger waste --cross-session", expand=True)
+    table.add_column("Pattern", width=14, overflow="ellipsis")
+    table.add_column("Initiative", ratio=2, overflow="ellipsis")
+    table.add_column("Detail", ratio=3, overflow="fold")
+    table.add_column("Sessions", justify="right", width=8)
+    table.add_column("Times", justify="right", width=5)
+    table.add_column("Cost (est.)", justify="right", width=11)
+
+    total_cost = 0.0
+    for p in patterns:
+        total_cost += p.cost_usd
+        table.add_row(
+            _WASTE_KIND_LABELS.get(p.kind, p.kind),
+            p.initiative,
+            p.label,
+            str(p.num_sessions),
+            str(p.occurrences),
+            f"${p.cost_usd:.4f}",
+        )
+
+    table.add_section()
+    table.add_row(
+        "",
+        "",
+        Text("TOTAL flagged", style="bold"),
+        "",
+        "",
+        Text(f"${total_cost:.4f}", style="bold green"),
+    )
+    console.print(table)
+    console.print(
+        "[dim]This surfaces the pattern and its cost only - not what to do about it "
+        "(see issue #6, deliberately separate).[/dim]"
+    )
+    if uncached:
+        console.print(
+            f"[dim]{uncached} of {len(transcripts)} session(s) have no cached chapters yet and "
+            "aren't reflected above - run `work-ledger chapters --all` to include them.[/dim]"
+        )
 
 
 def _parse_date_arg(value: str, flag: str) -> date:
@@ -2419,6 +2518,28 @@ def main():
         default=None,
         help="Output file path for --report (default: work-ledger-waste-<session>.<format>)",
     )
+    waste_parser.add_argument(
+        "--cross-session",
+        action="store_true",
+        help="Cross-session half of #5: the same pattern kinds, scoped to a recurring "
+        "initiative (a #3 rollup cluster) across every session it touched, instead of one "
+        "session. Can't be combined with --transcript/--session/--report - use --since/"
+        "--until instead",
+    )
+    waste_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="With --cross-session: only include sessions last modified on/after this date "
+        "(YYYY-MM-DD)",
+    )
+    waste_parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help="With --cross-session: only include sessions last modified on/before this date "
+        "(YYYY-MM-DD)",
+    )
 
     patterns_parser = subparsers.add_parser(
         "patterns",
@@ -2582,6 +2703,18 @@ def main():
         if args.report and args.json:
             print("error: --report and --json are mutually exclusive", file=sys.stderr)
             sys.exit(2)
+        if args.cross_session:
+            if args.transcript or args.session or args.report:
+                print(
+                    "error: --cross-session can't be combined with --transcript, --session, "
+                    "or --report",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            since = _parse_date_arg(args.since, "--since") if args.since else None
+            until = _parse_date_arg(args.until, "--until") if args.until else None
+            run_waste_cross_session(since=since, until=until, as_json=args.json)
+            return
         transcript_path = _resolve_transcript_arg(args.transcript, args.session)
         run_waste(
             transcript_path=transcript_path,
