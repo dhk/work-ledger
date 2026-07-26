@@ -110,6 +110,9 @@ work-ledger waste --report --format png --out x.png     # same, as a PNG image
 work-ledger rollup                                # cluster the same recurring initiative's chapters across every session, total cost
 work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date range
 work-ledger rollup --json                              # machine-readable output
+
+work-ledger history sync                          # incrementally update the local session history store
+work-ledger history status                        # show what's stored (row count, last sync time)
 ```
 
 By default, cost/tokens are shown per prompt turn (one row per message you
@@ -146,6 +149,17 @@ parser.
 less-active session and don't want to pass `--session` on every single
 command. An explicit `--transcript`/`--session` on a specific command
 still overrides the pin for that one call.
+
+**`work-ledger history sync`** incrementally updates a small local sqlite
+database (`~/.config/work-ledger/history.db`, issue #42) with one row per
+session (turn count, cost, cached chapter count, last-synced time). A
+session whose transcript hasn't changed since the last sync is skipped
+without being re-read - only new or modified sessions cost anything to
+sync. This is purely additive: nothing else (`chapters --all`, `timeline`,
+`trend`, `serve`) depends on it or reads from it yet - they keep working
+exactly as before via their own live sweeps of `~/.claude/projects/`. It
+exists so a future cross-session feature (starting with #3) has a
+persisted store to build on instead of re-inventing its own.
 
 **Known limitation on subagent attribution**: this environment writes
 subagent transcripts to a separate `<session>/subagents/agent-<id>.jsonl`
@@ -706,8 +720,10 @@ scoping, the normalized-exact subagent-description match), `limits.py`,
 `timeline.py` (day-bucketing, category-mix, top-label ranking),
 `trend.py` (day/week cost-bucketing, unknown-model-cost flagging),
 `rollup.py` (title normalization/stemming, cross-session clustering,
-`Unsorted`-exclusion, cost/session/chapter rollup), and `cli.py`'s pure
-helper functions.
+`Unsorted`-exclusion, cost/session/chapter rollup), `history.py` (the
+local sqlite session-history store - incremental sync skipping unchanged
+transcripts by mtime, re-sync picking up a modified transcript, row
+round-trip), and `cli.py`'s pure helper functions.
 
 CI (`.github/workflows/ci.yml`) runs the suite with `pytest-cov` and a
 `--cov-fail-under` gate set from what the suite actually measures (not a

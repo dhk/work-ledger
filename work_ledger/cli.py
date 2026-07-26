@@ -23,6 +23,7 @@ from rich.text import Text
 from work_ledger.activity import collapse_to_other, group_by_activity, top_n
 from work_ledger.chapters import Chapter, cached_chapters, check_credentials, get_chapters
 from work_ledger.export import build_export_payload
+from work_ledger.history import sync_history, get_status as get_history_status
 from work_ledger.limits import (
     DEFAULT_WINDOW_HOURS,
     WindowUsage,
@@ -747,6 +748,38 @@ def run_session(action: str, value: str | None) -> None:
             console.print(f"[dim]{pinned}[/dim]")
         else:
             console.print("[yellow]No session pinned.[/yellow] Commands default to the most recently active session.")
+        return
+
+
+def run_history(action: str) -> None:
+    """Manage the local session history store (issue #42) -
+    `history sync`/`history status`. This is additive infrastructure other
+    commands can build on later (starting with #3's cross-session rollup);
+    it is not wired into chapters --all/timeline/trend/serve, which keep
+    working exactly as before via their own live sweeps."""
+    console = Console()
+
+    if action == "sync":
+        console.print(
+            "[dim]Syncing local session history store - unchanged sessions (by transcript "
+            "mtime) are skipped without being re-read.[/dim]"
+        )
+        result = sync_history()
+        console.print(
+            f"[green]Synced.[/green] {result.total_transcripts} session(s) checked, "
+            f"{result.updated} updated, {result.unchanged} unchanged (already current)."
+        )
+        return
+
+    if action == "status":
+        status = get_history_status()
+        console.print(f"History database: [cyan]{status.db_path}[/cyan]")
+        console.print(f"Sessions stored: {status.row_count}")
+        if status.row_count:
+            console.print(f"Oldest sync: {status.oldest_synced_at}")
+            console.print(f"Newest sync: {status.newest_synced_at}")
+        else:
+            console.print("[yellow]No sessions synced yet.[/yellow] Run `work-ledger history sync`.")
         return
 
 
@@ -2139,6 +2172,20 @@ def main():
         help="Session UUID (or a prefix of one) - required for 'set', ignored otherwise",
     )
 
+    history_parser = subparsers.add_parser(
+        "history",
+        help="Manage the local session history store (issue #42) - `sync` incrementally "
+        "updates a small local sqlite db from ~/.claude/projects/, `status` shows what's "
+        "stored. Additive infrastructure for future cross-session features (#3) - not "
+        "required by, and not wired into, chapters --all/timeline/trend/serve.",
+    )
+    history_parser.add_argument(
+        "action",
+        choices=["sync", "status"],
+        help="'sync' incrementally updates the store (skips sessions unchanged since last "
+        "sync); 'status' shows row count and last-sync times",
+    )
+
     sessions_parser = subparsers.add_parser(
         "sessions",
         help="List every local session transcript (project, last-active time, first prompt, "
@@ -2425,6 +2472,10 @@ def main():
 
     if args.command == "session":
         run_session(args.action, args.value)
+        return
+
+    if args.command == "history":
+        run_history(args.action)
         return
 
     if args.command == "sessions":

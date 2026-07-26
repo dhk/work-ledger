@@ -77,11 +77,16 @@ model-pricing change (see #47) needs to be reflected.
 - **Limits threshold** (`limits.py`) — `~/.config/work-ledger/
   limits_threshold.json`, a user-calibrated token threshold, unrelated to
   any transcript.
-- **No cross-session store exists yet.** `chapters --all` re-derives its
-  session list by walking `~/.claude/projects/` fresh every run (cheap
-  because each session's own `.chapters.json` cache still avoids
-  re-chaptering). #42 proposes an actual persisted history store; until
-  it lands, "cross-session" always means "re-sweep, then aggregate."
+- **Session history store** (`history.py`) — `~/.config/work-ledger/
+  history.db`, a small sqlite database with one row per session (keyed by
+  the same transcript UUID used everywhere else), holding turn count,
+  cost, cached chapter count, the source transcript's mtime, and a
+  last-synced timestamp. `sync_history()` is incremental: a session whose
+  transcript mtime hasn't advanced past what's stored is skipped without
+  being re-read (issue #42). This is additive infrastructure for future
+  cross-session features (starting with #3) — `chapters --all`/
+  `timeline`/`trend`/`serve` don't read from it and keep re-deriving their
+  session list from a live `find_all_transcripts()` sweep, same as before.
 
 ## Network calls (the exhaustive list)
 
@@ -123,6 +128,7 @@ stops; there is no fourth network call hiding behind it.
 | `patterns.py` | Loading the shared pattern library's local `*.md` entries |
 | `pattern_client.py` | Opt-in gate, per-install anonymous id, counter reporting to the backend |
 | `limits.py` | Rolling Pro/Max session-window usage; self-calibrated threshold |
+| `history.py` | Local sqlite session-history store (`~/.config/work-ledger/history.db`); incremental, mtime-gated sync - additive, not yet read by anything else (#42) |
 | `timeline.py` | Day-bucketing `activity.py`'s categorization plus cached chapter categories - how practice changed over time, not what it cost |
 | `trend.py` | Day/week-bucketing `Turn.cost_usd` - is spend trending up or down, the cost axis `timeline.py` deliberately excludes |
 | `report.py` | Self-contained HTML/PNG rendering shared by `chapters --report` / `activity --report` |
