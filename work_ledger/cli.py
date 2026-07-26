@@ -26,6 +26,7 @@ from work_ledger.export import build_export_payload
 from work_ledger.limits import (
     DEFAULT_WINDOW_HOURS,
     WindowUsage,
+    compute_rate_limit_history,
     compute_window_usage,
     load_threshold_tokens,
     save_threshold_tokens,
@@ -1229,6 +1230,19 @@ def _threshold_note(usage: WindowUsage, threshold_tokens: int | None) -> str | N
     return f"{pct:.0f}% of your {threshold_tokens:,}-token threshold for this window"
 
 
+def _rate_limit_hit_note(hits) -> str | None:
+    """Factual companion to _threshold_note - the actual recorded
+    session-limit hits (see compute_rate_limit_history), not an estimate.
+    See docs/recommend-workflow-efficiency-design.md Open Question 2."""
+    if not hits:
+        return None
+    n = len(hits)
+    when = ", ".join(
+        f"{r.hit.timestamp.split('T')[-1][:5]} UTC (resets {r.hit.reset_label or 'unknown'})" for r in hits
+    )
+    return f"You actually hit your session limit {n} time{'s' if n != 1 else ''} in this window: {when}"
+
+
 def run_limits(
     window_hours: float = DEFAULT_WINDOW_HOURS,
     once: bool = False,
@@ -1258,6 +1272,7 @@ def run_limits(
 
     if as_json:
         usage = compute_window_usage(window_hours=window_hours)
+        rate_limit_hits = compute_rate_limit_history(window_hours=window_hours)
         import json
 
         data = {
@@ -1274,6 +1289,14 @@ def run_limits(
                 }
                 for s in usage.sessions
             ],
+            "rate_limit_hits": [
+                {
+                    "transcript": str(r.transcript),
+                    "timestamp": r.hit.timestamp,
+                    "reset_label": r.hit.reset_label,
+                }
+                for r in rate_limit_hits
+            ],
         }
         console.print_json(json.dumps(data))
         return
@@ -1284,6 +1307,9 @@ def run_limits(
         note = _threshold_note(usage, threshold)
         if note:
             renderables.append(Text(note, style="bold"))
+        hit_note = _rate_limit_hit_note(compute_rate_limit_history(window_hours=window_hours))
+        if hit_note:
+            renderables.append(Text(hit_note, style="bold yellow"))
         return Group(*renderables)
 
     if once:

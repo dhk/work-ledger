@@ -436,7 +436,10 @@ work-ledger recommend --json      # machine-readable output
 A first cut at turning "here's what this cost" into "here's what to do
 about it." `recommend` runs a small set of concrete, local-only heuristics
 over one session's own `Turn`/`Unit`/`Chapter` data — no corpus, no extra
-LLM call beyond chaptering itself:
+LLM call beyond chaptering itself. The first three rules are cost-based;
+the rest widen `recommend` to workflow-efficiency signals beyond cost (see
+[issue #19](https://github.com/dhk/work-ledger/issues/19) and
+[docs/recommend-workflow-efficiency-design.md](docs/recommend-workflow-efficiency-design.md)):
 
 - **Outlier chapter cost** — a chapter costing well above this session's
   own median chapter cost.
@@ -445,9 +448,27 @@ LLM call beyond chaptering itself:
 - **Repeated skill invocation** — the same skill run several times within
   one chapter, a candidate for replacing with a plain deterministic script
   (see [issue #6](https://github.com/dhk/work-ledger/issues/6)).
+- **Session-limit hits** — Claude Code's own synthetic `rate_limit`
+  transcript entry, deduped by reset time (a retry storm against the same
+  limit window is one event, not several). The same deduped hit history is
+  also surfaced by `work-ledger limits` itself.
+- **Session interruptions** — a literal `[Request interrupted by user]`
+  marker recurring in genuine user-message content; repeated interruptions
+  can mean a request was underspecified up front.
+- **Recurring tool-call sequence** — the same multi-step Bash/tool shape
+  (e.g. a `git checkout` / `git commit` / `git push` / `gh pr create`
+  cycle) repeating often enough in one session to be a named-skill
+  candidate.
 
 This is intentionally a short list of defensible rules, not a big
-speculative rule engine — and it's entirely local. A corpus-relative
+speculative rule engine — and it's entirely local. Two other categories
+from issue #19's design doc — repeated manual permission approvals and
+missing/thin `CLAUDE.md` context ("configuration"), and recurring manual
+workarounds that point at a missing tool integration ("new tools") — are
+deliberately not implemented: the doc's own validation against a real
+session couldn't confirm the first is even recoverable from
+`~/.claude/projects` transcripts (it may need `.claude/settings.json`
+instead), and found no signal either way for the second. A corpus-relative
 dimension ("compared to other users' bug-fix chapters") is future work
 that depends on `export` above actually accumulating a corpus first.
 

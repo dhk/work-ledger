@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from work_ledger.transcript import TranscriptTailer, find_all_transcripts
+from work_ledger.transcript import RateLimitHit, TranscriptTailer, find_all_transcripts
 
 CONFIG_DIR = Path.home() / ".config" / "work-ledger"
 THRESHOLD_PATH = CONFIG_DIR / "limits_threshold.json"
@@ -121,3 +121,48 @@ def compute_window_usage(
 
     result.sessions.sort(key=lambda s: s.last_activity or now, reverse=True)
     return result
+
+
+@dataclass
+class RateLimitHitRecord:
+    """One deduped session-limit hit (see TranscriptTailer.deduped_rate_limit_events),
+    tagged with the transcript it came from - the cross-session view of that
+    per-session signal."""
+
+    transcript: Path
+    hit: RateLimitHit
+
+
+def compute_rate_limit_history(
+    window_hours: float = DEFAULT_WINDOW_HOURS, now: datetime | None = None
+) -> list[RateLimitHitRecord]:
+    """Factual, already-deduped session-limit hit history across every
+    session with activity in the rolling window - the actual-event
+    companion to compute_window_usage()'s estimated-headroom number. This
+    is the "surface it in limits" half of
+    docs/recommend-workflow-efficiency-design.md's Open Question 2;
+    recommend.py's session-limit-hits check covers the same signal scoped
+    to whichever single session `recommend` is pointed at."""
+    now = now or datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=window_hours)
+
+    out: list[RateLimitHitRecord] = []
+    for path in find_all_transcripts():
+        try:
+            mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            continue
+        if mtime < window_start:
+            # Same early-stop reasoning as compute_window_usage above.
+            break
+
+        tailer = TranscriptTailer(path)
+        tailer.poll()
+        for hit in tailer.deduped_rate_limit_events():
+            ts = _parse_timestamp(hit.timestamp)
+            if ts is None or ts < window_start or ts > now:
+                continue
+            out.append(RateLimitHitRecord(transcript=path, hit=hit))
+
+    out.sort(key=lambda r: r.hit.timestamp)
+    return out

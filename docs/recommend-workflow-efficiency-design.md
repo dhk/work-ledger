@@ -1,6 +1,13 @@
 # Design: Recommend Workflow-Efficiency Improvements from Session Logs
 
-Status: proposed, not yet built.
+Status: partially implemented (issue #19). Category 1's session-limit-hit
+and interruption-marker signals and category 3's recurring-tool-sequence
+signal are built - see `work_ledger/recommend.py`'s `_check_session_limit_hits`,
+`_check_interruptions`, `_check_recurring_tool_sequence`, plus
+`work_ledger/limits.py`'s `compute_rate_limit_history`. Category 1's
+fuzzier "short turn then long clarifying turn" heuristic, and categories 2
+("configuration") and 4 ("new tools") in full, remain open questions below
+- not implemented, per this doc's own validation findings.
 Author: written by Claude, from a design conversation with the repo owner.
 Related: `work_ledger/recommend.py` (existing, cost-only heuristics this
 extends), issue #5 (recurring-pattern/waste mining), issue #6
