@@ -2,7 +2,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
-from work_ledger.limits import compute_window_usage, load_threshold_tokens, save_threshold_tokens
+from work_ledger.limits import compute_rate_limit_history, compute_window_usage, load_threshold_tokens, save_threshold_tokens
 
 from .conftest import assistant_lines, user_entry, write_jsonl
 
@@ -80,3 +80,50 @@ def test_compute_window_usage_no_sessions(isolated_transcripts_root):
     usage = compute_window_usage(window_hours=5.0)
     assert usage.total_tokens == 0
     assert usage.sessions == []
+
+
+def _rate_limit_entry(timestamp: str, reset_label: str) -> dict:
+    return {
+        "type": "assistant",
+        "timestamp": timestamp,
+        "error": "rate_limit",
+        "apiErrorStatus": 429,
+        "message": {
+            "model": "",
+            "content": [{"type": "text", "text": f"You've hit your session limit · resets {reset_label}"}],
+        },
+    }
+
+
+def test_compute_rate_limit_history_dedupes_and_respects_window(isolated_transcripts_root):
+    """The cross-session companion to compute_window_usage - factual hit
+    history (docs/recommend-workflow-efficiency-design.md Open Question 2),
+    deduped by reset time same as TranscriptTailer.deduped_rate_limit_events,
+    and scoped to the same rolling window as everything else in this module."""
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+
+    now = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+    inside_ts = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    inside_ts_earlier = (now - timedelta(hours=1, minutes=30)).isoformat().replace("+00:00", "Z")
+    outside_ts = (now - timedelta(hours=10)).isoformat().replace("+00:00", "Z")
+
+    entries = [
+        user_entry("p1", "hi", timestamp=inside_ts),
+        _rate_limit_entry(inside_ts, "11:40pm (UTC)"),
+        _rate_limit_entry(inside_ts_earlier, "11:40pm (UTC)"),  # same reset - dedupes with the hit above
+        _rate_limit_entry(outside_ts, "different (UTC)"),  # outside the window - must be excluded
+    ]
+    path = proj / "s.jsonl"
+    write_jsonl(path, entries)
+    os.utime(path, (now.timestamp(), now.timestamp()))
+
+    history = compute_rate_limit_history(window_hours=5.0, now=now)
+    assert len(history) == 1
+    assert history[0].transcript == path
+    assert history[0].hit.reset_label == "11:40pm (UTC)"
+    assert history[0].hit.timestamp == inside_ts_earlier  # earliest of the two sharing this reset time
+
+
+def test_compute_rate_limit_history_no_sessions(isolated_transcripts_root):
+    assert compute_rate_limit_history(window_hours=5.0) == []

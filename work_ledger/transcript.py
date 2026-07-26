@@ -30,6 +30,7 @@ it isn't - see #46.
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +41,27 @@ TRANSCRIPTS_ROOT = Path.home() / ".claude" / "projects"
 SUBAGENT_TOOL_NAMES = {"Agent", "Task"}
 SKILL_TOOL_NAME = "Skill"
 READ_TOOL_NAME = "Read"
+BASH_TOOL_NAME = "Bash"
+
+# Claude Code writes this exact synthetic assistant entry (no message.id, no
+# usage block) when a request is rejected for hitting the Pro/Max session
+# limit - verified against a real transcript, see
+# docs/recommend-workflow-efficiency-design.md's "Validation" section:
+#   {"type": "assistant", "error": "rate_limit", "apiErrorStatus": 429,
+#    "message": {"model": "", "content": [{"type": "text",
+#    "text": "You've hit your session limit · resets 11:40pm (UTC)"}]}}
+RATE_LIMIT_ERROR = "rate_limit"
+
+# Claude Code writes this literal string as the entire content of a genuine
+# `type: "user"` message when the user interrupts a running turn. The design
+# doc's validation found this precise and worth shipping - but only when the
+# search is scoped to actual user-message text blocks, never a blind
+# substring search over the whole transcript: a naive full-text search also
+# matches the tool's own prior Bash output echoing this same marker text back
+# (e.g. this file's own docstring, or a previous run's terminal output),
+# which inflated the doc's own trial count from 2 real interruptions to 8
+# false-inclusive hits.
+INTERRUPTION_MARKER = "[Request interrupted by user]"
 
 
 def find_active_transcript() -> Path | None:
@@ -99,6 +121,52 @@ def extract_prompt_snippet(message: dict, max_len: int = 60) -> str:
     else:
         text = ""
     return _shorten(text, max_len) or "(no text - tool result or non-text turn)"
+
+
+def extract_full_user_text(message: dict) -> str:
+    """Same content extraction as extract_prompt_snippet (plain string
+    content, or only `type: "text"` blocks from a list - never tool_use/
+    tool_result blocks) but untruncated. Used where a display-length
+    snippet isn't enough - e.g. recommend.py's interruption-marker check,
+    which needs to search the literal user-authored text, not a 60-char
+    preview of it, while still staying scoped to genuine user content
+    rather than a blind substring search over the whole transcript."""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
+
+
+_RESET_LABEL_RE = re.compile(r"resets\s+(.+)$", re.IGNORECASE)
+
+
+def _parse_reset_label(text: str) -> str:
+    """Pull the "resets HH:MM(am/pm) (TZ)" tail off a rate-limit message,
+    e.g. "You've hit your session limit · resets 11:40pm (UTC)" -> "11:40pm (UTC)".
+    Used as the dedup key for retry-storm rate-limit hits (see RateLimitHit
+    and TranscriptTailer.deduped_rate_limit_events): multiple raw hits that
+    share the same reset time are the same limit window hit repeatedly on
+    retry, not distinct events - see docs/recommend-workflow-efficiency-design.md's
+    Validation section (5 raw entries collapsed to 2 real events)."""
+    match = _RESET_LABEL_RE.search(text)
+    return match.group(1).strip() if match else ""
+
+
+@dataclass
+class RateLimitHit:
+    """One raw `error: "rate_limit"` transcript entry - the session-limit hit
+    signal validated in docs/recommend-workflow-efficiency-design.md. Several
+    raw hits can share one `reset_label` (a retry storm against the same
+    limit window); see TranscriptTailer.deduped_rate_limit_events for the
+    dedup this doc's validation found necessary."""
+
+    timestamp: str
+    reset_label: str
+    text: str
 
 
 def _aggregate_subagent_usage(jsonl_path: Path) -> tuple[int, int, float, bool]:
@@ -167,6 +235,19 @@ class Unit:
     # here reads. The path itself isn't a new privacy exposure - it's
     # already visible elsewhere in the same transcript (the Read's result).
     read_paths: list[str] = field(default_factory=list)
+    # One token per tool_use call this unit made, in call order - "ToolName"
+    # for most tools, or "Bash:<up to first 3 words of the command>" for
+    # Bash (e.g. "Bash:git checkout -b", "Bash:git commit -m",
+    # "Bash:gh pr create") so a Bash-heavy sequence (branch/commit/push/PR/
+    # review-request) doesn't collapse into indistinguishable "Bash"
+    # entries - a single leading word ("git") wasn't enough to tell `git
+    # checkout` apart from `git commit`/`git push`. Still deliberately just
+    # the command+subcommand, never the full command text (no branch
+    # names, commit messages, or PR bodies) - narrowly scoped to what
+    # recommend.py's recurring-tool-sequence check needs (issue #19), same
+    # "capture only what's needed, not a generic tool-input dump" precedent
+    # as read_paths above.
+    tool_call_signature: list[str] = field(default_factory=list)
     subagent_desc: str | None = None
     subagent_tool_use_id: str | None = None
     subagent_agent_type: str | None = None
@@ -265,6 +346,12 @@ class TranscriptTailer:
         # install that uses that older/different transcript format -
         # surfaced by callers (see cli.py) rather than left invisible.
         self.skipped_sidechain_count = 0
+        # Raw session-limit hits and genuine-user-message interruptions -
+        # both validated signals from docs/recommend-workflow-efficiency-design.md,
+        # surfaced to recommend.py (and limits.py) rather than folded into
+        # Turn/Unit, since neither carries usage/cost data of its own.
+        self.rate_limit_hits: list[RateLimitHit] = []
+        self.interruption_count = 0
 
     def poll(self) -> bool:
         """Read any new lines/subagent data since last poll. Returns True if changed."""
@@ -305,9 +392,16 @@ class TranscriptTailer:
             return False
 
         if entry_type == "user":
-            prompt_id = obj.get("promptId")
             message = obj.get("message") or {}
-            if prompt_id and message.get("role") == "user":
+            is_user_message = message.get("role") == "user"
+            if is_user_message and INTERRUPTION_MARKER in extract_full_user_text(message):
+                # Scoped to genuine user-message text only (never tool_use/
+                # tool_result content) - see INTERRUPTION_MARKER's docstring
+                # for why a blind substring search overcounts.
+                self.interruption_count += 1
+
+            prompt_id = obj.get("promptId")
+            if prompt_id and is_user_message:
                 if prompt_id not in self.turns:
                     self.turns[prompt_id] = Turn(
                         prompt_id=prompt_id,
@@ -321,6 +415,26 @@ class TranscriptTailer:
 
         if entry_type == "assistant":
             message = obj.get("message") or {}
+
+            if obj.get("error") == RATE_LIMIT_ERROR:
+                # The synthetic rate-limit entry (see RATE_LIMIT_ERROR's
+                # docstring) has no message.id/usage - it isn't a real LLM
+                # call, so it's recorded separately rather than forced into
+                # the Unit/Turn model that Turn.cost_usd etc. depend on.
+                text = ""
+                for block in message.get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        break
+                self.rate_limit_hits.append(
+                    RateLimitHit(
+                        timestamp=obj.get("timestamp", ""),
+                        reset_label=_parse_reset_label(text),
+                        text=text,
+                    )
+                )
+                return True
+
             usage = message.get("usage") or {}
             model = message.get("model", "")
             if not usage or not self._current_prompt_id:
@@ -358,6 +472,17 @@ class TranscriptTailer:
                 elif btype == "tool_use":
                     name = block.get("name", "")
                     unit.tool_names.append(name)
+                    if name == BASH_TOOL_NAME:
+                        command = ((block.get("input") or {}).get("command") or "").strip()
+                        # Up to the first 3 words (command + subcommand,
+                        # e.g. "git checkout", "gh pr create") - enough to
+                        # tell different git/gh steps apart, never enough
+                        # to include a branch name, commit message, or PR
+                        # body (see tool_call_signature's docstring).
+                        head = " ".join(command.split()[:3])
+                        unit.tool_call_signature.append(f"{name}:{head}" if head else name)
+                    else:
+                        unit.tool_call_signature.append(name)
                     if name == SKILL_TOOL_NAME and unit.skill_name is None:
                         unit.skill_name = (block.get("input") or {}).get("skill", "unknown")
                     elif name == READ_TOOL_NAME:
@@ -434,3 +559,20 @@ class TranscriptTailer:
         skipped_sidechain_count) - a signal this session's cost may be an
         undercount on an install that uses that transcript format."""
         return self.skipped_sidechain_count > 0
+
+    def deduped_rate_limit_events(self) -> list[RateLimitHit]:
+        """Collapse raw rate_limit hits (self.rate_limit_hits) by reset
+        label. A retry storm against the same limit window produces several
+        raw entries that all share one reset time - docs/recommend-workflow-
+        efficiency-design.md's validation found 5 raw entries collapsing to
+        2 real events this way. Returns one hit per distinct reset label
+        (the earliest-timestamped raw hit for that label), oldest first. A
+        hit whose reset time couldn't be parsed keys on its own timestamp
+        instead, so it's never silently merged with an unrelated hit."""
+        by_reset: dict[str, RateLimitHit] = {}
+        for hit in self.rate_limit_hits:
+            key = hit.reset_label or f"unparsed:{hit.timestamp}"
+            existing = by_reset.get(key)
+            if existing is None or hit.timestamp < existing.timestamp:
+                by_reset[key] = hit
+        return sorted(by_reset.values(), key=lambda h: h.timestamp)
