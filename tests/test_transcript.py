@@ -299,6 +299,134 @@ def test_unknown_model_flagged_not_silently_zero(transcript_path):
     assert turn.cost_usd == 0.0
 
 
+def _rate_limit_entry(timestamp: str, reset_label: str) -> dict:
+    """The exact synthetic rate_limit shape from
+    docs/recommend-workflow-efficiency-design.md's Validation section - no
+    message.id, no usage block, so conftest's assistant_lines() (which
+    always builds a usage-bearing, message.id-bearing entry) doesn't fit
+    here; this is deliberately a raw dict matching the non-standard shape."""
+    return {
+        "type": "assistant",
+        "timestamp": timestamp,
+        "error": "rate_limit",
+        "apiErrorStatus": 429,
+        "message": {
+            "model": "",
+            "content": [{"type": "text", "text": f"You've hit your session limit · resets {reset_label}"}],
+        },
+    }
+
+
+def test_rate_limit_hits_recorded_but_not_turned_into_a_unit(transcript_path):
+    """A rate_limit entry carries no usage/message.id - it's not a real LLM
+    call, so it must not silently become a (free, model-less) Unit on the
+    current turn."""
+    entries = [
+        user_entry("p1", "do something"),
+        _rate_limit_entry("2026-07-11T23:15:14.228Z", "11:40pm (UTC)"),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert len(tailer.rate_limit_hits) == 1
+    assert tailer.rate_limit_hits[0].reset_label == "11:40pm (UTC)"
+    assert tailer.ordered_turns()[0].units == []
+
+
+def test_rate_limit_hits_deduped_by_reset_time(transcript_path):
+    """Mirrors the design doc's own validation: 5 raw hits, but 4 of them
+    share one reset time (a retry storm against the same limit window) -
+    that collapses to 2 distinct events, not 5."""
+    entries = [
+        user_entry("p1", "do something"),
+        _rate_limit_entry("2026-07-11T23:15:14.228Z", "11:40pm (UTC)"),
+        _rate_limit_entry("2026-07-12T03:22:00.000Z", "4:40am (UTC)"),
+        _rate_limit_entry("2026-07-12T03:30:00.000Z", "4:40am (UTC)"),
+        _rate_limit_entry("2026-07-12T04:00:00.000Z", "4:40am (UTC)"),
+        _rate_limit_entry("2026-07-12T04:15:00.000Z", "4:40am (UTC)"),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert len(tailer.rate_limit_hits) == 5
+    events = tailer.deduped_rate_limit_events()
+    assert [(e.timestamp, e.reset_label) for e in events] == [
+        ("2026-07-11T23:15:14.228Z", "11:40pm (UTC)"),
+        ("2026-07-12T03:22:00.000Z", "4:40am (UTC)"),  # earliest of the 4 sharing this reset time
+    ]
+
+
+def test_interruption_marker_counted_only_in_genuine_user_text(transcript_path):
+    """The literal marker only counts when it's the actual text content of
+    a `type: "user"` message - not when it shows up inside a tool_use input
+    (an assistant message, not a user one) or a tool_result block (a user
+    entry, but not text content) - see INTERRUPTION_MARKER's docstring for
+    why a blind substring search overcounts in practice."""
+    entries = [
+        user_entry("p1", "first prompt"),
+        *assistant_lines(
+            "msg-1",
+            "claude-haiku-4-5",
+            {"input_tokens": 1, "output_tokens": 1},
+            [{"type": "tool_use", "name": "Bash", "input": {"command": "echo '[Request interrupted by user]'"}, "id": "t1"}],
+        ),
+        {
+            "type": "user",
+            "promptId": "p1",
+            "timestamp": "2026-07-12T10:05:00Z",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "[Request interrupted by user]"}],
+            },
+        },
+        {
+            "type": "user",
+            "promptId": "p1",
+            "timestamp": "2026-07-12T10:06:00Z",
+            "message": {"role": "user", "content": "[Request interrupted by user]"},
+        },
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert tailer.interruption_count == 1
+
+
+def test_bash_tool_call_signature_distinguishes_subcommands(transcript_path):
+    """A single leading word ("git") isn't enough to tell `git checkout`
+    apart from `git commit`/`git push` - tool_call_signature keeps up to 3
+    words so a recurring git/gh workflow stays distinguishable, without
+    capturing branch names, commit messages, or PR bodies."""
+    entries = [
+        user_entry("p1", "ship it"),
+        *assistant_lines(
+            "msg-1",
+            "claude-haiku-4-5",
+            {"input_tokens": 1, "output_tokens": 1},
+            [
+                {"type": "tool_use", "name": "Bash", "input": {"command": "git checkout -b my-branch-name"}, "id": "t1"},
+                {"type": "tool_use", "name": "Bash", "input": {"command": "git commit -m 'a secret message'"}, "id": "t2"},
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/a"}, "id": "t3"},
+            ],
+        ),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    unit = tailer.ordered_turns()[0].units[0]
+    assert unit.tool_call_signature == ["Bash:git checkout -b", "Bash:git commit -m", "Read"]
+    assert "my-branch-name" not in unit.tool_call_signature[0]
+    assert "secret message" not in unit.tool_call_signature[1]
+
+
 def test_find_active_transcript_picks_most_recent(isolated_transcripts_root):
     import os
     import time

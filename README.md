@@ -107,6 +107,10 @@ work-ledger waste --json                               # machine-readable output
 work-ledger waste --report                             # same visual style as chapters --report, as HTML
 work-ledger waste --report --format png --out x.png     # same, as a PNG image
 
+work-ledger rollup                                # cluster the same recurring initiative's chapters across every session, total cost
+work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date range
+work-ledger rollup --json                              # machine-readable output
+
 work-ledger history sync                          # incrementally update the local session history store
 work-ledger history status                        # show what's stored (row count, last sync time)
 ```
@@ -450,7 +454,10 @@ work-ledger recommend --json      # machine-readable output
 A first cut at turning "here's what this cost" into "here's what to do
 about it." `recommend` runs a small set of concrete, local-only heuristics
 over one session's own `Turn`/`Unit`/`Chapter` data — no corpus, no extra
-LLM call beyond chaptering itself:
+LLM call beyond chaptering itself. The first three rules are cost-based;
+the rest widen `recommend` to workflow-efficiency signals beyond cost (see
+[issue #19](https://github.com/dhk/work-ledger/issues/19) and
+[docs/recommend-workflow-efficiency-design.md](docs/recommend-workflow-efficiency-design.md)):
 
 - **Outlier chapter cost** — a chapter costing well above this session's
   own median chapter cost.
@@ -459,9 +466,27 @@ LLM call beyond chaptering itself:
 - **Repeated skill invocation** — the same skill run several times within
   one chapter, a candidate for replacing with a plain deterministic script
   (see [issue #6](https://github.com/dhk/work-ledger/issues/6)).
+- **Session-limit hits** — Claude Code's own synthetic `rate_limit`
+  transcript entry, deduped by reset time (a retry storm against the same
+  limit window is one event, not several). The same deduped hit history is
+  also surfaced by `work-ledger limits` itself.
+- **Session interruptions** — a literal `[Request interrupted by user]`
+  marker recurring in genuine user-message content; repeated interruptions
+  can mean a request was underspecified up front.
+- **Recurring tool-call sequence** — the same multi-step Bash/tool shape
+  (e.g. a `git checkout` / `git commit` / `git push` / `gh pr create`
+  cycle) repeating often enough in one session to be a named-skill
+  candidate.
 
 This is intentionally a short list of defensible rules, not a big
-speculative rule engine — and it's entirely local. A corpus-relative
+speculative rule engine — and it's entirely local. Two other categories
+from issue #19's design doc — repeated manual permission approvals and
+missing/thin `CLAUDE.md` context ("configuration"), and recurring manual
+workarounds that point at a missing tool integration ("new tools") — are
+deliberately not implemented: the doc's own validation against a real
+session couldn't confirm the first is even recoverable from
+`~/.claude/projects` transcripts (it may need `.claude/settings.json`
+instead), and found no signal either way for the second. A corpus-relative
 dimension ("compared to other users' bug-fix chapters") is future work
 that depends on `export` above actually accumulating a corpus first.
 
@@ -504,6 +529,46 @@ first. Cross-session correlation (the same pattern recurring across
 *separate* sessions) is out of scope here too — it depends on
 [issue #3](https://github.com/dhk/work-ledger/issues/3)'s cross-session
 clustering and may ship independently later.
+
+## Rollup (cross-session, experimental)
+
+```
+work-ledger rollup                                         # total cost per recurring initiative, across every session
+work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date range
+work-ledger rollup --json                                  # machine-readable output
+```
+
+`chapters --all` already lists every session side by side with its own
+chapters, but each session's chapters stay siloed — there's no way to
+answer "how much has 'Fix the double-counting bug' cost in total, across
+every session it touched" from that flat list alone. `rollup` answers
+exactly that ([issue #3](https://github.com/dhk/work-ledger/issues/3)):
+it clusters chapter titles that recur across sessions and sums cost per
+cluster, sorted most-expensive-first.
+
+- **Clustering is deterministic title normalization, not an LLM or
+  embedding pass.** Titles are lowercased, punctuation/whitespace
+  collapsed, a short stopword list stripped, and lightly stemmed
+  (plurals only); two titles that reduce to the same normalized string
+  are treated as one initiative. This is the same call
+  [issue #5](https://github.com/dhk/work-ledger/issues/5)'s
+  subagent-matching (`waste`) already made for a similar "near-identical"
+  matching problem — no second paid API surface until simple matching is
+  actually proven too weak. Genuinely-reworded titles ("Fix the
+  double-counting bug" vs. "resolve the cost overcount issue") won't
+  match — an accepted false-negative tradeoff for staying local/free/
+  deterministic; see `work_ledger/rollup.py`'s module docstring and
+  `tests/test_rollup.py` for the tradeoffs found validating this.
+- **`Unsorted` chapters are excluded from clustering** — chaptering's own
+  fallback label isn't a real initiative, and matching two sessions'
+  unrelated fallback chapters together would be a pure false positive.
+- **Never triggers a new chaptering pass.** Only whatever's already
+  cached per session is clustered — run `chapters`/`chapters --all` first
+  for any session you want reflected here; uncached sessions are called
+  out explicitly rather than silently under-counted.
+- **No default date window** (unlike `trend`/`timeline`'s 30-day
+  default): the point of a rollup is a true total across every session an
+  initiative touched, not a recent slice.
 
 ## Pattern library (opt-in, experimental)
 
@@ -613,10 +678,17 @@ works (tool/skill/subagent and chapter-category mix over time) rather
 than what it cost, with an explicit `timeline backfill` step to complete
 its category panel rather than paying for chaptering silently.
 
-Not yet done: cross-session/historical rollup (only watches one transcript
-at a time, though `timeline` re-derives across all of them on each run
-rather than persisting anything — see `docs/show-tell-do-model.md`);
-Sonnet 5 introductory pricing isn't modeled (runs a little high
+`rollup` adds a cross-session view on top of that: total cost per
+recurring initiative, clustered across every session it touched via
+deterministic title normalization (v1 — see "Rollup" above and
+[issue #3](https://github.com/dhk/work-ledger/issues/3)), not yet an
+LLM/embedding pass. Still no persisted cross-session history store
+(`docs/show-tell-do-model.md`'s open question, tracked as
+[issue #42](https://github.com/dhk/work-ledger/issues/42)) — `rollup`,
+like `timeline`/`trend`/`chapters --all`, re-derives from transcripts
+fresh on every run rather than reading anything persisted.
+
+Not yet done: Sonnet 5 introductory pricing isn't modeled (runs a little high
 until 2026-08-31); chapter granularity for very short sessions is left
 entirely to the model's judgment (see open question in the design doc);
 `recommend`'s corpus-relative dimension depends on `export` actually
@@ -647,9 +719,11 @@ helpers `timeline` relies on), `export.py`, `recommend.py`, `waste.py`
 scoping, the normalized-exact subagent-description match), `limits.py`,
 `timeline.py` (day-bucketing, category-mix, top-label ranking),
 `trend.py` (day/week cost-bucketing, unknown-model-cost flagging),
-`history.py` (the local sqlite session-history store - incremental sync
-skipping unchanged transcripts by mtime, re-sync picking up a modified
-transcript, row round-trip), and `cli.py`'s pure helper functions.
+`rollup.py` (title normalization/stemming, cross-session clustering,
+`Unsorted`-exclusion, cost/session/chapter rollup), `history.py` (the
+local sqlite session-history store - incremental sync skipping unchanged
+transcripts by mtime, re-sync picking up a modified transcript, row
+round-trip), and `cli.py`'s pure helper functions.
 
 CI (`.github/workflows/ci.yml`) runs the suite with `pytest-cov` and a
 `--cov-fail-under` gate set from what the suite actually measures (not a
