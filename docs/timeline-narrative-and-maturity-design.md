@@ -1,7 +1,9 @@
 # Design: Timeline Narrative Summary + Maturity Correlation
 
-Status: proposed, not yet built. Part 1 (narrative summary) is scoped
-enough to build directly. Part 2 (maturity correlation) is explicitly a
+Status: Part 1 (narrative summary) is implemented — `summarize_timeline()`
+in `work_ledger/timeline.py`, wired into `work-ledger timeline --summary`
+(terminal) and unconditionally into `timeline --report`'s HTML output. Part
+2 (maturity correlation) remains proposed, not built — it's explicitly a
 bigger, undecided idea — see Open Questions; Option A there is buildable,
 Option B is deliberately out of scope for this doc.
 Author: written by Claude, from a design conversation with the repo owner.
@@ -80,16 +82,26 @@ More recently, that's shifted toward `refactor` (35%) and `docs` (20%)."
   this is an additional lens on `timeline`'s existing data, the same
   relationship `activity --report` has to `activity`.
 
-### Open questions (Part 1)
+### Open questions (Part 1) — resolved during implementation
 
 1. Two-window split (first-half/second-half of days-with-data) vs.
    something more deliberate (e.g. `--since` window vs. everything
-   before it)? First-half/second-half is simplest and needs no new flag,
-   but may not always line up with what a person actually means by
-   "used to."
+   before it)? **Resolved: first-half/second-half**, as originally
+   proposed — simplest, needs no new flag. Left as a candidate follow-up
+   if it turns out not to line up with what "used to" means in practice,
+   but not revisited for this pass.
 2. Threshold for "large enough swing to mention" — needs a concrete
    number (e.g. only narrate a category if its share moved ≥10 points),
-   to avoid narrating noise from small samples.
+   to avoid narrating noise from small samples. **Resolved: 10 percentage
+   points** (`SWING_THRESHOLD_POINTS` in `timeline.py`) — large enough to
+   read as a real change (not, say, 24% drifting to 31%) while still
+   reachable without months of history. Two additional guards were added
+   beyond what this doc specified: a minimum of 4 populated days (need at
+   least 2 per window to call it a "window") and a minimum of 10
+   categorized turns total (a handful of turns can swing 20+ points by
+   pure chance) — both return `None` rather than narrate, same
+   "don't-show-a-misleading-picture" precedent `uncached_sessions`
+   already sets.
 
 ## Part 2: correlating the shift with maturity (bigger, not decided)
 

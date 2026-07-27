@@ -1372,3 +1372,94 @@ def test_run_waste_cross_session_default_env_prints_no_semantic_note(isolated_tr
 
     out = capsys.readouterr().out
     assert "semantic" not in out.lower()
+
+
+# --- timeline --summary --------------------------------------------------
+
+
+def _day_transcript(project_dir, filename: str, day: str, category_counts: dict[str, int]) -> None:
+    """Write a single-day transcript under `project_dir` with one user turn
+    per categorized unit, then chapter-cache it so build_timeline() picks
+    up exactly the requested category_counts for that day - mirrors
+    test_build_timeline_uses_cached_chapter_categories's cache-priming
+    pattern, just parameterized over several turns/categories at once."""
+    from work_ledger.chapters import _save_cache
+
+    entries = []
+    prompt_id = 0
+    category_prompt_ids: dict[str, list[str]] = {}
+    for category, count in category_counts.items():
+        for _ in range(count):
+            prompt_id += 1
+            pid = f"{filename}-p{prompt_id}"
+            entries.append(user_entry(pid, "do a thing", f"{day}T10:00:00Z"))
+            entries.extend(
+                assistant_lines(
+                    f"{filename}-m{prompt_id}", "claude-haiku-4-5",
+                    {"input_tokens": 5, "output_tokens": 5},
+                    [{"type": "text", "text": "done"}], f"{day}T10:00:01Z",
+                )
+            )
+            category_prompt_ids.setdefault(category, []).append(pid)
+
+    path = project_dir / f"{filename}.jsonl"
+    write_jsonl(path, entries)
+    chapters = [
+        Chapter(title=category, category=category, sections=[Section(title=category, prompt_ids=pids)])
+        for category, pids in category_prompt_ids.items()
+    ]
+    _save_cache(path, chaptered_ids=[pid for pids in category_prompt_ids.values() for pid in pids], chapters=chapters)
+
+
+def test_run_timeline_summary_prints_narrative(isolated_transcripts_root, capsys):
+    proj = isolated_transcripts_root / "proj1"
+    proj.mkdir()
+    _day_transcript(proj, "d1", "2026-07-01", {"debugging": 3})
+    _day_transcript(proj, "d2", "2026-07-02", {"debugging": 2, "design-planning": 1})
+    _day_transcript(proj, "d3", "2026-07-03", {"refactor": 3})
+    _day_transcript(proj, "d4", "2026-07-04", {"refactor": 2, "docs": 1})
+
+    cli.run_timeline(summary=True)
+
+    out = capsys.readouterr().out
+    # Narrative printed alongside (above) the usual sparkline view, not
+    # instead of it - the granular table stays even when --summary is on.
+    assert "Summary" in out
+    assert "Early in this range" in out
+    assert "debugging" in out
+    assert "More recently" in out
+    assert "refactor" in out
+    assert "work-ledger timeline" in out
+    assert "Approach mix" in out
+
+
+def test_run_timeline_without_summary_flag_omits_narrative(isolated_transcripts_root, capsys):
+    proj = isolated_transcripts_root / "proj1"
+    proj.mkdir()
+    _day_transcript(proj, "d1", "2026-07-01", {"debugging": 3})
+    _day_transcript(proj, "d2", "2026-07-02", {"debugging": 2, "design-planning": 1})
+    _day_transcript(proj, "d3", "2026-07-03", {"refactor": 3})
+    _day_transcript(proj, "d4", "2026-07-04", {"refactor": 2, "docs": 1})
+
+    cli.run_timeline(summary=False)
+
+    out = capsys.readouterr().out
+    assert "Summary" not in out
+    assert "work-ledger timeline" in out
+
+
+def test_run_timeline_summary_reports_not_enough_data(isolated_transcripts_root, capsys):
+    proj = isolated_transcripts_root / "proj1"
+    proj.mkdir()
+    # Only 2 populated days - below summarize_timeline()'s minimum, even
+    # though a single day is chaptered and would otherwise render fine.
+    _day_transcript(proj, "d1", "2026-07-01", {"debugging": 3})
+    _day_transcript(proj, "d2", "2026-07-02", {"refactor": 3})
+
+    cli.run_timeline(summary=True)
+
+    out = capsys.readouterr().out
+    assert "not enough day-to-day category data yet" in out
+    # Still prints the ordinary sparkline view - --summary never suppresses it.
+    assert "Approach mix" in out
+    assert "semantic" not in out.lower()

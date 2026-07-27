@@ -45,7 +45,13 @@ from work_ledger.recommend import generate_recommendations
 from work_ledger.rollup import RollupResult, build_rollup_result
 from work_ledger import rollup_semantic
 from work_ledger.session_pin import clear_pinned_session, get_pinned_session, set_pinned_session
-from work_ledger.timeline import DEFAULT_WINDOW_DAYS, build_timeline, top_activity_labels, top_category_labels
+from work_ledger.timeline import (
+    DEFAULT_WINDOW_DAYS,
+    build_timeline,
+    summarize_timeline,
+    top_activity_labels,
+    top_category_labels,
+)
 from work_ledger.trend import BUCKET_SIZES, build_trend
 from work_ledger.transcript import (
     Turn,
@@ -1707,6 +1713,7 @@ def run_timeline(
     report: bool = False,
     report_format: str = "html",
     report_out: str | None = None,
+    summary: bool = False,
 ):
     """How tool usage and approach have changed over time - day-bucketed
     activity mix (activity.py's own tool/skill/subagent categorization,
@@ -1718,7 +1725,10 @@ def run_timeline(
     be slower and answer "all-time" rather than the more useful "recently"
     default. Makes no API call itself; see `timeline backfill` for the
     explicit, cost-disclosed way to complete category data for uncached
-    sessions."""
+    sessions. `summary` only affects the plain terminal view (see
+    summarize_timeline() in timeline.py) - --report gets the narrative
+    line unconditionally, since it's a small addition to a view that's
+    already comprehensive; --json stays raw data, no narrative."""
     console = Console()
     if since is None and until is None:
         since = date.today() - timedelta(days=DEFAULT_WINDOW_DAYS)
@@ -1785,10 +1795,23 @@ def run_timeline(
         return
 
     console.print()
+    if summary:
+        # Printed above the sparklines, not instead of them - --summary is
+        # an additional lens on the same data (docs/timeline-narrative-and
+        # -maturity-design.md's Part 1), same "additive, doesn't replace
+        # the granular view" precedent as every other flag on this command.
+        narrative = summarize_timeline(result.days)
+        if narrative:
+            console.print(f"[bold]Summary[/bold]  {narrative}\n")
+        else:
+            console.print(
+                "[dim]Summary: not enough day-to-day category data yet for a meaningful "
+                "narrative.[/dim]\n"
+            )
     _render_timeline_sparklines(console, result, top_activity, top_categories)
 
 
-def run_timeline_backfill(since: date | None = None, until: date | None = None) -> None:
+def run_timeline_backfill(since: date | None = None, until: date | None = None, summary: bool = False) -> None:
     """Chapter any session in range that isn't fully cached yet, then show
     the resulting timeline - the explicit, cost-disclosed way to complete
     the approach-mix panel that plain `timeline` otherwise leaves partial
@@ -1834,7 +1857,7 @@ def run_timeline_backfill(since: date | None = None, until: date | None = None) 
     else:
         console.print("[green]Everything in range was already cached - nothing new to chapter.[/green]\n")
 
-    run_timeline(since=effective_since, until=until)
+    run_timeline(since=effective_since, until=until, summary=summary)
 
 
 def _cost_bar(cost: float, max_cost: float, width: int = 30) -> str:
@@ -2449,6 +2472,15 @@ def main():
         default=None,
         help="Output file path for --report (default: work-ledger-timeline-<date>.<format>)",
     )
+    timeline_parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Also print a 1-3 sentence plain-language narrative of how the chapter-category mix "
+        "has shifted between the first and second half of days-with-data in range (alongside the "
+        "usual sparkline view, not instead of it). Prints nothing extra if there isn't enough "
+        "data yet for a meaningful comparison. Not supported with --json/--report (the report "
+        "already includes the narrative when there's enough data).",
+    )
 
     trend_parser = subparsers.add_parser(
         "trend",
@@ -2723,6 +2755,13 @@ def main():
         if args.report and args.json:
             print("error: --report and --json can't be combined", file=sys.stderr)
             sys.exit(2)
+        if args.summary and (args.report or args.json):
+            print(
+                "error: --summary can't be combined with --report/--json - --report already "
+                "includes the narrative when there's enough data, and --json stays raw data",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         if args.action == "backfill":
             if args.report or args.json:
                 print(
@@ -2731,7 +2770,7 @@ def main():
                     file=sys.stderr,
                 )
                 sys.exit(2)
-            run_timeline_backfill(since=since, until=until)
+            run_timeline_backfill(since=since, until=until, summary=args.summary)
         else:
             run_timeline(
                 since=since,
@@ -2740,6 +2779,7 @@ def main():
                 report=args.report,
                 report_format=args.format,
                 report_out=args.out,
+                summary=args.summary,
             )
         return
 

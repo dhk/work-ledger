@@ -130,6 +130,52 @@ def test_build_timeline_report_html_zero_days_does_not_crash():
     assert "<!doctype html>" in html
 
 
+def test_build_timeline_report_html_includes_narrative_when_enough_data():
+    """summarize_timeline() is called unconditionally by the report builder
+    (not behind a flag) - given enough data it should land in the HTML."""
+    from work_ledger.report import build_timeline_report_html
+    from work_ledger.timeline import DayBucket
+
+    days = [
+        DayBucket(day="2026-07-01", category_counts={"debugging": 3}),
+        DayBucket(day="2026-07-02", category_counts={"debugging": 2, "design-planning": 1}),
+        DayBucket(day="2026-07-03", category_counts={"refactor": 3}),
+        DayBucket(day="2026-07-04", category_counts={"refactor": 2, "docs": 1}),
+    ]
+    html = build_timeline_report_html(
+        "2026-07-01 to 2026-07-04",
+        days,
+        top_activity=[],
+        top_categories=["debugging", "refactor", "design-planning", "docs"],
+        total_sessions=4,
+        uncached_sessions=0,
+    )
+    assert 'class="narrative"' in html
+    assert "Early in this range" in html
+    assert "debugging" in html
+    assert "More recently" in html
+    assert "refactor" in html
+
+
+def test_build_timeline_report_html_omits_narrative_when_not_enough_data():
+    from work_ledger.report import build_timeline_report_html
+    from work_ledger.timeline import DayBucket
+
+    days = [
+        DayBucket(day="2026-07-01", activity_counts={"Tool: Bash": 2}, category_counts={"bug-fix": 1}),
+        DayBucket(day="2026-07-02", activity_counts={"Tool: Bash": 1}, category_counts={}),
+    ]
+    html = build_timeline_report_html(
+        "2026-07-01 to 2026-07-02",
+        days,
+        top_activity=["Tool: Bash"],
+        top_categories=["bug-fix"],
+        total_sessions=2,
+        uncached_sessions=0,
+    )
+    assert 'class="narrative"' not in html
+
+
 # --- png_available (used by `miso --check-status`) -------------------------
 #
 # Mocks sys.modules directly rather than depending on whether Playwright is

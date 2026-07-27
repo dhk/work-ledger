@@ -1,5 +1,5 @@
 from work_ledger.chapters import Chapter, Section, _save_cache
-from work_ledger.timeline import build_timeline, top_activity_labels, top_category_labels
+from work_ledger.timeline import DayBucket, build_timeline, summarize_timeline, top_activity_labels, top_category_labels
 from work_ledger.transcript import TranscriptTailer
 
 from .conftest import assistant_lines, user_entry, write_jsonl
@@ -123,3 +123,79 @@ def test_top_category_labels_ranks_by_total_count():
 def test_top_activity_labels_empty_days():
     assert top_activity_labels([]) == []
     assert top_category_labels([]) == []
+
+
+# --- summarize_timeline ------------------------------------------------
+
+
+def test_summarize_timeline_narrates_a_clear_shift():
+    # First half (3 days): mostly "debugging", some "design-planning".
+    # Second half (3 days): mostly "refactor", some "docs". Both category
+    # counts and day counts comfortably clear the MIN_* guards.
+    days = [
+        DayBucket(day="2026-07-01", category_counts={"debugging": 3, "design-planning": 2}),
+        DayBucket(day="2026-07-02", category_counts={"debugging": 4}),
+        DayBucket(day="2026-07-03", category_counts={"debugging": 3, "design-planning": 2}),
+        DayBucket(day="2026-07-04", category_counts={"refactor": 4}),
+        DayBucket(day="2026-07-05", category_counts={"refactor": 3, "docs": 2}),
+        DayBucket(day="2026-07-06", category_counts={"refactor": 3, "docs": 2}),
+    ]
+    # first half totals: debugging=10, design-planning=4 -> 71%/29%
+    # second half totals: refactor=10, docs=4 -> 71%/29%
+    narrative = summarize_timeline(days)
+
+    assert narrative is not None
+    assert "Early in this range" in narrative
+    assert "debugging (71%)" in narrative
+    assert "design-planning (29%)" in narrative
+    assert "More recently" in narrative
+    assert "refactor (71%)" in narrative
+    assert "docs (29%)" in narrative
+
+
+def test_summarize_timeline_too_few_populated_days_returns_none():
+    # Only 3 populated days - below MIN_POPULATED_DAYS_FOR_SUMMARY (4), even
+    # though the category mix below would otherwise be a clear shift.
+    days = [
+        DayBucket(day="2026-07-01", category_counts={"debugging": 10}),
+        DayBucket(day="2026-07-02", category_counts={"debugging": 10}),
+        DayBucket(day="2026-07-03", category_counts={"refactor": 10}),
+    ]
+    assert summarize_timeline(days) is None
+
+
+def test_summarize_timeline_too_few_turns_returns_none():
+    # 4 populated days (clears the day-count guard) but only 4 categorized
+    # turns total - below MIN_CATEGORIZED_TURNS_FOR_SUMMARY (10).
+    days = [
+        DayBucket(day="2026-07-01", category_counts={"debugging": 1}),
+        DayBucket(day="2026-07-02", category_counts={"debugging": 1}),
+        DayBucket(day="2026-07-03", category_counts={"refactor": 1}),
+        DayBucket(day="2026-07-04", category_counts={"refactor": 1}),
+    ]
+    assert summarize_timeline(days) is None
+
+
+def test_summarize_timeline_no_populated_days_returns_none():
+    days = [DayBucket(day="2026-07-01"), DayBucket(day="2026-07-02")]
+    assert summarize_timeline(days) is None
+
+
+def test_summarize_timeline_omits_category_below_swing_threshold():
+    # "stable" holds the same 25% share in both windows (0-point swing) and
+    # must not be mentioned; "big" (75% -> 25%) and "new" (0% -> 50%) both
+    # clear SWING_THRESHOLD_POINTS and must be.
+    days = [
+        DayBucket(day="2026-07-01", category_counts={"big": 10, "stable": 3}),
+        DayBucket(day="2026-07-02", category_counts={"big": 5, "stable": 2}),
+        DayBucket(day="2026-07-03", category_counts={"big": 3, "stable": 3, "new": 6}),
+        DayBucket(day="2026-07-04", category_counts={"big": 2, "stable": 2, "new": 4}),
+    ]
+    # first half: big=15, stable=5 -> total 20 -> 75%/25%
+    # second half: big=5, stable=5, new=10 -> total 20 -> 25%/25%/50%
+    narrative = summarize_timeline(days)
+
+    assert narrative is not None
+    assert "big (75%)" in narrative
+    assert "new (50%)" in narrative
+    assert "stable" not in narrative

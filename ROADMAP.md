@@ -40,7 +40,7 @@ flag-driven.
 | [#44](https://github.com/dhk/work-ledger/issues/44) ✅ | **Timeline view** — tool/skill/subagent/approach mix over time (`work-ledger timeline`/`timeline backfill`) | Shipped; did not block on #42 |
 | [#43](https://github.com/dhk/work-ledger/issues/43) ✅ | **Local web UI** — `work-ledger serve`, browse sessions/chapters as a page | Shipped; reused `report.py`'s visual system |
 | [#42](https://github.com/dhk/work-ledger/issues/42) ✅ | **Local session history store** — sqlite store with incremental, mtime-gated sync (`history.py`) | Shipped; additive infrastructure for future cross-session features, not yet read by #3/#4/#5/#44/#43 |
-| [#66](https://github.com/dhk/work-ledger/issues/66) | **Timeline narrative summary** ("you used to X, now Y") + a deferred maturity-correlation exploration reusing #3's clustering as a proxy | Extends #44; maturity-correlation half explicitly not scoped for a real-codebase signal (see design doc) |
+| [#66](https://github.com/dhk/work-ledger/issues/66) ✅ (Part 1) | **Timeline narrative summary** ("you used to X, now Y") — Part 1 (deterministic narrative, `timeline --summary`/`timeline --report`) shipped; Part 2 (maturity correlation via #3's rollup clustering) still proposed, not built | Extends #44; Part 2 explicitly not scoped for a real-codebase signal (see design doc) |
 
 ## Recommendations — Tell, started, thin
 
