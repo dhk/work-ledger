@@ -18,7 +18,7 @@ from pathlib import Path
 
 from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter
-from work_ledger.timeline import DayBucket
+from work_ledger.timeline import DayBucket, summarize_timeline
 from work_ledger.transcript import TranscriptTailer
 from work_ledger.trend import CostBucket
 from work_ledger.waste import WastePattern
@@ -635,6 +635,16 @@ def build_timeline_report_html(
     category_rows = _day_rows([(b.day, b.category_counts) for b in days], top_categories)
     activity_labels, category_labels = top_activity, top_categories
 
+    # Unconditional, not behind a flag: this is the same data the report
+    # already renders in full, just also said in a sentence - a small,
+    # clean addition (summarize_timeline() is pure computation over `days`,
+    # already a parameter here) rather than a reason to add a new flag to
+    # this function's signature. Omitted entirely (not a placeholder
+    # sentence) when there isn't enough data yet - see summarize_timeline()'s
+    # own "don't narrate noise" guard.
+    narrative = summarize_timeline(days)
+    narrative_html = f'<p class="narrative">{html.escape(narrative)}</p>' if narrative else ""
+
     n_colors = max(len(activity_labels), len(category_labels), 1)
     colors = _series_colors(n_colors)
     css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
@@ -669,6 +679,7 @@ def build_timeline_report_html(
   .day-row {{ margin-bottom: 14px; }}
   .day-head {{ display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }}
   .day-head b {{ color: var(--text-primary); }}
+  .narrative {{ font-size: 14px; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 4px 0 18px; }}
 </style>
 </head>
 <body>
@@ -676,6 +687,7 @@ def build_timeline_report_html(
   <div class="wrap">
     <h1>work-ledger timeline</h1>
     <p class="subtitle">{range_label} — how tool usage and approach have changed over time, not what it cost</p>
+    {narrative_html}
 
     <div class="stat-row">
       <div class="stat-tile">

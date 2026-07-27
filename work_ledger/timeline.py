@@ -135,3 +135,115 @@ def top_category_labels(days: list[DayBucket], n: int = 8) -> list[str]:
             totals[label] = totals.get(label, 0) + count
     ranked = sorted(totals.items(), key=lambda kv: -kv[1])
     return [label for label, _ in ranked[:n]]
+
+
+# Minimum populated (has-category-data) days before summarize_timeline() will
+# narrate anything. Splitting into two windows needs at least 2 days per
+# window to be a "window" rather than one day's noise pretending to be a
+# trend, so 4 is the floor, not an arbitrary round number.
+MIN_POPULATED_DAYS_FOR_SUMMARY = 4
+
+# Minimum total categorized turns across all populated days. A handful of
+# turns split into two "halves" can swing 20+ points by pure chance (e.g. 3
+# turns vs 2 turns is already a coin flip's worth of noise) - this floor
+# keeps summarize_timeline() from narrating a shift that's really just a
+# small sample.
+MIN_CATEGORIZED_TURNS_FOR_SUMMARY = 10
+
+# A category only gets mentioned in the narrative if its share of turns
+# moved by at least this many percentage points between the two windows.
+# 10 points is large enough that it reads as a real change in what
+# dominated (not a category going from, say, 24% to 31%), while still
+# being reachable well before someone has months of history - matches the
+# design doc's own example (42% -> ~0%, 18% -> 0%, 0% -> 35%, 0% -> 20%).
+SWING_THRESHOLD_POINTS = 10.0
+
+# At most this many categories get named on each side of the sentence -
+# matches the design doc's own two-and-two example and keeps the sentence
+# readable instead of listing every category that crossed the threshold.
+_MAX_CATEGORIES_PER_CLAUSE = 2
+
+
+def _category_proportions(half: list[DayBucket]) -> dict[str, float]:
+    """Each category's share (0-100) of all categorized turns across the
+    given half of populated days."""
+    totals: dict[str, int] = {}
+    for bucket in half:
+        for category, count in bucket.category_counts.items():
+            totals[category] = totals.get(category, 0) + count
+    grand_total = sum(totals.values())
+    if not grand_total:
+        return {}
+    return {category: count / grand_total * 100 for category, count in totals.items()}
+
+
+def _join_with_and(parts: list[str]) -> str:
+    if len(parts) == 1:
+        return parts[0]
+    return " and ".join(parts)
+
+
+def summarize_timeline(days: list[DayBucket]) -> str | None:
+    """Narrate how the chapter-category mix has shifted between the first
+    and second half of the *populated* days in range - see
+    docs/timeline-narrative-and-maturity-design.md's Part 1. Deterministic,
+    pure computation over already-collected category_counts: no LLM call,
+    no new data source, matches every other Show-stage narrative precedent
+    in this codebase (e.g. cli.py's per-session _session_summary()).
+
+    Splits by count of days that actually have category data, not
+    calendar halves, since usage is bursty - a burst of 8 populated days
+    trailing 20 empty ones should compare its own first half against its
+    own second half, not get diluted by the empty days.
+
+    Returns None (mirrors uncached_sessions's existing "don't silently
+    show a misleading picture" precedent) rather than narrating noise
+    from a handful of data points, when:
+    - there are fewer than MIN_POPULATED_DAYS_FOR_SUMMARY populated days,
+    - there are fewer than MIN_CATEGORIZED_TURNS_FOR_SUMMARY categorized
+      turns total across those days, or
+    - no category's share moved by at least SWING_THRESHOLD_POINTS
+      percentage points between the two windows (nothing worth saying).
+    """
+    populated = [d for d in days if d.category_counts]
+    if len(populated) < MIN_POPULATED_DAYS_FOR_SUMMARY:
+        return None
+
+    total_turns = sum(sum(d.category_counts.values()) for d in populated)
+    if total_turns < MIN_CATEGORIZED_TURNS_FOR_SUMMARY:
+        return None
+
+    midpoint = len(populated) // 2
+    first_half, second_half = populated[:midpoint], populated[midpoint:]
+
+    first_props = _category_proportions(first_half)
+    second_props = _category_proportions(second_half)
+    if not first_props or not second_props:
+        return None
+
+    categories = set(first_props) | set(second_props)
+    swings = {category: second_props.get(category, 0.0) - first_props.get(category, 0.0) for category in categories}
+
+    # Categories that lost share (most-negative swing first) and categories
+    # that gained share (most-positive swing first); ties broken
+    # alphabetically for determinism.
+    shrank = sorted(
+        (c for c in categories if swings[c] <= -SWING_THRESHOLD_POINTS),
+        key=lambda c: (swings[c], c),
+    )[:_MAX_CATEGORIES_PER_CLAUSE]
+    grew = sorted(
+        (c for c in categories if swings[c] >= SWING_THRESHOLD_POINTS),
+        key=lambda c: (-swings[c], c),
+    )[:_MAX_CATEGORIES_PER_CLAUSE]
+
+    if not shrank and not grew:
+        return None
+
+    sentences = []
+    if shrank:
+        early = _join_with_and([f"{c} ({first_props[c]:.0f}%)" for c in shrank])
+        sentences.append(f"Early in this range, {early} dominated.")
+    if grew:
+        recent = _join_with_and([f"{c} ({second_props[c]:.0f}%)" for c in grew])
+        sentences.append(f"More recently, that's shifted toward {recent}.")
+    return " ".join(sentences)

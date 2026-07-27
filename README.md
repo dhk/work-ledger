@@ -75,8 +75,9 @@ work-ledger miso --all --since 2026-07-01              # chaptering summary acro
 
 work-ledger timeline                              # how tool usage and approach have changed, day-bucketed (last 30 days by default)
 work-ledger timeline --since 2026-06-01                # a longer look-back
+work-ledger timeline --summary                         # plain-language narrative of the category-mix shift, alongside the usual view
 work-ledger timeline --json                            # machine-readable output
-work-ledger timeline --report                          # same visual style as chapters --report, as HTML
+work-ledger timeline --report                          # same visual style as chapters --report, as HTML (narrative included when there's enough data)
 work-ledger timeline backfill                          # chapter any uncached sessions in range first (small API cost), then show
 
 work-ledger trend                                 # is spend going up or down - cost bucketed by day (last 30 days by default)
@@ -395,6 +396,27 @@ has shifted over time, not just your spend.
   page, same visual system as `chapters --report`/`activity --report`.
 - **`--json`** emits the full per-day activity/category counts for
   programmatic use.
+- **`--summary`** adds a short, deterministic plain-language narrative of
+  how the chapter-category mix has shifted, printed above the usual
+  sparkline view (additive, not a replacement for it): the days-with-data
+  in range are split into a first half and second half, category shares
+  are compared between them, and categories whose share moved by at least
+  10 percentage points get named. For example:
+
+  ```
+  Summary  Early in this range, debugging (42%) and design-planning (18%) dominated. More recently, that's shifted toward refactor (35%) and docs (20%).
+  ```
+
+  If there isn't enough data yet (fewer than 4 populated days, or fewer
+  than 10 categorized turns total, or no category's share moved enough to
+  be worth mentioning), it says so explicitly instead of narrating noise
+  from a handful of data points — same "don't silently show a misleading
+  picture" precedent as the uncached-sessions warning above. `--report`'s
+  HTML output includes the same narrative line whenever there's enough
+  data, with no separate flag needed. See
+  `docs/timeline-narrative-and-maturity-design.md` for the full design
+  (Part 1 of that doc; Part 2, correlating the shift with maturity, is
+  still proposed and not built).
 
 ## Trend (cost over time)
 
