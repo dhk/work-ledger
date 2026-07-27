@@ -168,6 +168,7 @@ stops; there is no sixth network call hiding behind it.
 | `waste.py` | Flagging repeated-read/repeated-subagent patterns and their cost, within one session/chapter and (via `rollup.py`'s `build_rollup_result`/`key_map`, shared with `rollup` itself - #68) across every session of the same initiative (#5) - Show-stage, not prescriptive (that's #6) |
 | `report.py` | Self-contained HTML/PNG rendering shared by `chapters --report` / `activity --report` |
 | `session_pin.py` | The "pin a session" mechanism |
+| `cycle.py` | Detects editable-clone vs. pipx/uv-tool/pip install and runs the matching upgrade step (`work-ledger cycle`, issue #73) - never auto-restarts a long-lived command, only warns if one looks like it's running |
 | `mcp_server.py` | The local MCP server exposing pattern-library tools over stdio |
 | `cli.py` | Argument parsing and the live terminal dashboard; wires every module above into subcommands |
 

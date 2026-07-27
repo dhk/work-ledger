@@ -124,6 +124,36 @@ playwright install chromium
 Without this, `--format png` fails with a clear error telling you to run
 the two commands above — it never silently falls back to HTML.
 
+## Upgrading
+
+```sh
+work-ledger cycle
+```
+
+Detects how this install actually happened and does the matching thing:
+
+- **Editable clone** (Option C above): `git pull` in the repo root. Stops
+  with a clear message first if you have uncommitted local changes,
+  rather than risking a confusing `git pull` failure.
+- **pipx/uv-tool/pip install** (Options A/B above): runs the matching
+  upgrade command (`pipx upgrade work-ledger`, `uv tool upgrade
+  work-ledger`, or `pip install --upgrade work-ledger`/the same git URL
+  you originally installed from).
+
+```sh
+work-ledger cycle --check-status
+```
+
+Reports the detected install mode and exactly what plain `work-ledger
+cycle` would run, without running it — no `git`/`pip`/`pipx`/`uv` command
+executes, nothing changes.
+
+Either way, if something looks like it's listening on `work-ledger
+serve`'s port (default 8765), `cycle` says so and asks you to stop/restart
+it yourself — it never sends a signal to another process, since it has no
+reliable way to know that whatever's listening there is actually the
+`serve` instance you meant.
+
 ## Uninstalling
 
 ```sh

@@ -42,6 +42,20 @@ instinct — it's right here: [`scripts/install.sh`](scripts/install.sh).
 For a slower, more explicit path (an editable clone, troubleshooting), see
 [INSTALL.md](INSTALL.md).
 
+### Upgrading
+
+```sh
+work-ledger cycle                # upgrade this install in place
+work-ledger cycle --check-status # see what it would do, without doing it
+```
+
+Detects whether this is an editable clone (`git pull`) or a
+pipx/uv-tool/pip install (the matching upgrade command) automatically —
+no need to remember which one applies to you. Never auto-restarts
+`serve`/`work-ledger-mcp`; it tells you if one looks like it's running so
+you can restart it yourself. See [INSTALL.md](INSTALL.md#upgrading) for
+detail.
+
 ## Usage
 
 ```

@@ -77,12 +77,13 @@ real recurring pattern, not just one session's data.
 |---|---|---|
 | [#6](https://github.com/dhk/work-ledger/issues/6) | Deterministic-tool substitution for recurring expensive patterns | **Blocked on #5** surfacing a real pattern first — do not start design work ahead of that data |
 
-## Quality/Infra — cross-cutting, not staged, closed out
+## Quality/Infra — cross-cutting, not staged
 
-Correctness and process gaps found auditing the codebase. These don't sit
-on the show/tell/do axis — they're not feature work, they cut across
-whichever stage touches the affected code — so they're tracked here
-without a stage label.
+Correctness and process gaps found auditing the codebase, plus standing
+`CLAUDE.md` requirements (CLI/MCP command conventions) that apply across
+every entry point. These don't sit on the show/tell/do axis — they're not
+feature work, they cut across whichever stage touches the affected code —
+so they're tracked here without a stage label.
 
 | Issue | What |
 |---|---|
@@ -90,8 +91,10 @@ without a stage label.
 | [#46](https://github.com/dhk/work-ledger/issues/46) ✅ | Silent cost loss: `isSidechain` subagents and skill follow-on work aren't attributed |
 | [#47](https://github.com/dhk/work-ledger/issues/47) ✅ | Sonnet 5 introductory pricing isn't modeled, nothing forces a fix after it expires |
 | [#48](https://github.com/dhk/work-ledger/issues/48) ✅ | No coverage threshold enforced in CI |
+| [#73](https://github.com/dhk/work-ledger/issues/73) ✅ | `work-ledger cycle` — the upgrade/restart command `CLAUDE.md`'s CLI/MCP conventions section already required but nothing implemented; detects editable-vs-published automatically |
 
-All four shipped together in one pass (#51).
+#45-48 shipped together in one pass (#51). `--about` (the same convention
+section's third requirement) is still missing everywhere - not yet filed.
 
 ## Using this as a guardrail
 

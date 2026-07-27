@@ -1463,3 +1463,111 @@ def test_run_timeline_summary_reports_not_enough_data(isolated_transcripts_root,
     # Still prints the ordinary sparkline view - --summary never suppresses it.
     assert "Approach mix" in out
     assert "semantic" not in out.lower()
+
+
+# --- run_cycle_command (issue #73) ---------------------------------------
+
+
+def test_run_cycle_command_check_status_editable(monkeypatch, tmp_path, capsys):
+    from work_ledger import cycle as cycle_mod
+
+    monkeypatch.setattr(
+        cycle_mod,
+        "detect_install_mode",
+        lambda: cycle_mod.InstallInfo(mode=cycle_mod.EDITABLE, version="1.0", repo_root=tmp_path),
+    )
+    monkeypatch.setattr(cycle_mod, "is_port_in_use", lambda port: False)
+
+    cli.run_cycle_command(check_status=True)
+
+    out = capsys.readouterr().out
+    assert "editable clone" in out
+    assert str(tmp_path) in out
+    assert "would run `git pull`" in out
+    assert "Nothing detected listening" in out
+
+
+def test_run_cycle_command_check_status_published_shows_upgrade_command(monkeypatch, capsys):
+    from work_ledger import cycle as cycle_mod
+
+    monkeypatch.setattr(
+        cycle_mod, "detect_install_mode", lambda: cycle_mod.InstallInfo(mode=cycle_mod.PUBLISHED_PYPI, version="1.0")
+    )
+    monkeypatch.setattr(cycle_mod, "is_port_in_use", lambda port: False)
+    monkeypatch.setattr(cycle_mod, "detect_installer", lambda: None)
+
+    cli.run_cycle_command(check_status=True)
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "published install (PyPI)" in out
+    assert "pip install --upgrade work-ledger" in out
+
+
+def test_run_cycle_command_warns_when_serve_port_in_use(monkeypatch, capsys):
+    from work_ledger import cycle as cycle_mod
+
+    monkeypatch.setattr(
+        cycle_mod, "detect_install_mode", lambda: cycle_mod.InstallInfo(mode=cycle_mod.PUBLISHED_PYPI, version="1.0")
+    )
+    monkeypatch.setattr(cycle_mod, "is_port_in_use", lambda port: True)
+
+    cli.run_cycle_command(check_status=True)
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "may be running" in out
+    assert "never signals another process" in out
+
+
+def test_run_cycle_command_reports_pulled_commits(monkeypatch, capsys):
+    from work_ledger import cycle as cycle_mod
+
+    report = cycle_mod.CycleReport(
+        install=cycle_mod.InstallInfo(mode=cycle_mod.EDITABLE, version="1.0"),
+        serve_port_in_use=False,
+        serve_port=8765,
+        action="git pull",
+        before="aaaaaaaaaaaaaaaaaaaa",
+        after="bbbbbbbbbbbbbbbbbbbb",
+        changed=True,
+    )
+    monkeypatch.setattr(cycle_mod, "run_cycle", lambda port: report)
+
+    cli.run_cycle_command(check_status=False)
+
+    out = capsys.readouterr().out
+    assert "Pulled new commits" in out
+    assert "aaaaaaaaaa" in out and "bbbbbbbbbb" in out
+
+
+def test_run_cycle_command_reports_already_up_to_date(monkeypatch, capsys):
+    from work_ledger import cycle as cycle_mod
+
+    report = cycle_mod.CycleReport(
+        install=cycle_mod.InstallInfo(mode=cycle_mod.EDITABLE, version="1.0"),
+        serve_port_in_use=False,
+        serve_port=8765,
+        action="git pull",
+        before="aaaaaaaaaaaaaaaaaaaa",
+        after="aaaaaaaaaaaaaaaaaaaa",
+        changed=False,
+    )
+    monkeypatch.setattr(cycle_mod, "run_cycle", lambda port: report)
+
+    cli.run_cycle_command(check_status=False)
+
+    assert "Already up to date" in capsys.readouterr().out
+
+
+def test_run_cycle_command_error_exits_nonzero(monkeypatch, capsys):
+    from work_ledger import cycle as cycle_mod
+
+    def _raise(port):
+        raise cycle_mod.CycleError("uncommitted changes present")
+
+    monkeypatch.setattr(cycle_mod, "run_cycle", _raise)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.run_cycle_command(check_status=False)
+
+    assert exc_info.value.code == 1
+    assert "uncommitted changes present" in capsys.readouterr().out

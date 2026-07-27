@@ -1301,6 +1301,68 @@ def run_rollup(
     _print_semantic_matching_note(console, result, confirm)
 
 
+_INSTALL_MODE_LABELS = {
+    "editable": "editable clone (pip install -e .)",
+    "published-pypi": "published install (PyPI)",
+    "published-git": "published install (git ref)",
+}
+
+
+def run_cycle_command(check_status: bool = False, port: int | None = None) -> None:
+    """`work-ledger cycle` (issue #73) - the upgrade/restart path
+    CLAUDE.md's "CLI/MCP command conventions" section requires. See
+    cycle.py's module docstring and docs/cycle-command-design.md for the
+    full mechanism; this is just the terminal presentation layer."""
+    from work_ledger import cycle as cycle_mod
+
+    console = Console()
+    resolved_port = port if port is not None else cycle_mod.DEFAULT_SERVE_PORT
+
+    try:
+        report = cycle_mod.check_status(resolved_port) if check_status else cycle_mod.run_cycle(resolved_port)
+    except cycle_mod.CycleError as e:
+        console.print(f"[red]{escape(str(e))}[/red]")
+        sys.exit(1)
+
+    mode_label = _INSTALL_MODE_LABELS.get(report.install.mode, report.install.mode)
+    console.print(f"[bold]Install mode:[/bold] {mode_label}")
+    if report.install.mode == "editable":
+        console.print(f"[dim]Repo: {report.install.repo_root}[/dim]")
+    else:
+        console.print(f"[dim]Version: {report.install.version}[/dim]")
+
+    if report.serve_port_in_use:
+        console.print(
+            f"[yellow]Something is listening on 127.0.0.1:{report.serve_port} - looks like "
+            "`work-ledger serve` may be running. Stop it (Ctrl-C) before or after cycling and "
+            "restart it yourself afterward; this command never signals another process.[/yellow]"
+        )
+    else:
+        console.print(f"[dim]Nothing detected listening on 127.0.0.1:{report.serve_port}.[/dim]")
+
+    if check_status:
+        console.print()
+        if report.install.mode == "editable":
+            console.print("[dim]Plain `work-ledger cycle` would run `git pull` in the repo above.[/dim]")
+        else:
+            command = " ".join(cycle_mod.upgrade_command(report.install))
+            console.print(f"[dim]Plain `work-ledger cycle` would run: {command}[/dim]")
+        return
+
+    console.print()
+    if report.action == "git pull":
+        if report.changed:
+            console.print(f"[green]Pulled new commits: {report.before[:10]} → {report.after[:10]}[/green]")
+        else:
+            console.print(f"[green]Already up to date at {report.before[:10]}.[/green]")
+    else:
+        console.print(f"[dim]Ran: {report.action}[/dim]")
+        if report.changed:
+            console.print(f"[green]Upgraded: {report.before} → {report.after}[/green]")
+        else:
+            console.print(f"[green]Already at the latest published version ({report.before}).[/green]")
+
+
 def _print_status_checks(console: Console) -> tuple[bool, str, bool, str]:
     """Print the two `--check-status` checks (chaptering credentials, PNG
     rendering) and return their (ok, message) pairs so the caller can
@@ -2715,6 +2777,27 @@ def main():
         help="Only list sessions last modified on/before this date (YYYY-MM-DD) on the landing page",
     )
 
+    cycle_parser = subparsers.add_parser(
+        "cycle",
+        help="Upgrade this install in place (issue #73) - `git pull` for an editable clone, or "
+        "the matching pipx/uv-tool/pip upgrade command for a published install, detected "
+        "automatically. Never auto-restarts `serve`/`work-ledger-mcp` - see --check-status.",
+    )
+    cycle_parser.add_argument(
+        "--check-status",
+        action="store_true",
+        help="Report the detected install mode and what `cycle` would run, without changing "
+        "anything - reads no files beyond package metadata, runs no git/pip/pipx/uv command.",
+    )
+    cycle_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to check for a running `work-ledger serve` on (default: 8765, matching "
+        "serve's own default - pass the same --port you used with serve if you started it on "
+        "a different one)",
+    )
+
     args = parser.parse_args()
     _check_transcript_flag_placement(sys.argv[1:], args.command)
 
@@ -2725,6 +2808,10 @@ def main():
             set_threshold=args.set_threshold,
             as_json=args.json,
         )
+        return
+
+    if args.command == "cycle":
+        run_cycle_command(check_status=args.check_status, port=args.port)
         return
 
     if args.command == "session":
