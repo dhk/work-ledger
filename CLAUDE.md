@@ -96,6 +96,26 @@ command's own upgrade story is more than "git pull, done" (a background/
 daemon process in particular), build the actual cycle command - don't
 just describe the steps and leave them manual.
 
+### "About" block
+
+Every user-facing surface this project ships — every CLI command, the MCP
+server, the web UI (`serve`), and any generated report — should be able
+to show an about block with exactly these fields:
+
+- Short description (what this is, one line)
+- Version (`pyproject.toml`'s `[project] version`)
+- Last update date/time (of the running code)
+- Commit head, if known (the git SHA it was built/run from - not always
+  resolvable from an installed package, only from a git checkout; degrade
+  to omitting the field, not guessing)
+- Author: `davehk@gmail.com`, `www.dhk.io`, and the repo location
+  (`https://github.com/dhk/work-ledger`)
+
+This is metadata hygiene, not a feature in itself - the point is that
+anything this tool produces (a screenshot, an exported report, a running
+server someone else stumbled onto) can be traced back to exactly what
+produced it and where to find the source.
+
 ## Development
 
 ```sh
