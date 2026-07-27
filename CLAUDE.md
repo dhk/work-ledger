@@ -82,8 +82,11 @@ these get built and documented, not a one-off preference:
     landed on `main` but hasn't been tagged/published yet, rather than
     letting the two cycles look interchangeable.
   Don't leave "how do I get my update running" as a multi-step dance the
-  user has to reconstruct by hand each time — see `INSTALL.md`'s existing
-  "Verify it worked" precedent for the shape this should take.
+  user has to reconstruct by hand each time — `work-ledger cycle` (issue
+  #73: detects editable-vs-published automatically, `--check-status` for
+  a dry run, never auto-restarts a long-lived command, only warns if one
+  looks like it's running) is the existing precedent for the shape this
+  should take.
 - **A `pipx install` path**, documented alongside whatever `pip`/`git+`
   path already exists.
 - **A `uv tool install` (and `uvx`, for try-without-installing) path**,
