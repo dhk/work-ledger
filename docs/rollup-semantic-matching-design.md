@@ -1,9 +1,13 @@
 # Design: Optional Semantic Matching for Rollup/Cross-Session Clustering
 
-Status: proposed, not yet built. Author's recommendation section reflects
-decisions the repo owner already made in a design discussion (trigger
-shape, no versioning/journaling, `--confirm` scope) — those are settled,
-not open. What's still open is implementation detail, see Open Questions.
+Status: implemented (issue #68). `work_ledger/rollup_semantic.py` is the
+new module; `rollup.build_rollup_result`/`build_rollup` fold its output
+back into cluster membership, and `waste.find_cross_session_waste_patterns`
+consumes that same result (via its `key_map`) rather than re-deriving its
+own clustering - see those modules' docstrings for the final shape. The
+Open Questions below were resolved during implementation (noted inline);
+everything else in this doc's Architecture/Non-goals sections was already
+settled and is unchanged from what shipped.
 Author: written by Claude, from analysis + a design conversation with the
 repo owner.
 Related: issue #68, `work_ledger/rollup.py` (issue #3, what this extends),
@@ -152,16 +156,35 @@ unchanged with the env var unset. Existing rollup clusters aren't cached
 between runs today (rebuilt fresh every invocation from cached chapters),
 so there's no existing state to migrate.
 
-## Open questions
+## Open questions (resolved during implementation)
 
 1. Exact module/function boundary for the shared clustering entrypoint —
    does `build_rollup()` grow an optional semantic step internally, or
    does `cli.py` compose `build_rollup()` (deterministic) +
-   a new semantic-merge step explicitly? Implementation detail, not
-   decided here.
+   a new semantic-merge step explicitly? **Resolved:** `build_rollup()`
+   keeps its original signature/return shape (a plain `list[RollupCluster]`,
+   byte-for-byte unchanged when the env var is unset) and now delegates to
+   a richer sibling, `build_rollup_result()`, which returns the clusters
+   plus `semantic_merges`/`semantic_fallback_reason`/`key_map`.
+   `waste.find_cross_session_waste_patterns` takes an optional
+   pre-computed `RollupResult` (defaulting to computing its own via
+   `build_rollup_result` if not given) so `cli.py` can compute clustering
+   once per invocation and hand the same result to both the pattern-mining
+   logic and the `--confirm` output - this is what guarantees `rollup` and
+   `waste --cross-session` agree, and avoids a second (uncached, so
+   possibly different) Haiku call in the same run.
 2. Batch size ceiling for the Haiku call if someone has hundreds of
    singleton titles in one `rollup` run — one call regardless, or
-   chunked? Untested; revisit once real singleton-count data is in hand.
+   chunked? **Resolved (for now):** one call regardless, as this doc
+   originally described - still untested at very large singleton counts;
+   revisit if that turns out to be a problem in practice.
 3. Exact `--confirm` output shape (which titles merged into which
    cluster, and how much detail) — not designed in detail here, kept
-   deliberately light per the Non-goals note.
+   deliberately light per the Non-goals note. **Resolved:** one line per
+   merged group, e.g. `Merged via semantic matching: 'Execute
+   reading-list-builder daily flow' + 'Initialize reading list builder
+   daily flow' → 'reading list builder'` - just the titles and what they
+   merged into, nothing else. Independent of `--confirm`, a shorter note
+   is always printed when semantic matching is on (a merge count, "found
+   nothing new to merge", or the fallback reason) so a run's outcome is
+   never silent even without `--confirm`.

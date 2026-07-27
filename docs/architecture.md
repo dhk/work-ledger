@@ -95,7 +95,7 @@ model-pricing change (see #47) needs to be reflected.
 
 ## Network calls (the exhaustive list)
 
-Everything above this line is 100% local. There are exactly four places
+Everything above this line is 100% local. There are exactly five places
 work-ledger talks to a network, all opt-in or explicitly disclosed, never
 silent:
 
@@ -129,9 +129,23 @@ silent:
    `WORK_LEDGER_FINDINGS_TOKEN` bearer credential, on top of the
    `patterns enable` gate — a stricter bar than the counters since this
    one carries free text. Same silent-no-op-if-unconfigured behavior.
+5. **`rollup`'s semantic-matching pass** (`rollup_semantic.py`, opt-in via
+   `WORK_LEDGER_ROLLUP_MATCHING=semantic`, default `deterministic` — #68)
+   — a single batched Haiku call proposing merges among whatever
+   `rollup.py`'s deterministic title-normalization pass left as singleton
+   clusters, sent only when that env var is set. Same disclosure standard
+   as #2's Ollama addition: never silent, and the deterministic pass (and
+   everything downstream of it — `rollup`, `waste --cross-session`) keeps
+   working exactly as before if this call fails for any reason (no
+   credentials, a rejected key, a refusal, a malformed response, any
+   other exception) — it degrades to the deterministic-only result with a
+   distinguishable printed note, never blocking `rollup`/`waste
+   --cross-session`'s core functionality on its availability. No caching
+   or versioning of merge decisions — see
+   `docs/rollup-semantic-matching-design.md`'s Non-goals.
 
 `export` is explicitly **not** on this list — it writes a local file and
-stops; there is no fifth network call hiding behind it.
+stops; there is no sixth network call hiding behind it.
 
 ## Module map
 
@@ -149,8 +163,9 @@ stops; there is no fifth network call hiding behind it.
 | `history.py` | Local sqlite session-history store (`~/.config/work-ledger/history.db`); incremental, mtime-gated sync - additive, not yet read by anything else (#42) |
 | `timeline.py` | Day-bucketing `activity.py`'s categorization plus cached chapter categories - how practice changed over time, not what it cost |
 | `trend.py` | Day/week-bucketing `Turn.cost_usd` - is spend trending up or down, the cost axis `timeline.py` deliberately excludes |
-| `rollup.py` | Clustering chapters into recurring initiatives across sessions by deterministic title normalization, and summing cost per cluster (#3) - reads only already-cached chapters, never triggers a chaptering pass |
-| `waste.py` | Flagging repeated-read/repeated-subagent patterns and their cost, within one session/chapter and (via `rollup.py`'s clustering) across every session of the same initiative (#5) - Show-stage, not prescriptive (that's #6) |
+| `rollup.py` | Clustering chapters into recurring initiatives across sessions by deterministic title normalization, plus an optional semantic second pass (#68, via `rollup_semantic.py`), and summing cost per cluster (#3) - reads only already-cached chapters, never triggers a chaptering pass; `build_rollup_result`'s `key_map` is the one shared clustering entrypoint `waste.py` also uses |
+| `rollup_semantic.py` | Optional, opt-in (`WORK_LEDGER_ROLLUP_MATCHING=semantic`) batched Haiku pass proposing merges among `rollup.py`'s still-singleton clusters (#68) - never cached/versioned, always degrades to the deterministic-only result on any failure |
+| `waste.py` | Flagging repeated-read/repeated-subagent patterns and their cost, within one session/chapter and (via `rollup.py`'s `build_rollup_result`/`key_map`, shared with `rollup` itself - #68) across every session of the same initiative (#5) - Show-stage, not prescriptive (that's #6) |
 | `report.py` | Self-contained HTML/PNG rendering shared by `chapters --report` / `activity --report` |
 | `session_pin.py` | The "pin a session" mechanism |
 | `mcp_server.py` | The local MCP server exposing pattern-library tools over stdio |

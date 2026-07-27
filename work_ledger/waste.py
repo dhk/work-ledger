@@ -10,16 +10,25 @@ cost. Two halves, both issue #5:
 - **Cross-session** (`find_cross_session_waste_patterns`) - the same two
   pattern kinds, but comparing across every session belonging to the same
   recurring initiative, using #3's cross-session clustering
-  (`rollup.normalize_title`) to decide what counts as "the same initiative"
-  in the first place. This is why it depends on #3: without a stable
-  initiative grouping, there's no principled way to say a file re-read in
-  session A and a file re-read in unrelated session B are "the same
-  pattern" rather than a coincidence. Only reads already-cached chapters
-  (never triggers a paid chaptering pass, same invariant as rollup.py) and
-  only reports a pattern once it spans 2+ distinct sessions - a repeat
-  confined to one session is already fully covered by the within-session
-  half above, so surfacing it again here would be a duplicate, not new
-  information.
+  (`rollup.build_rollup_result`) to decide what counts as "the same
+  initiative" in the first place. This is why it depends on #3: without a
+  stable initiative grouping, there's no principled way to say a file
+  re-read in session A and a file re-read in unrelated session B are "the
+  same pattern" rather than a coincidence. Only reads already-cached
+  chapters (never triggers a paid chaptering pass, same invariant as
+  rollup.py) and only reports a pattern once it spans 2+ distinct sessions
+  - a repeat confined to one session is already fully covered by the
+  within-session half above, so surfacing it again here would be a
+  duplicate, not new information.
+
+  As of #68, this goes through `rollup.build_rollup_result` rather than
+  calling `rollup.normalize_title` and re-deriving its own clustering: the
+  cluster a chapter falls into (including any `WORK_LEDGER_ROLLUP_MATCHING
+  =semantic` merges) is computed exactly once, by `rollup.py`, and this
+  module just looks a chapter's deterministic key up in the resulting
+  `key_map` - the "one shared clustering entrypoint" the design doc's
+  Architecture section requires, so `rollup` and `waste --cross-session`
+  can never silently disagree about what counts as "the same initiative."
 
 Both halves are Show-stage (see CLAUDE.md's rubric): each surfaces "this
 pattern happened N times, costing $X total" and stops there. Deliberately
@@ -41,7 +50,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from work_ledger.chapters import Chapter, UNSORTED_TITLE, cached_chapters
-from work_ledger.rollup import normalize_title
+from work_ledger.rollup import RollupResult, build_rollup_result, normalize_title
 from work_ledger.transcript import TranscriptTailer, Unit
 
 # "More than once" - two occurrences is already a repeat worth surfacing;
@@ -179,15 +188,22 @@ class CrossSessionWastePattern:
     cost_usd: float
 
 
-def _chapter_cluster_map(transcripts: list[Path]) -> dict[Path, dict[str, str]]:
-    """For each transcript, a {prompt_id: normalized_cluster_key} map built
-    from its already-cached chapters only (UNSORTED_TITLE chapters and
+def _chapter_cluster_map(transcripts: list[Path], key_map: dict[str, str]) -> dict[Path, dict[str, str]]:
+    """For each transcript, a {prompt_id: cluster_key} map built from its
+    already-cached chapters only (UNSORTED_TITLE chapters and
     unresolvable/empty-after-normalization titles excluded - same
     exclusions rollup.build_rollup makes, so a prompt only ever gets a
     cluster key when rollup would also count it toward a real initiative).
     A transcript with no cached chapters maps to {} and so never
     contributes to cross-session mining - matching rollup.py's own
-    "run chapters first" precedent."""
+    "run chapters first" precedent.
+
+    `key_map` is `RollupResult.key_map` from the exact same transcript set
+    (see `find_cross_session_waste_patterns`) - a chapter's own
+    deterministic `normalize_title()` key is looked up in it (defaulting
+    to that same key when absent, i.e. when semantic matching is off or
+    didn't touch this key) so a chapter ends up under the *same* cluster
+    key `rollup` itself would put it under, semantic merges included."""
     result: dict[Path, dict[str, str]] = {}
     for path in transcripts:
         chapters = cached_chapters(path)
@@ -195,40 +211,48 @@ def _chapter_cluster_map(transcripts: list[Path]) -> dict[Path, dict[str, str]]:
         for chapter in chapters or []:
             if chapter.title == UNSORTED_TITLE:
                 continue
-            key = normalize_title(chapter.title)
-            if not key:
+            raw_key = normalize_title(chapter.title)
+            if not raw_key:
                 continue
+            key = key_map.get(raw_key, raw_key)
             for prompt_id in chapter.prompt_ids:
                 prompt_to_key[prompt_id] = key
         result[path] = prompt_to_key
     return result
 
 
-def _cluster_display_titles(transcripts: list[Path]) -> dict[str, str]:
-    """First-seen original chapter title per normalized cluster key, across
-    all transcripts - mirrors RollupCluster.display_title so the same
-    initiative is named identically in `rollup` and here."""
-    titles: dict[str, str] = {}
-    for path in transcripts:
-        for chapter in cached_chapters(path) or []:
-            if chapter.title == UNSORTED_TITLE:
-                continue
-            key = normalize_title(chapter.title)
-            if key and key not in titles:
-                titles[key] = chapter.title
-    return titles
+def _cluster_display_titles(rollup_result: RollupResult) -> dict[str, str]:
+    """Cluster key -> display title, straight from `rollup`'s own cluster
+    list - the same source `rollup` itself renders, rather than a second,
+    independently-derived "first-seen title per key" pass (which is what
+    this used to do before #68, and could disagree with `rollup` under
+    semantic matching)."""
+    return {c.normalized_key: c.display_title for c in rollup_result.clusters}
 
 
-def find_cross_session_waste_patterns(transcripts: list[Path]) -> list[CrossSessionWastePattern]:
+def find_cross_session_waste_patterns(
+    transcripts: list[Path], rollup_result: RollupResult | None = None
+) -> list[CrossSessionWastePattern]:
     """The same two pattern kinds as `find_waste_patterns`, but scoped to a
     recurring initiative (a rollup cluster) across every session it
     touched, instead of one chapter/session. Only reads chapters already
     cached on disk - never triggers a chaptering pass (see module
     docstring) - and only reports a pattern once it spans 2+ distinct
     sessions, since a single-session repeat is already fully covered by
-    `find_waste_patterns`."""
-    display_titles = _cluster_display_titles(transcripts)
-    cluster_maps = _chapter_cluster_map(transcripts)
+    `find_waste_patterns`.
+
+    Clustering itself comes from `rollup.build_rollup_result` (see module
+    docstring's #68 note) - this function never calls `normalize_title`
+    to build a cluster key on its own; it only uses it to look a chapter's
+    key up in `key_map`. `rollup_result` can be passed in already-computed
+    (cli.py's `run_waste_cross_session` does this, so it can also print
+    what the semantic pass did via the exact same result, without paying
+    for - and risking a different answer from - a second Haiku call);
+    left as None, it's computed fresh from `transcripts` here."""
+    if rollup_result is None:
+        rollup_result = build_rollup_result(transcripts)
+    display_titles = _cluster_display_titles(rollup_result)
+    cluster_maps = _chapter_cluster_map(transcripts, rollup_result.key_map)
 
     read_groups: dict[tuple[str, str], list[Unit]] = {}
     read_sessions: dict[tuple[str, str], set[str]] = {}
