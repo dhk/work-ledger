@@ -146,6 +146,8 @@ what each test file covers.
 
 Substantial design decisions get a doc under `docs/` (Status/Author/
 Related header, Problem, Goals/Non-goals, Open questions — see any
-existing file there for the shape) plus a linked GitHub issue. Keep
+existing file there for the shape) plus a linked GitHub issue, and the
+doc itself gets committed via its own PR — design doc + issue + PR,
+always this pattern, not a doc dropped straight onto `main`. Keep
 "proposed" docs and "decided" sections clearly distinguished — several
 existing docs mix both, always labeled.
