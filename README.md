@@ -535,6 +535,7 @@ work-ledger waste --report --format png --out x.png      # same, as a PNG image
 work-ledger waste --cross-session                        # same pattern kinds, across every session of the same initiative
 work-ledger waste --cross-session --since 2026-07-01     # limit the cross-session sweep to a date range
 work-ledger waste --cross-session --json                 # machine-readable output
+work-ledger waste --cross-session --confirm               # with WORK_LEDGER_ROLLUP_MATCHING=semantic, show what merged
 ```
 
 `work-ledger` can tell you *what* something cost; `waste` starts answering
@@ -562,16 +563,24 @@ scoped to "whole session."
 
 **`--cross-session` looks across every session of the same recurring
 initiative**, using [issue #3](https://github.com/dhk/work-ledger/issues/3)'s
-deterministic title-normalization clustering to decide what counts as
-"the same initiative" in the first place — the same file re-read across
-three unrelated sessions is a coincidence, not a pattern, unless those
-three sessions are actually the same ongoing initiative. It only reads
-chapters already cached (never triggers a chaptering pass, same as
-`rollup`), and only reports a pattern once it spans 2+ distinct sessions —
-a repeat confined to one session is already fully covered by plain
-`waste`, so it isn't reported twice. Can't be combined with
-`--transcript`/`--session`/`--report`; use `--since`/`--until` to limit
-the sweep, same as `rollup`.
+clustering — the same clustering `rollup` (below) computes, deterministic
+by default and optionally extended by its semantic matching pass — to
+decide what counts as "the same initiative" in the first place. The same
+file re-read across three unrelated sessions is a coincidence, not a
+pattern, unless those three sessions are actually the same ongoing
+initiative. It only reads chapters already cached (never triggers a
+chaptering pass, same as `rollup`), and only reports a pattern once it
+spans 2+ distinct sessions — a repeat confined to one session is already
+fully covered by plain `waste`, so it isn't reported twice. Can't be
+combined with `--transcript`/`--session`/`--report`; use `--since`/
+`--until` to limit the sweep, same as `rollup`.
+
+`--cross-session` shares `rollup`'s `WORK_LEDGER_ROLLUP_MATCHING`
+env var and `--confirm` flag (see `rollup`'s own section below for the
+full explanation) — the two commands are guaranteed to agree on cluster
+membership, by construction, since `waste --cross-session` computes its
+clustering through the exact same code `rollup` does rather than a
+second, independent pass.
 
 **Deliberately not prescriptive**, for both halves. `waste` surfaces the
 pattern and its cost and stops there — it doesn't suggest what to do
@@ -586,6 +595,7 @@ about what the tool likely reveals.
 work-ledger rollup                                         # total cost per recurring initiative, across every session
 work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date range
 work-ledger rollup --json                                  # machine-readable output
+work-ledger rollup --confirm                                # with WORK_LEDGER_ROLLUP_MATCHING=semantic, show what merged
 ```
 
 `chapters --all` already lists every session side by side with its own
@@ -619,6 +629,43 @@ cluster, sorted most-expensive-first.
 - **No default date window** (unlike `trend`/`timeline`'s 30-day
   default): the point of a rollup is a true total across every session an
   initiative touched, not a recent slice.
+
+### Optional semantic matching (`WORK_LEDGER_ROLLUP_MATCHING=semantic`, issue #68)
+
+Run against real usage, v1's deterministic clustering above came back
+almost entirely singletons — chapters describing the same obviously
+recurring work, worded differently each time, never clustered together at
+all (see [`docs/rollup-semantic-matching-design.md`](docs/rollup-semantic-matching-design.md)
+for the full investigation). Setting `WORK_LEDGER_ROLLUP_MATCHING=semantic`
+opts into a second pass: whatever chapter titles are still singletons
+after the deterministic pass above are batched into **one** Claude Haiku
+call (structured-output, enforced JSON schema — the same discipline
+`chapters`' own Haiku pass uses) proposing merges among just that batch.
+
+- **Off by default** (`deterministic`, today's behavior, unchanged) —
+  this is a persistent, fire-and-forget environment variable, not a
+  per-invocation CLI flag, mirroring `WORK_LEDGER_CHAPTER_BACKEND`'s exact
+  shape from issue #16. Read fresh on every run, so flipping it takes
+  effect immediately.
+- **One shared clustering entrypoint.** `rollup` and `waste --cross-session`
+  both compute clustering through the same code (`rollup.build_rollup_result`),
+  so enabling this env var changes what both commands consider "the same
+  initiative" identically — they can't silently disagree.
+- **Every failure mode degrades gracefully.** No credentials, a rejected
+  key, a refusal, a malformed response, or any other exception all fall
+  back silently to the deterministic-only result, with a distinguishable
+  printed note — never a crash, and never silently identical to "nothing
+  new to merge this run."
+- **No caching or versioning of merge decisions.** Every run with
+  semantic matching on re-proposes merges fresh from whatever's still a
+  singleton at that moment; cluster membership can drift run to run as an
+  accepted consequence, not a bug.
+- **`--confirm`** (on both `rollup` and `waste --cross-session`) prints
+  exactly which singleton titles merged into which cluster, when the
+  semantic pass actually ran and found something to merge — deliberately
+  minimal, visibility only, not an audit trail.
+- Uses `chapters.CHAPTER_MODEL` (`claude-haiku-4-5`, the same model
+  `chapters` itself already calls) — no separate model configuration.
 
 ## Pattern library (opt-in, experimental)
 

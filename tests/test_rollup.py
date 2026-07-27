@@ -1,5 +1,6 @@
 from work_ledger.chapters import UNSORTED_TITLE, Chapter, Section, _save_cache
-from work_ledger.rollup import RollupCluster, build_rollup, normalize_title
+from work_ledger.rollup import RollupCluster, build_rollup, build_rollup_result, normalize_title
+from work_ledger.rollup_semantic import ROLLUP_MATCHING_ENV_VAR, SemanticMergeResult
 
 from .conftest import assistant_lines, user_entry, write_jsonl
 
@@ -243,3 +244,184 @@ def test_rollup_cluster_num_sessions_property():
     # sessions list is expected to already be deduped by build_rollup - the
     # property itself is a plain len(), not its own dedup pass.
     assert cluster.num_sessions == 3
+
+
+# --- build_rollup_result: the optional #68 semantic pass -------------------
+#
+# rollup_semantic.propose_merges is mocked directly here (rather than the
+# Anthropic SDK) - test_rollup_semantic.py already covers propose_merges's
+# own mocked-Anthropic-call behavior and failure handling in isolation;
+# these tests are about whether build_rollup_result folds a given
+# SemanticMergeResult back into cluster membership correctly.
+
+
+def _make_singleton(tmp_path, name, prompt_id, title, cost_tokens=(1000, 200)):
+    path = tmp_path / f"{name}.jsonl"
+    _write_session(path, prompt_id, cost_tokens=cost_tokens)
+    _save_cache(
+        path,
+        chaptered_ids=[prompt_id],
+        chapters=[Chapter(title=title, sections=[Section(title="s", prompt_ids=[prompt_id])])],
+    )
+    return path
+
+
+def test_build_rollup_result_default_mode_is_deterministic_only(tmp_path, monkeypatch):
+    """Env var unset (the default) - build_rollup_result must not even call
+    propose_merges, and its clusters must be identical to plain
+    build_rollup's (byte-for-byte unchanged default behavior)."""
+    monkeypatch.delenv(ROLLUP_MATCHING_ENV_VAR, raising=False)
+
+    def boom(titles):
+        raise AssertionError("propose_merges must not be called when matching mode is deterministic")
+
+    monkeypatch.setattr("work_ledger.rollup_semantic.propose_merges", boom)
+
+    path_a = _make_singleton(tmp_path, "a", "p1", "Execute reading-list-builder daily flow")
+    path_b = _make_singleton(tmp_path, "b", "p2", "Initialize reading list builder daily flow")
+
+    result = build_rollup_result([path_a, path_b])
+    plain = build_rollup([path_a, path_b])
+
+    assert result.clusters == plain
+    assert len(result.clusters) == 2  # genuinely different normalized keys - stay singletons
+    assert result.semantic_merges == []
+    assert result.semantic_fallback_reason is None
+    assert result.key_map == {}
+
+
+def test_build_rollup_result_semantic_merges_singleton_titles(tmp_path, monkeypatch):
+    monkeypatch.setenv(ROLLUP_MATCHING_ENV_VAR, "semantic")
+
+    path_a = _make_singleton(tmp_path, "a", "p1", "Execute reading-list-builder daily flow", cost_tokens=(1000, 200))
+    path_b = _make_singleton(tmp_path, "b", "p2", "Initialize reading list builder daily flow", cost_tokens=(2000, 400))
+    path_c = _make_singleton(tmp_path, "c", "p3", "Fix the login bug", cost_tokens=(500, 100))
+
+    def fake_propose_merges(titles):
+        assert set(titles) == {
+            "Execute reading-list-builder daily flow",
+            "Initialize reading list builder daily flow",
+            "Fix the login bug",
+        }
+        return SemanticMergeResult(
+            groups=[["Execute reading-list-builder daily flow", "Initialize reading list builder daily flow"]]
+        )
+
+    monkeypatch.setattr("work_ledger.rollup_semantic.propose_merges", fake_propose_merges)
+
+    result = build_rollup_result([path_a, path_b, path_c])
+
+    assert result.semantic_fallback_reason is None
+    assert len(result.semantic_merges) == 1
+    merge = result.semantic_merges[0]
+    assert merge.titles == [
+        "Execute reading-list-builder daily flow",
+        "Initialize reading list builder daily flow",
+    ]
+    assert merge.merged_title == "Execute reading-list-builder daily flow"  # first-seen title kept
+
+    # Two singleton clusters folded into one; the unrelated one stays separate.
+    assert len(result.clusters) == 2
+    merged_cluster = next(c for c in result.clusters if c.display_title == "Execute reading-list-builder daily flow")
+    assert merged_cluster.num_sessions == 2
+    assert sorted(merged_cluster.sessions) == sorted([path_a.stem, path_b.stem])
+    assert merged_cluster.num_chapters == 2
+    assert merged_cluster.cost_usd > 0
+
+    unrelated_cluster = next(c for c in result.clusters if c.display_title == "Fix the login bug")
+    assert unrelated_cluster.num_sessions == 1
+
+    # key_map lets waste.py agree with this same clustering.
+    key_a = normalize_title("Execute reading-list-builder daily flow")
+    key_b = normalize_title("Initialize reading list builder daily flow")
+    assert result.key_map[key_a] == key_a  # primary (first-seen) key maps to itself
+    assert result.key_map[key_b] == key_a
+
+
+def test_build_rollup_result_semantic_does_not_merge_unrelated_titles(tmp_path, monkeypatch):
+    """The model declining to merge (empty groups) is not a failure - no
+    fallback_reason, clusters unchanged from the deterministic pass."""
+    monkeypatch.setenv(ROLLUP_MATCHING_ENV_VAR, "semantic")
+
+    path_a = _make_singleton(tmp_path, "a", "p1", "Fix the login bug")
+    path_b = _make_singleton(tmp_path, "b", "p2", "Fix the checkout bug")
+
+    monkeypatch.setattr(
+        "work_ledger.rollup_semantic.propose_merges", lambda titles: SemanticMergeResult(groups=[])
+    )
+
+    result = build_rollup_result([path_a, path_b])
+
+    assert len(result.clusters) == 2
+    assert result.semantic_merges == []
+    assert result.semantic_fallback_reason is None
+
+
+def test_build_rollup_result_semantic_failure_falls_back_to_deterministic(tmp_path, monkeypatch):
+    """A degraded semantic pass (no credentials, refusal, etc. - already
+    covered in isolation by test_rollup_semantic.py) must still leave
+    build_rollup_result returning the deterministic clustering, plus a
+    distinguishable fallback_reason - never a crash, never silently
+    identical to "nothing new to merge"."""
+    monkeypatch.setenv(ROLLUP_MATCHING_ENV_VAR, "semantic")
+
+    path_a = _make_singleton(tmp_path, "a", "p1", "Fix the login bug")
+    path_b = _make_singleton(tmp_path, "b", "p2", "Fix the checkout bug")
+
+    monkeypatch.setattr(
+        "work_ledger.rollup_semantic.propose_merges",
+        lambda titles: SemanticMergeResult(groups=[], fallback_reason="semantic matching call failed (boom)"),
+    )
+
+    result = build_rollup_result([path_a, path_b])
+
+    assert len(result.clusters) == 2  # deterministic-only result, untouched
+    assert result.semantic_merges == []
+    assert result.semantic_fallback_reason == "semantic matching call failed (boom)"
+
+
+def test_build_rollup_result_skips_semantic_call_with_fewer_than_two_singletons(tmp_path, monkeypatch):
+    """Nothing to batch a call for when there's at most one singleton -
+    propose_merges must not even be called (no pointless $0 API call)."""
+    monkeypatch.setenv(ROLLUP_MATCHING_ENV_VAR, "semantic")
+
+    path_a = _make_singleton(tmp_path, "a", "p1", "The only initiative")
+
+    def boom(titles):
+        raise AssertionError("propose_merges must not be called with fewer than 2 singleton titles")
+
+    monkeypatch.setattr("work_ledger.rollup_semantic.propose_merges", boom)
+
+    result = build_rollup_result([path_a])
+    assert len(result.clusters) == 1
+    assert result.semantic_merges == []
+
+
+def test_build_rollup_result_semantic_pass_ignores_already_multi_session_clusters(tmp_path, monkeypatch):
+    """A cluster that already spans 2+ sessions via deterministic matching
+    is not a singleton and must not be fed into the semantic batch, even
+    if its title superficially resembles a real singleton's."""
+    monkeypatch.setenv(ROLLUP_MATCHING_ENV_VAR, "semantic")
+
+    path_a = _make_singleton(tmp_path, "a", "p1", "Fix the double-counting bug")
+    path_b = _make_singleton(tmp_path, "b", "p2", "fix double counting bug")  # matches deterministically
+    path_c = _make_singleton(tmp_path, "c", "p3", "Some other singleton")
+    path_d = _make_singleton(tmp_path, "d", "p4", "Yet another singleton")
+
+    seen_batches = []
+
+    def fake_propose_merges(titles):
+        seen_batches.append(list(titles))
+        return SemanticMergeResult(groups=[])
+
+    monkeypatch.setattr("work_ledger.rollup_semantic.propose_merges", fake_propose_merges)
+
+    result = build_rollup_result([path_a, path_b, path_c, path_d])
+
+    assert len(seen_batches) == 1
+    assert "Some other singleton" in seen_batches[0]
+    assert "Yet another singleton" in seen_batches[0]
+    assert "Fix the double-counting bug" not in seen_batches[0]  # already a 2-session cluster
+    # The deterministic pass already merged path_a/path_b into one 2-session cluster.
+    multi_cluster = next(c for c in result.clusters if c.num_sessions == 2)
+    assert sorted(multi_cluster.sessions) == sorted([path_a.stem, path_b.stem])

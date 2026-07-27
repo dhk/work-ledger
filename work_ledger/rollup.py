@@ -45,6 +45,25 @@ sessions' unrelated fallback chapters together under one cluster would
 be a pure false positive - the title collision is an artifact of the
 fallback, not a recurring initiative.
 
+## Optional v2: semantic matching for what's left a singleton (#68)
+
+The false-negative tradeoff above is real: run against real usage, this
+deterministic pass came back almost entirely singletons (see
+`docs/rollup-semantic-matching-design.md`'s Problem section). `build_rollup`
+now optionally follows the deterministic pass with a second, batched Haiku
+call (`rollup_semantic.py`) that proposes merges among just the singleton
+clusters left over - gated behind `WORK_LEDGER_ROLLUP_MATCHING=semantic`
+(default `deterministic`, today's unchanged behavior), read fresh on every
+call, no CLI flag (see rollup_semantic.py's module docstring for why).
+`build_rollup` itself keeps returning exactly what it always has - a plain
+`list[RollupCluster]`, byte-for-byte unchanged when the env var is unset;
+`build_rollup_result` is the richer entrypoint that also exposes what the
+semantic pass did (or why it didn't run), and the `key_map` `waste.py`
+uses to agree with `rollup` on cluster membership (see its own docstring)
+- this is deliberately the *one* place that clustering logic lives, so
+enabling semantic matching changes `rollup` and `waste --cross-session`
+identically, per the design doc's explicit decision.
+
 ## Why a separate `rollup` command, not `chapters --rollup`
 
 The issue's own suggested shape was `chapters --rollup`, but `chapters`
@@ -62,6 +81,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from work_ledger import rollup_semantic
 from work_ledger.chapters import UNSORTED_TITLE, cached_chapters
 from work_ledger.transcript import TranscriptTailer
 
@@ -115,12 +135,42 @@ class RollupCluster:
         return len(self.sessions)
 
 
-def build_rollup(transcripts: list[Path]) -> list[RollupCluster]:
-    """Cluster every already-cached chapter across `transcripts` by
-    normalized title, and sum cost per cluster - most expensive first.
-    Never triggers a chaptering pass (see module docstring); callers pick
-    the transcript list the same way chapters --all/trend/timeline
-    already do (find_all_transcripts() + a date-range mtime filter)."""
+@dataclass
+class SemanticMerge:
+    """One accepted merge from the semantic pass - `titles` in first-seen
+    order (the same order `merged_title` was picked from: the first-seen
+    title among the group, matching the "first-seen original title kept"
+    convention `RollupCluster.display_title` already uses). Purely for
+    display (`--confirm`) - nothing here is persisted between runs, see
+    rollup_semantic.py's "No caching, no versioning" note."""
+
+    titles: list[str]
+    merged_title: str
+
+
+@dataclass
+class RollupResult:
+    """The richer return of `build_rollup_result` - `build_rollup` itself
+    just returns `.clusters`, unchanged in shape from before #68. `waste.py`
+    uses `key_map` to make its own cross-session clustering agree with
+    this one; `semantic_merges`/`semantic_fallback_reason` are what
+    `--confirm` and the "semantic matching ran but found nothing new" vs.
+    "semantic matching couldn't run" notes are built from."""
+
+    clusters: list[RollupCluster]
+    semantic_merges: list[SemanticMerge] = field(default_factory=list)
+    semantic_fallback_reason: str | None = None
+    # Maps a chapter's deterministic normalized_key to whatever cluster key
+    # it actually ended up under - identity for every key when the
+    # semantic pass didn't run or found nothing to merge. waste.py looks
+    # up a chapter's raw normalize_title() key here (defaulting to that
+    # same key when absent) rather than re-deriving clustering itself, so
+    # `rollup` and `waste --cross-session` can never silently disagree
+    # about what counts as "the same initiative."
+    key_map: dict[str, str] = field(default_factory=dict)
+
+
+def _build_deterministic_clusters(transcripts: list[Path]) -> dict[str, RollupCluster]:
     clusters: dict[str, RollupCluster] = {}
 
     for path in transcripts:
@@ -150,4 +200,97 @@ def build_rollup(transcripts: list[Path]) -> list[RollupCluster]:
             if path.stem not in cluster.sessions:
                 cluster.sessions.append(path.stem)
 
-    return sorted(clusters.values(), key=lambda c: -c.cost_usd)
+    return clusters
+
+
+def _apply_semantic_pass(clusters: dict[str, RollupCluster]) -> RollupResult:
+    """Fold `rollup_semantic.propose_merges`'s accepted groups back into
+    `clusters` in place (merging each group's singleton clusters into one),
+    and build the `key_map`/`semantic_merges` that describe what happened.
+    Only ever called when `rollup_semantic.is_semantic_enabled()` - the
+    caller is responsible for that check, so a failed/degraded pass here
+    always means the call itself was attempted and didn't produce
+    anything usable, not that semantic matching was off."""
+    singleton_keys = [key for key, cluster in clusters.items() if cluster.num_sessions == 1]
+    if len(singleton_keys) < 2:
+        # Nothing worth batching a call for - not a failure, just nothing
+        # to propose merges among. No fallback_reason: this is the
+        # deliberate "nothing new to merge" case, not "couldn't run".
+        return RollupResult(clusters=sorted(clusters.values(), key=lambda c: -c.cost_usd))
+
+    titles = [clusters[key].display_title for key in singleton_keys]
+    merge_result = rollup_semantic.propose_merges(titles)
+
+    # First occurrence wins for any (rare) duplicate display titles among
+    # distinct singleton clusters - same "seen" discipline used elsewhere
+    # in this codebase for resolving an ambiguous many-to-one mapping.
+    title_to_key: dict[str, str] = {}
+    for key in singleton_keys:
+        title = clusters[key].display_title
+        if title not in title_to_key:
+            title_to_key[title] = key
+
+    key_map: dict[str, str] = {}
+    semantic_merges: list[SemanticMerge] = []
+
+    for group_titles in merge_result.groups:
+        group_keys = [title_to_key[t] for t in group_titles if t in title_to_key]
+        group_keys = list(dict.fromkeys(group_keys))  # dedup, preserve order
+        if len(group_keys) < 2:
+            continue  # after resolving titles->keys, fewer than 2 distinct clusters left
+        group_keys.sort(key=singleton_keys.index)  # first-seen order across the whole batch
+
+        primary_key = group_keys[0]
+        merged = RollupCluster(normalized_key=primary_key, display_title=clusters[primary_key].display_title)
+        merged_titles: list[str] = []
+        for key in group_keys:
+            source = clusters[key]
+            merged_titles.append(source.display_title)
+            merged.num_chapters += source.num_chapters
+            merged.cost_usd += source.cost_usd
+            merged.unknown_model_cost = merged.unknown_model_cost or source.unknown_model_cost
+            for session in source.sessions:
+                if session not in merged.sessions:
+                    merged.sessions.append(session)
+            key_map[key] = primary_key
+
+        clusters[primary_key] = merged
+        for key in group_keys[1:]:
+            del clusters[key]
+
+        semantic_merges.append(SemanticMerge(titles=merged_titles, merged_title=merged.display_title))
+
+    return RollupResult(
+        clusters=sorted(clusters.values(), key=lambda c: -c.cost_usd),
+        semantic_merges=semantic_merges,
+        semantic_fallback_reason=merge_result.fallback_reason,
+        key_map=key_map,
+    )
+
+
+def build_rollup_result(transcripts: list[Path]) -> RollupResult:
+    """`build_rollup`'s richer sibling: same deterministic clustering,
+    plus - when `WORK_LEDGER_ROLLUP_MATCHING=semantic` - a second pass that
+    proposes merges among whatever's still a singleton, folded back into
+    the same cluster list. See rollup_semantic.py and this module's own
+    docstring for the full mechanism; RollupResult's fields for what's
+    exposed and why. Never triggers a chaptering pass (see module
+    docstring); callers pick the transcript list the same way
+    chapters --all/trend/timeline already do (find_all_transcripts() + a
+    date-range mtime filter)."""
+    clusters = _build_deterministic_clusters(transcripts)
+
+    if not rollup_semantic.is_semantic_enabled():
+        return RollupResult(clusters=sorted(clusters.values(), key=lambda c: -c.cost_usd))
+
+    return _apply_semantic_pass(clusters)
+
+
+def build_rollup(transcripts: list[Path]) -> list[RollupCluster]:
+    """Cluster every already-cached chapter across `transcripts` by
+    normalized title (plus an optional semantic pass, see
+    `build_rollup_result`), and sum cost per cluster - most expensive
+    first. Byte-for-byte the same signature/return shape this had before
+    #68; existing callers that only want the clusters (not the semantic
+    pass's own metadata) keep working unchanged."""
+    return build_rollup_result(transcripts).clusters

@@ -1,4 +1,6 @@
 from work_ledger.chapters import Chapter, Section, UNSORTED_TITLE, _save_cache
+from work_ledger.rollup import build_rollup_result
+from work_ledger.rollup_semantic import ROLLUP_MATCHING_ENV_VAR, SemanticMergeResult
 from work_ledger.transcript import TranscriptTailer, Turn, Unit
 from work_ledger.waste import (
     REPEATED_READ,
@@ -468,3 +470,121 @@ def test_cross_session_sorted_by_cost_descending(tmp_path):
     assert len(patterns) == 2
     costs = [p.cost_usd for p in patterns]
     assert costs == sorted(costs, reverse=True)
+
+
+# --- #68: waste --cross-session shares rollup's clustering -----------------
+#
+# The requirement most likely to have a subtle bug (per issue #68's own
+# testing guidance): enabling WORK_LEDGER_ROLLUP_MATCHING=semantic must
+# change what `rollup` and `waste --cross-session` each consider "the same
+# initiative" identically, from one shared computation - not two
+# independent ones that happen to usually agree.
+
+
+def test_cross_session_default_deterministic_mode_reworded_titles_stay_unmerged(tmp_path, monkeypatch):
+    """Regression guard: with the env var unset (the default), two
+    genuinely reworded titles must NOT cluster, and the same file read once
+    in each session must NOT be flagged as a cross-session repeat - byte-
+    for-byte the same as before #68 existed."""
+    monkeypatch.delenv(ROLLUP_MATCHING_ENV_VAR, raising=False)
+
+    path_a = tmp_path / "session-a.jsonl"
+    path_b = tmp_path / "session-b.jsonl"
+    _write_cross_session(path_a, "p1", _read_blocks("/repo/foo.py"))
+    _write_cross_session(path_b, "p2", _read_blocks("/repo/foo.py"))
+
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title="Execute reading-list-builder daily flow", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        chaptered_ids=["p2"],
+        chapters=[Chapter(title="Initialize reading list builder daily flow", sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+
+    assert find_cross_session_waste_patterns([path_a, path_b]) == []
+
+
+def test_cross_session_semantic_matching_shares_clusters_with_rollup(tmp_path, monkeypatch):
+    """The core shared-mechanism assertion: with semantic matching on and a
+    mocked merge of two reworded titles, both `find_cross_session_waste_patterns`
+    and `build_rollup_result` must agree the two sessions are one initiative
+    - same display title, same session membership - computed from the same
+    underlying clustering, not two independently-arrived-at answers."""
+    monkeypatch.setenv(ROLLUP_MATCHING_ENV_VAR, "semantic")
+
+    title_a = "Execute reading-list-builder daily flow"
+    title_b = "Initialize reading list builder daily flow"
+
+    path_a = tmp_path / "session-a.jsonl"
+    path_b = tmp_path / "session-b.jsonl"
+    _write_cross_session(path_a, "p1", _read_blocks("/repo/foo.py"))
+    _write_cross_session(path_b, "p2", _read_blocks("/repo/foo.py"))
+
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title=title_a, sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        chaptered_ids=["p2"],
+        chapters=[Chapter(title=title_b, sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+
+    def fake_propose_merges(titles):
+        assert set(titles) == {title_a, title_b}
+        return SemanticMergeResult(groups=[[title_a, title_b]])
+
+    monkeypatch.setattr("work_ledger.rollup_semantic.propose_merges", fake_propose_merges)
+
+    # Without the merge, this would be two separate single-session clusters
+    # and the shared file-read wouldn't qualify as a cross-session repeat at
+    # all - so a non-empty result here already proves the merge was picked
+    # up; the identity assertions below prove it's the *same* merge rollup
+    # itself computes, not a coincidentally-matching one.
+    patterns = find_cross_session_waste_patterns([path_a, path_b])
+    assert len(patterns) == 1
+    pattern = patterns[0]
+    assert pattern.kind == REPEATED_READ
+    assert pattern.num_sessions == 2
+
+    rollup_result = build_rollup_result([path_a, path_b])
+    assert len(rollup_result.clusters) == 1
+    cluster = rollup_result.clusters[0]
+    assert sorted(cluster.sessions) == [path_a.stem, path_b.stem]
+
+    # The exact "same initiative" agreement: waste's pattern.initiative is
+    # the identical string rollup's own cluster.display_title is.
+    assert pattern.initiative == cluster.display_title
+
+
+def test_cross_session_semantic_matching_disabled_does_not_call_model(tmp_path, monkeypatch):
+    """A cheap but important regression check: with the env var unset,
+    find_cross_session_waste_patterns's route through build_rollup_result
+    must never even attempt the semantic call."""
+    monkeypatch.delenv(ROLLUP_MATCHING_ENV_VAR, raising=False)
+
+    def boom(titles):
+        raise AssertionError("propose_merges must not be called when matching mode is deterministic")
+
+    monkeypatch.setattr("work_ledger.rollup_semantic.propose_merges", boom)
+
+    path_a = tmp_path / "session-a.jsonl"
+    path_b = tmp_path / "session-b.jsonl"
+    _write_cross_session(path_a, "p1", _read_blocks("/repo/foo.py"))
+    _write_cross_session(path_b, "p2", _read_blocks("/repo/foo.py"))
+    _save_cache(
+        path_a,
+        chaptered_ids=["p1"],
+        chapters=[Chapter(title="Fix the login bug", sections=[Section(title="s", prompt_ids=["p1"])])],
+    )
+    _save_cache(
+        path_b,
+        chaptered_ids=["p2"],
+        chapters=[Chapter(title="Fix the checkout bug", sections=[Section(title="s", prompt_ids=["p2"])])],
+    )
+
+    find_cross_session_waste_patterns([path_a, path_b])  # must not raise

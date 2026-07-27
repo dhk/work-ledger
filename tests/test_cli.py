@@ -1162,3 +1162,213 @@ def test_run_rollup_table_shows_grand_total(isolated_transcripts_root, capsys):
     assert "GRAND" in out
     assert "TOTAL" in out
     assert "Fix the bug" in out
+
+
+# --- #68: WORK_LEDGER_ROLLUP_MATCHING / --confirm ---------------------------
+
+
+def _norm(out: str) -> str:
+    """Collapse rich's non-tty line-wrapping (default 80-col width under
+    capsys) so a substring check isn't broken by a wrap landing mid-phrase
+    - same caveat test_run_rollup_table_shows_grand_total already works
+    around by checking words separately; here it's simpler to just
+    collapse all whitespace once."""
+    return " ".join(out.split())
+
+
+def _make_singleton_session(root, project, name, prompt_id, title):
+    from work_ledger.chapters import _save_cache
+
+    proj_dir = root / project
+    proj_dir.mkdir(exist_ok=True)
+    path = proj_dir / f"{name}.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry(prompt_id, "do work"),
+            *assistant_lines(
+                f"m-{prompt_id}", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]
+            ),
+        ],
+    )
+    _save_cache(path, [prompt_id], [Chapter(title=title, sections=[Section(title="s", prompt_ids=[prompt_id])])])
+    return path
+
+
+def test_run_rollup_default_env_prints_no_semantic_note(isolated_transcripts_root, capsys, monkeypatch):
+    """Env var unset (the default): no semantic-matching note of any kind,
+    even with --confirm passed - this is the "byte-for-byte unchanged
+    default behavior" guarantee, not just "no crash"."""
+    monkeypatch.delenv("WORK_LEDGER_ROLLUP_MATCHING", raising=False)
+
+    def boom(titles):
+        raise AssertionError("propose_merges must not be called when matching mode is deterministic")
+
+    monkeypatch.setattr("work_ledger.rollup_semantic.propose_merges", boom)
+
+    _make_singleton_session(isolated_transcripts_root, "proj1", "a", "p1", "Fix the bug")
+
+    cli.run_rollup(confirm=True)
+
+    out = capsys.readouterr().out
+    assert "semantic" not in out.lower()
+    assert "WORK_LEDGER_ROLLUP_MATCHING" not in out
+
+
+def test_run_rollup_confirm_lists_merged_titles(isolated_transcripts_root, capsys, monkeypatch):
+    from work_ledger.rollup_semantic import SemanticMergeResult
+
+    monkeypatch.setenv("WORK_LEDGER_ROLLUP_MATCHING", "semantic")
+
+    title_a = "Execute reading-list-builder daily flow"
+    title_b = "Initialize reading list builder daily flow"
+    _make_singleton_session(isolated_transcripts_root, "proj1", "a", "p1", title_a)
+    _make_singleton_session(isolated_transcripts_root, "proj2", "b", "p2", title_b)
+
+    monkeypatch.setattr(
+        "work_ledger.rollup_semantic.propose_merges",
+        lambda titles: SemanticMergeResult(groups=[[title_a, title_b]]),
+    )
+
+    cli.run_rollup(confirm=True)
+
+    out = _norm(capsys.readouterr().out)
+    assert "Merged via semantic matching" in out
+    assert title_a in out
+    assert title_b in out
+
+
+def test_run_rollup_semantic_merge_without_confirm_omits_title_list(isolated_transcripts_root, capsys, monkeypatch):
+    """Without --confirm, a merge still gets a short visibility note (never
+    silently identical to "nothing to merge"), but not the full title
+    breakdown - that's what --confirm is for."""
+    from work_ledger.rollup_semantic import SemanticMergeResult
+
+    monkeypatch.setenv("WORK_LEDGER_ROLLUP_MATCHING", "semantic")
+
+    title_a = "Execute reading-list-builder daily flow"
+    title_b = "Initialize reading list builder daily flow"
+    _make_singleton_session(isolated_transcripts_root, "proj1", "a", "p1", title_a)
+    _make_singleton_session(isolated_transcripts_root, "proj2", "b", "p2", title_b)
+
+    monkeypatch.setattr(
+        "work_ledger.rollup_semantic.propose_merges",
+        lambda titles: SemanticMergeResult(groups=[[title_a, title_b]]),
+    )
+
+    cli.run_rollup(confirm=False)
+
+    out = capsys.readouterr().out
+    assert "merged" in out.lower()
+    assert "Merged via semantic matching" not in out
+
+
+def test_run_rollup_semantic_fallback_reason_printed(isolated_transcripts_root, capsys, monkeypatch):
+    """A degraded semantic pass (no credentials, refusal, etc.) must print
+    a distinguishable note even without --confirm - visibility into a
+    failure isn't gated behind the opt-in detail flag."""
+    from work_ledger.rollup_semantic import SemanticMergeResult
+
+    monkeypatch.setenv("WORK_LEDGER_ROLLUP_MATCHING", "semantic")
+    _make_singleton_session(isolated_transcripts_root, "proj1", "a", "p1", "Fix the login bug")
+    _make_singleton_session(isolated_transcripts_root, "proj2", "b", "p2", "Fix the checkout bug")
+
+    monkeypatch.setattr(
+        "work_ledger.rollup_semantic.propose_merges",
+        lambda titles: SemanticMergeResult(groups=[], fallback_reason="No ANTHROPIC_API_KEY found in this environment; semantic matching skipped"),
+    )
+
+    cli.run_rollup()
+
+    out = capsys.readouterr().out
+    assert "No ANTHROPIC_API_KEY found" in out
+
+
+def test_run_rollup_semantic_nothing_to_merge_note_distinct_from_fallback(isolated_transcripts_root, capsys, monkeypatch):
+    """The pass running successfully and finding nothing to merge must be
+    worded differently than it failing to run at all - both print
+    something, but never the same something."""
+    from work_ledger.rollup_semantic import SemanticMergeResult
+
+    monkeypatch.setenv("WORK_LEDGER_ROLLUP_MATCHING", "semantic")
+    _make_singleton_session(isolated_transcripts_root, "proj1", "a", "p1", "Fix the login bug")
+    _make_singleton_session(isolated_transcripts_root, "proj2", "b", "p2", "Fix the checkout bug")
+
+    monkeypatch.setattr(
+        "work_ledger.rollup_semantic.propose_merges",
+        lambda titles: SemanticMergeResult(groups=[]),
+    )
+
+    cli.run_rollup()
+
+    out = _norm(capsys.readouterr().out)
+    assert "found nothing new to merge" in out
+    assert "Note:" not in out
+
+
+def test_run_waste_cross_session_confirm_lists_merged_titles(isolated_transcripts_root, capsys, monkeypatch):
+    from work_ledger.rollup_semantic import SemanticMergeResult
+
+    monkeypatch.setenv("WORK_LEDGER_ROLLUP_MATCHING", "semantic")
+
+    title_a = "Execute reading-list-builder daily flow"
+    title_b = "Initialize reading list builder daily flow"
+    path_a = _make_singleton_session(isolated_transcripts_root, "proj1", "a", "p1", title_a)
+    path_b = _make_singleton_session(isolated_transcripts_root, "proj2", "b", "p2", title_b)
+
+    # Give both sessions the same repeated Read so there's an actual
+    # cross-session pattern once the two titles are merged into one
+    # initiative - otherwise the table-vs-"no patterns" branch differs and
+    # the semantic note wouldn't be reachable via the same code path.
+    write_jsonl(
+        path_a,
+        [
+            user_entry("p1", "do work"),
+            *assistant_lines(
+                "m-p1",
+                "claude-haiku-4-5",
+                {"input_tokens": 1000, "output_tokens": 200},
+                [{"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/foo.py"}, "id": "t1"}],
+            ),
+        ],
+    )
+    write_jsonl(
+        path_b,
+        [
+            user_entry("p2", "do work"),
+            *assistant_lines(
+                "m-p2",
+                "claude-haiku-4-5",
+                {"input_tokens": 1000, "output_tokens": 200},
+                [{"type": "tool_use", "name": "Read", "input": {"file_path": "/repo/foo.py"}, "id": "t1"}],
+            ),
+        ],
+    )
+
+    monkeypatch.setattr(
+        "work_ledger.rollup_semantic.propose_merges",
+        lambda titles: SemanticMergeResult(groups=[[title_a, title_b]]),
+    )
+
+    cli.run_waste_cross_session(confirm=True)
+
+    out = _norm(capsys.readouterr().out)
+    assert "Merged via semantic matching" in out
+    assert title_a in out
+    assert title_b in out
+
+
+def test_run_waste_cross_session_default_env_prints_no_semantic_note(isolated_transcripts_root, capsys, monkeypatch):
+    monkeypatch.delenv("WORK_LEDGER_ROLLUP_MATCHING", raising=False)
+
+    def boom(titles):
+        raise AssertionError("propose_merges must not be called when matching mode is deterministic")
+
+    monkeypatch.setattr("work_ledger.rollup_semantic.propose_merges", boom)
+
+    _make_singleton_session(isolated_transcripts_root, "proj1", "a", "p1", "Fix the bug")
+
+    cli.run_waste_cross_session(confirm=True)
+
+    out = capsys.readouterr().out
+    assert "semantic" not in out.lower()

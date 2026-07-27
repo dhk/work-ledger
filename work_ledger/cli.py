@@ -42,7 +42,8 @@ from work_ledger.limits import (
 from work_ledger import pattern_client
 from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns, patterns_for_rule
 from work_ledger.recommend import generate_recommendations
-from work_ledger.rollup import build_rollup
+from work_ledger.rollup import RollupResult, build_rollup_result
+from work_ledger import rollup_semantic
 from work_ledger.session_pin import clear_pinned_session, get_pinned_session, set_pinned_session
 from work_ledger.timeline import DEFAULT_WINDOW_DAYS, build_timeline, top_activity_labels, top_category_labels
 from work_ledger.trend import BUCKET_SIZES, build_trend
@@ -602,6 +603,7 @@ def run_waste_cross_session(
     since: date | None = None,
     until: date | None = None,
     as_json: bool = False,
+    confirm: bool = False,
 ):
     """Cross-session half of #5: the same two waste-mining pattern kinds
     as `waste`, but scoped to a recurring initiative (a #3 rollup cluster)
@@ -609,7 +611,14 @@ def run_waste_cross_session(
     reads whatever chapters are already cached - never triggers a new
     chaptering pass, same invariant as `rollup`. A pattern only shows up
     here once it spans 2+ distinct sessions; a single-session repeat is
-    already fully covered by plain `waste`."""
+    already fully covered by plain `waste`.
+
+    Clustering (including the #68 semantic pass, opt-in via
+    WORK_LEDGER_ROLLUP_MATCHING=semantic) is computed once via
+    `build_rollup_result` and handed to `find_cross_session_waste_patterns`
+    - the same result `rollup` itself would compute for this transcript
+    set, and the same one `--confirm` reports on below, rather than a
+    second independent (and, with no caching, possibly different) call."""
     console = Console()
     transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
     if not transcripts:
@@ -618,7 +627,8 @@ def run_waste_cross_session(
         sys.exit(1)
 
     uncached = _count_sessions_needing_chaptering(transcripts)
-    patterns = find_cross_session_waste_patterns(transcripts)
+    rollup_result = build_rollup_result(transcripts)
+    patterns = find_cross_session_waste_patterns(transcripts, rollup_result=rollup_result)
 
     if as_json:
         import json
@@ -654,6 +664,7 @@ def run_waste_cross_session(
                 "and aren't reflected above - run `work-ledger chapters --all` to include "
                 "them.[/dim]"
             )
+        _print_semantic_matching_note(console, rollup_result, confirm)
         return
 
     table = Table(title="work-ledger waste --cross-session", expand=True)
@@ -695,6 +706,7 @@ def run_waste_cross_session(
             f"[dim]{uncached} of {len(transcripts)} session(s) have no cached chapters yet and "
             "aren't reflected above - run `work-ledger chapters --all` to include them.[/dim]"
         )
+    _print_semantic_matching_note(console, rollup_result, confirm)
 
 
 def _parse_date_arg(value: str, flag: str) -> date:
@@ -1152,14 +1164,55 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
         )
 
 
-def run_rollup(since: date | None = None, until: date | None = None, as_json: bool = False):
+def _print_semantic_matching_note(console: Console, result: RollupResult, confirm: bool) -> None:
+    """Print whatever the semantic pass (#68) did this run - a no-op
+    entirely when `WORK_LEDGER_ROLLUP_MATCHING=semantic` isn't configured,
+    which is how default output (env var unset) stays byte-for-byte
+    unchanged. Otherwise always distinguishes "found nothing new to
+    merge" from "the pass couldn't run at all" (see rollup_semantic.py's
+    module docstring - never a silent difference between the two).
+    `--confirm` additionally lists exactly which singleton titles merged
+    into which cluster - deliberately minimal, visibility only, not an
+    audit trail (see the design doc's Non-goals)."""
+    if not rollup_semantic.is_semantic_enabled():
+        return
+    if result.semantic_fallback_reason:
+        console.print(f"[yellow]Note: {result.semantic_fallback_reason}[/yellow]")
+    elif result.semantic_merges:
+        console.print(
+            f"[dim]Semantic matching (WORK_LEDGER_ROLLUP_MATCHING=semantic) merged "
+            f"{len(result.semantic_merges)} group(s) of singleton titles into existing "
+            "clusters this run - nothing is cached, a later run may cluster differently. "
+            "Pass --confirm to see exactly what merged.[/dim]"
+        )
+    else:
+        console.print(
+            "[dim]Semantic matching ran (WORK_LEDGER_ROLLUP_MATCHING=semantic) but found "
+            "nothing new to merge this run.[/dim]"
+        )
+
+    if confirm and result.semantic_merges:
+        console.print("[bold]Merged via semantic matching:[/bold]")
+        for merge in result.semantic_merges:
+            joined = " + ".join(f"{t!r}" for t in merge.titles)
+            console.print(f"  {joined} → {merge.merged_title!r}")
+
+
+def run_rollup(
+    since: date | None = None,
+    until: date | None = None,
+    as_json: bool = False,
+    confirm: bool = False,
+):
     """Cluster the same recurring initiative's chapters across every
     session it touched and total its cost - issue #3. Unlike `chapters
     --all`'s flat per-session listing, this answers "how much has 'Fix
     the double-counting bug' cost in total" directly, by matching
     normalized chapter titles across sessions (see rollup.py's module
     docstring for exactly how, and why that's deterministic-only for v1,
-    not an LLM/embedding pass).
+    not an LLM/embedding pass) - plus, opt-in via
+    `WORK_LEDGER_ROLLUP_MATCHING=semantic`, a second batched Haiku pass
+    over whatever's still a singleton (issue #68, see rollup_semantic.py).
 
     Reuses whatever chapters are already cached for each session in
     range - never triggers a new chaptering pass itself, so running this
@@ -1174,7 +1227,8 @@ def run_rollup(since: date | None = None, until: date | None = None, as_json: bo
         console.print(f"[red]No session transcripts found{range_note}.[/red]")
         sys.exit(1)
 
-    clusters = build_rollup(transcripts)
+    result = build_rollup_result(transcripts)
+    clusters = result.clusters
     uncached = _count_sessions_needing_chaptering(transcripts)
 
     if not clusters:
@@ -1238,6 +1292,7 @@ def run_rollup(since: date | None = None, until: date | None = None, as_json: bo
             f"[dim]{uncached} of {len(transcripts)} session(s) have no cached chapters yet and "
             "aren't reflected above - run `work-ledger chapters --all` to include them.[/dim]"
         )
+    _print_semantic_matching_note(console, result, confirm)
 
 
 def _print_status_checks(console: Console) -> tuple[bool, str, bool, str]:
@@ -2471,6 +2526,14 @@ def main():
         action="store_true",
         help="Machine-readable output instead of a terminal table",
     )
+    rollup_parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="When WORK_LEDGER_ROLLUP_MATCHING=semantic is set (issue #68) and the semantic "
+        "pass actually merged singleton titles this run, print which titles merged into which "
+        "cluster. No effect when the env var is unset (the default) or nothing merged - "
+        "visibility only, not an audit trail",
+    )
 
     export_parser = subparsers.add_parser(
         "export",
@@ -2569,6 +2632,14 @@ def main():
         default=None,
         help="With --cross-session: only include sessions last modified on/before this date "
         "(YYYY-MM-DD)",
+    )
+    waste_parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="With --cross-session, when WORK_LEDGER_ROLLUP_MATCHING=semantic is set (issue "
+        "#68) and the semantic pass actually merged singleton titles this run, print which "
+        "titles merged into which cluster. No effect when the env var is unset (the default) "
+        "or nothing merged - visibility only, not an audit trail",
     )
 
     patterns_parser = subparsers.add_parser(
@@ -2692,7 +2763,7 @@ def main():
     if args.command == "rollup":
         since = _parse_date_arg(args.since, "--since") if args.since else None
         until = _parse_date_arg(args.until, "--until") if args.until else None
-        run_rollup(since=since, until=until, as_json=args.json)
+        run_rollup(since=since, until=until, as_json=args.json, confirm=args.confirm)
         return
 
     if args.command == "export":
@@ -2743,8 +2814,11 @@ def main():
                 sys.exit(2)
             since = _parse_date_arg(args.since, "--since") if args.since else None
             until = _parse_date_arg(args.until, "--until") if args.until else None
-            run_waste_cross_session(since=since, until=until, as_json=args.json)
+            run_waste_cross_session(since=since, until=until, as_json=args.json, confirm=args.confirm)
             return
+        if args.confirm:
+            print("error: --confirm requires --cross-session", file=sys.stderr)
+            sys.exit(2)
         transcript_path = _resolve_transcript_arg(args.transcript, args.session)
         run_waste(
             transcript_path=transcript_path,
