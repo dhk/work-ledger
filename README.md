@@ -111,6 +111,9 @@ work-ledger session set abc123    # pin a session - chapters/activity/recommend 
 work-ledger session status        # show what's currently pinned, if anything
 work-ledger session clear         # unpin - back to defaulting to the most recently active session
 
+work-ledger about                                 # this install's version/commit/last-updated/author block
+work-ledger about --json                          # machine-readable output
+
 work-ledger export                                # write an anonymized usage export to a local file
 work-ledger export --since 2026-07-01 --out x.json     # same, filtered to a date range
 
@@ -785,6 +788,28 @@ tells you you've hit your limit, check what `work-ledger limits` reported
 at that moment and save it with `--set-threshold`. The threshold is stored
 in `~/.config/work-ledger/limits_threshold.json`, separate from any
 per-transcript cache.
+
+## About block (issue #75)
+
+```
+work-ledger about          # this install's version/commit/last-updated/author block
+work-ledger about --json   # machine-readable output
+```
+
+Every user-facing surface this tool ships — every CLI command, the
+`work-ledger-mcp` server (an `about` tool alongside the pattern-library
+ones), `work-ledger serve`'s pages, and every generated report (`chapters
+--report`/`activity --report`/etc.) — carries the same small metadata
+block: a short description, version, last-updated date/time, commit SHA
+(when resolvable from an editable git checkout — never guessed for a
+published install), and author/repo attribution
+(`davehk@gmail.com`, `www.dhk.io`,
+[github.com/dhk/work-ledger](https://github.com/dhk/work-ledger)). The
+point is traceability, not a feature in itself — a screenshot, an exported
+HTML report, or a `serve` instance someone else stumbled onto can always
+be traced back to exactly what produced it. One shared computation
+(`work_ledger/about.py`) backs all four surfaces so they can't drift from
+each other. See `docs/about-block-design.md`.
 
 ## Status
 

@@ -1571,3 +1571,61 @@ def test_run_cycle_command_error_exits_nonzero(monkeypatch, capsys):
 
     assert exc_info.value.code == 1
     assert "uncommitted changes present" in capsys.readouterr().out
+
+
+# --- run_about_command (issue #75) ----------------------------------------
+
+
+def _fake_about_info(**overrides):
+    from work_ledger.about import AboutInfo
+
+    defaults = dict(
+        description="Lightweight, near-real-time Claude Code usage/cost tracker for individuals",
+        version="1.2.3",
+        last_updated="2026-07-20T10:00:00+00:00",
+        commit="abc1234",
+        author_email="davehk@gmail.com",
+        author_url="www.dhk.io",
+        repo_url="https://github.com/dhk/work-ledger",
+    )
+    defaults.update(overrides)
+    return AboutInfo(**defaults)
+
+
+def test_run_about_command_prints_all_fields(monkeypatch, capsys):
+    import work_ledger.about as about_mod
+
+    monkeypatch.setattr(about_mod, "get_about_info", lambda: _fake_about_info())
+
+    cli.run_about_command(as_json=False)
+    out = capsys.readouterr().out
+    assert "1.2.3" in out
+    assert "abc1234" in out
+    assert "2026-07-20T10:00:00+00:00" in out
+    assert "davehk@gmail.com" in out
+    assert "www.dhk.io" in out
+    assert "https://github.com/dhk/work-ledger" in out
+
+
+def test_run_about_command_no_commit_shows_fallback_note(monkeypatch, capsys):
+    import work_ledger.about as about_mod
+
+    monkeypatch.setattr(about_mod, "get_about_info", lambda: _fake_about_info(commit=None))
+
+    cli.run_about_command(as_json=False)
+    out = capsys.readouterr().out
+    assert "not resolvable" in out
+
+
+def test_run_about_command_json(monkeypatch, capsys):
+    import json
+
+    import work_ledger.about as about_mod
+
+    monkeypatch.setattr(about_mod, "get_about_info", lambda: _fake_about_info())
+
+    cli.run_about_command(as_json=True)
+    data = json.loads(capsys.readouterr().out)
+    assert data["version"] == "1.2.3"
+    assert data["commit"] == "abc1234"
+    assert data["repo_url"] == "https://github.com/dhk/work-ledger"
