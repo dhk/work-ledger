@@ -92,9 +92,9 @@ so they're tracked here without a stage label.
 | [#47](https://github.com/dhk/work-ledger/issues/47) ✅ | Sonnet 5 introductory pricing isn't modeled, nothing forces a fix after it expires |
 | [#48](https://github.com/dhk/work-ledger/issues/48) ✅ | No coverage threshold enforced in CI |
 | [#73](https://github.com/dhk/work-ledger/issues/73) ✅ | `work-ledger cycle` — the upgrade/restart command `CLAUDE.md`'s CLI/MCP conventions section already required but nothing implemented; detects editable-vs-published automatically |
+| [#75](https://github.com/dhk/work-ledger/issues/75) | The "about" block — same convention section's third requirement (description/version/last-updated/commit/author across every CLI command, the MCP server, `serve`, and generated reports); one shared `about.py` computation, reuses #73's install-mode detection |
 
-#45-48 shipped together in one pass (#51). `--about` (the same convention
-section's third requirement) is still missing everywhere - not yet filed.
+#45-48 shipped together in one pass (#51).
 
 ## Using this as a guardrail
 
