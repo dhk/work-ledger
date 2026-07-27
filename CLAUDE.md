@@ -116,6 +116,19 @@ anything this tool produces (a screenshot, an exported report, a running
 server someone else stumbled onto) can be traced back to exactly what
 produced it and where to find the source.
 
+### "Make it so" (miso) mode
+
+Any command whose useful end state takes more than one obvious step
+should offer a single `--make-it-so` (aka `miso`) mode that runs the full
+sequence in one shot, instead of leaving the person to remember and chain
+flags/commands themselves. `work-ledger miso` (issue #35: chaptering plus
+both HTML/PNG reports, one command, with `--check-status` for a dry-run
+readiness check) is the existing precedent for the shape this should
+take. This is additive - it doesn't replace the granular commands/flags
+underneath it, and it should degrade/report status the same way `miso
+--check-status` already does rather than failing opaquely partway
+through.
+
 ## Development
 
 ```sh
