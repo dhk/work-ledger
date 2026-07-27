@@ -719,6 +719,31 @@ def test_run_waste_cross_session_no_patterns_message(isolated_transcripts_root, 
     assert "No repeated patterns found" in capsys.readouterr().out
 
 
+def test_run_waste_cross_session_uncached_hint_excludes_zero_turn_sessions(isolated_transcripts_root, capsys):
+    """Same fix as run_rollup's: a genuinely empty session must never be
+    counted toward "N session(s) have no cached chapters yet" - re-running
+    `chapters --all` can never resolve it (see run_chapters_all's own
+    zero-turn skip), so counting it there is a misleading dead end."""
+    proj = isolated_transcripts_root / "proj1"
+    proj.mkdir()
+    empty_path = proj / "session-empty.jsonl"
+    write_jsonl(empty_path, [])
+
+    real_path = proj / "session-real.jsonl"
+    write_jsonl(
+        real_path,
+        [
+            user_entry("p1", "do something"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+
+    cli.run_waste_cross_session()
+
+    out = capsys.readouterr().out
+    assert "1 of 2 session(s) have no cached chapters yet" in out
+
+
 # --- build_session_rows: duration, tokens, summary ----------------------
 
 
@@ -1020,6 +1045,68 @@ def test_run_rollup_no_cached_chapters_prints_hint(isolated_transcripts_root, ca
     out = capsys.readouterr().out
     assert "No cached chapters found" in out
     assert "chapters --all" in out
+
+
+def test_count_sessions_needing_chaptering_excludes_zero_turn_sessions(tmp_path):
+    """A genuinely empty (zero-turn) session can never be helped by
+    `chapters --all` - it's skipped outright by run_chapters_all, so it
+    never gets a cache file and `not cached_chapters(p)` would be True for
+    it forever. The real, actionable count only includes sessions that
+    have turns but aren't fully cached yet."""
+    empty_path = tmp_path / "empty.jsonl"
+    write_jsonl(empty_path, [])
+
+    real_path = tmp_path / "real.jsonl"
+    write_jsonl(
+        real_path,
+        [
+            user_entry("p1", "do something"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+
+    assert cli._count_sessions_needing_chaptering([empty_path, real_path]) == 1
+    assert cli._count_sessions_needing_chaptering([empty_path]) == 0
+
+
+def test_run_rollup_uncached_hint_excludes_zero_turn_sessions(isolated_transcripts_root, capsys):
+    from work_ledger.chapters import _save_cache
+
+    proj = isolated_transcripts_root / "proj1"
+    proj.mkdir()
+
+    # A cluster of 2 cached, matching-title sessions - gives run_rollup a
+    # real cluster to print instead of hitting the empty "no clusters" path.
+    path_a = proj / "session-a.jsonl"
+    path_b = proj / "session-b.jsonl"
+    write_jsonl(
+        path_a,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    write_jsonl(
+        path_b,
+        [
+            user_entry("p2", "fix it again"),
+            *assistant_lines("m2", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path_a, ["p1"], [Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])])
+    _save_cache(path_b, ["p2"], [Chapter(title="fix bug", sections=[Section(title="s", prompt_ids=["p2"])])])
+
+    # A genuinely empty session alongside them - must not be counted as
+    # "still needs chapters --all" (see issue found against real usage:
+    # re-running chapters --all reported 166 sessions chaptered, but a
+    # cross-session command still showed sessions as uncached afterward).
+    empty_path = proj / "session-empty.jsonl"
+    write_jsonl(empty_path, [])
+
+    cli.run_rollup()
+
+    out = capsys.readouterr().out
+    assert "have no cached chapters yet" not in out
 
 
 def test_run_rollup_since_filters_out_older_sessions(isolated_transcripts_root, capsys):

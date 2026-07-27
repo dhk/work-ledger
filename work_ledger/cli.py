@@ -21,7 +21,14 @@ from rich.table import Table
 from rich.text import Text
 
 from work_ledger.activity import collapse_to_other, group_by_activity, top_n
-from work_ledger.chapters import Chapter, cached_chapters, check_credentials, format_pass_note, get_chapters
+from work_ledger.chapters import (
+    Chapter,
+    cached_chapters,
+    check_credentials,
+    format_pass_note,
+    get_chapters,
+    has_uncached_turns,
+)
 from work_ledger.export import build_export_payload
 from work_ledger.history import sync_history, get_status as get_history_status
 from work_ledger.limits import (
@@ -610,7 +617,7 @@ def run_waste_cross_session(
         console.print(f"[red]No session transcripts found{range_note}.[/red]")
         sys.exit(1)
 
-    uncached = sum(1 for p in transcripts if not cached_chapters(p))
+    uncached = _count_sessions_needing_chaptering(transcripts)
     patterns = find_cross_session_waste_patterns(transcripts)
 
     if as_json:
@@ -813,6 +820,29 @@ def _in_date_range(path: Path, since: date | None, until: date | None) -> bool:
     if until and mtime_date > until:
         return False
     return True
+
+
+def _count_sessions_needing_chaptering(transcripts: list[Path]) -> int:
+    """How many of `transcripts` have real turns not yet covered by a
+    chapters cache - i.e. running `chapters --all` would actually change
+    something for them. Deliberately excludes genuinely empty (zero-turn)
+    sessions: `cached_chapters` returns [] for those forever (chapters
+    --all skips them outright, see run_chapters_all), so counting them as
+    "needs chapters --all" is misleading - re-running it can never resolve
+    a session with nothing to chapter. Mirrors the has_uncached_turns-based
+    accounting timeline.py's build_timeline already uses; `rollup`/`waste
+    --cross-session` used the cheaper-but-wrong `not cached_chapters(p)`
+    check before this helper existed, which overcounted exactly these
+    empty sessions as actionable."""
+    count = 0
+    for path in transcripts:
+        tailer = TranscriptTailer(path)
+        tailer.poll()
+        if not tailer.ordered_turns():
+            continue
+        if has_uncached_turns(tailer, path):
+            count += 1
+    return count
 
 
 def run_session(action: str, value: str | None) -> None:
@@ -1145,7 +1175,7 @@ def run_rollup(since: date | None = None, until: date | None = None, as_json: bo
         sys.exit(1)
 
     clusters = build_rollup(transcripts)
-    uncached = sum(1 for p in transcripts if not cached_chapters(p))
+    uncached = _count_sessions_needing_chaptering(transcripts)
 
     if not clusters:
         console.print(
