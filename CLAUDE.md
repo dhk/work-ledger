@@ -62,6 +62,40 @@ genuinely doesn't fit one). This is a guardrail, not a gate — the point is
 making sure new work doesn't quietly drift the product's intent, not
 blocking work on process.
 
+## CLI/MCP command conventions
+
+Applies to every user-facing entry point this project ships (`work-ledger`,
+`work-ledger-mcp`, and any future one) — a standing requirement for how
+these get built and documented, not a one-off preference:
+
+- **A "cycle"/upgrade path, in two variants — don't conflate them:**
+  - **Local cycle** — for an editable clone (`pip install -e .`): stop a
+    running instance if the command is long-lived (`serve`, the MCP
+    server) and one's running, `git pull`, restart. No reinstall needed
+    for pure code changes; only rerun `pip install -e .` if `pyproject.toml`
+    itself changed (a new dependency/extra).
+  - **Cycle from last published** — for a pipx/uv-tool/plain-pip install
+    from PyPI or a git ref: stop a running instance if needed, upgrade to
+    the latest published version (`uv tool upgrade` / `pipx upgrade` /
+    `pip install --upgrade`), restart. This one only ever gets you what's
+    actually been released — flag that distinction if a feature just
+    landed on `main` but hasn't been tagged/published yet, rather than
+    letting the two cycles look interchangeable.
+  Don't leave "how do I get my update running" as a multi-step dance the
+  user has to reconstruct by hand each time — see `INSTALL.md`'s existing
+  "Verify it worked" precedent for the shape this should take.
+- **A `pipx install` path**, documented alongside whatever `pip`/`git+`
+  path already exists.
+- **A `uv tool install` (and `uvx`, for try-without-installing) path**,
+  documented the same way.
+
+Both entry points already work with pipx/uv today via the plain
+`project.scripts` mechanism (`pyproject.toml`) — this rule is about making
+sure that's *documented*, not about adding new packaging machinery. If a
+command's own upgrade story is more than "git pull, done" (a background/
+daemon process in particular), build the actual cycle command - don't
+just describe the steps and leave them manual.
+
 ## Development
 
 ```sh
