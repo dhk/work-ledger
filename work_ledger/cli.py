@@ -1363,6 +1363,48 @@ def run_cycle_command(check_status: bool = False, port: int | None = None) -> No
             console.print(f"[green]Already at the latest published version ({report.before}).[/green]")
 
 
+def run_about_command(as_json: bool = False) -> None:
+    """`work-ledger about` (issue #75) - the metadata-hygiene block
+    CLAUDE.md's "CLI/MCP command conventions" section requires: short
+    description, version, last-updated, commit (if resolvable), and
+    author/repo attribution. See about.py's module docstring for how
+    those fields are computed; this is just the terminal presentation
+    layer, same split run_cycle_command already draws against cycle.py."""
+    from work_ledger.about import get_about_info
+
+    info = get_about_info()
+
+    if as_json:
+        import json
+
+        console = Console()
+        console.print_json(
+            json.dumps(
+                {
+                    "description": info.description,
+                    "version": info.version,
+                    "last_updated": info.last_updated,
+                    "commit": info.commit,
+                    "author_email": info.author_email,
+                    "author_url": info.author_url,
+                    "repo_url": info.repo_url,
+                }
+            )
+        )
+        return
+
+    console = Console()
+    console.print("[bold]work-ledger[/bold]")
+    console.print(info.description)
+    console.print()
+    console.print(f"[dim]Version:[/dim]      {info.version}")
+    console.print(f"[dim]Last updated:[/dim] {info.last_updated}")
+    console.print(f"[dim]Commit:[/dim]       {info.commit or '(not resolvable from this install)'}")
+    console.print()
+    console.print(f"[dim]Author:[/dim]       {info.author_email} · {info.author_url}")
+    console.print(f"[dim]Source:[/dim]       {info.repo_url}")
+
+
 def _print_status_checks(console: Console) -> tuple[bool, str, bool, str]:
     """Print the two `--check-status` checks (chaptering credentials, PNG
     rendering) and return their (ok, message) pairs so the caller can
@@ -2798,6 +2840,14 @@ def main():
         "a different one)",
     )
 
+    about_parser = subparsers.add_parser(
+        "about",
+        help="Show this install's About block (issue #75) - short description, version, "
+        "last-updated, commit (if resolvable from an editable git checkout), and author/repo "
+        "attribution. Read-only, no network call.",
+    )
+    about_parser.add_argument("--json", action="store_true", help="Output as JSON instead of a formatted block")
+
     args = parser.parse_args()
     _check_transcript_flag_placement(sys.argv[1:], args.command)
 
@@ -2812,6 +2862,10 @@ def main():
 
     if args.command == "cycle":
         run_cycle_command(check_status=args.check_status, port=args.port)
+        return
+
+    if args.command == "about":
+        run_about_command(as_json=args.json)
         return
 
     if args.command == "session":

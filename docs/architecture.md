@@ -169,7 +169,8 @@ stops; there is no sixth network call hiding behind it.
 | `report.py` | Self-contained HTML/PNG rendering shared by `chapters --report` / `activity --report` |
 | `session_pin.py` | The "pin a session" mechanism |
 | `cycle.py` | Detects editable-clone vs. pipx/uv-tool/pip install and runs the matching upgrade step (`work-ledger cycle`, issue #73) - never auto-restarts a long-lived command, only warns if one looks like it's running |
-| `mcp_server.py` | The local MCP server exposing pattern-library tools over stdio |
+| `about.py` | The "About" block (issue #75): description, version, last-updated, commit (if resolvable from an editable git checkout, via `cycle.detect_install_mode()`), and author/repo attribution - one shared computation reused by `work-ledger about`, `work-ledger-mcp`'s `about` tool, `serve`'s pages, and every generated report's footer, rather than four separate implementations |
+| `mcp_server.py` | The local MCP server exposing pattern-library tools over stdio, plus the unconditional `about` tool (issue #75) |
 | `cli.py` | Argument parsing and the live terminal dashboard; wires every module above into subcommands |
 
 ## Structural constraints (don't violate without updating this doc)

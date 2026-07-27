@@ -215,6 +215,15 @@ def test_render_landing_no_sessions_does_not_crash(isolated_transcripts_root):
     assert "<!doctype html>" in out
 
 
+def test_render_landing_includes_about_footer(isolated_transcripts_root):
+    """serve's landing page renders through report.build_sessions_index_html,
+    which grows the shared About-block footer (issue #75) - no separate
+    footer rendering lives in server.py itself."""
+    out = render_landing(None, None)
+    assert "work-ledger v" in out
+    assert "github.com/dhk/work-ledger" in out
+
+
 def test_render_session_detail_not_found(isolated_transcripts_root):
     status, body = render_session_detail("does-not-exist")
     assert status == 404
@@ -229,6 +238,8 @@ def test_render_session_detail_found(isolated_transcripts_root):
     status, body = render_session_detail("0daf9882-076e-53aa-84a0-0db25e6d57a2")
     assert status == 200
     assert "the actual prompt" in body
+    assert "work-ledger v" in body
+    assert "github.com/dhk/work-ledger" in body
 
 
 def test_render_session_detail_ambiguous_prefix_lists_candidates(isolated_transcripts_root):

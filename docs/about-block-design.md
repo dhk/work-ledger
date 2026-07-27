@@ -1,8 +1,9 @@
 # Design: The "About" Block
 
-Status: decided, implemented in the same PR as this doc — small enough
-scope not to need a separate proposal/decision split, same pattern
-`docs/cycle-command-design.md` used for issue #73.
+Status: decided and implemented (issue #75) — `work_ledger/about.py` plus
+all four surfaces (`work-ledger about`, `work-ledger-mcp`'s `about` tool,
+`serve`'s pages, every generated report's footer) are shipped; see the
+"Open questions" section below for how the two open questions resolved.
 Author: written by Claude, from a conversation with the repo owner.
 Related: issue #75, `CLAUDE.md`'s "CLI/MCP command conventions" section
 (the "About" block requirement this implements), issue #73/`cycle.py`
@@ -104,9 +105,20 @@ output shape changes beyond that added footer.
 
 ## Open questions
 
-1. Exact footer placement/styling for `serve`/reports - not designed
-   pixel-by-pixel here, left to match `report.py`'s existing visual
-   system at implementation time.
-2. Whether `work-ledger about --json` is worth adding alongside the
-   terminal view, mirroring every other command's `--json` convention -
-   reasonable, not blocking, left to implementation judgment.
+1. Exact footer placement/styling for `serve`/reports - **resolved**:
+   `report.py` grew one shared `_footer_html()` helper (calling
+   `about.get_about_info()` once per render), inserted just before each
+   `build_*` function's closing `</div></div>`, right after its existing
+   `<p class="footnote">` explanation. Rendered as a single small, muted
+   line (`.ledger-footer` - 11px, `--text-muted`, 0.8 opacity, reusing
+   `_style_block()`'s existing CSS variables so light/dark mode Just
+   Work) reading "work-ledger v{version} · {commit or last_updated date}
+   · github.com/dhk/work-ledger" - deliberately subordinate to the
+   report's own footnote, not competing with it visually. `serve`'s pages
+   needed no separate footer logic: `server.py` renders exclusively
+   through `report.py`'s `build_sessions_index_html`/
+   `build_session_detail_html`, so they picked up the footer for free.
+2. Whether `work-ledger about --json` is worth adding - **resolved: yes**,
+   built alongside the terminal view, mirroring every other command's
+   `--json` convention (`chapters --json`, `sessions --json`, etc.) rather
+   than being the one command that doesn't offer it.

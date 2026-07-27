@@ -276,3 +276,59 @@ def test_build_waste_report_html_zero_patterns_does_not_crash():
     html = build_waste_report_html("empty.jsonl", [])
     assert "<!doctype html>" in html
     assert "</html>" in html
+
+
+# --- footer (issue #75's "About" block) -----------------------------------
+
+
+def _fake_about_info(**overrides):
+    from work_ledger.about import AboutInfo
+
+    defaults = dict(
+        description="Lightweight, near-real-time Claude Code usage/cost tracker for individuals",
+        version="9.9.9",
+        last_updated="2026-07-20T10:00:00+00:00",
+        commit="deadbee",
+        author_email="davehk@gmail.com",
+        author_url="www.dhk.io",
+        repo_url="https://github.com/dhk/work-ledger",
+    )
+    defaults.update(overrides)
+    return AboutInfo(**defaults)
+
+
+def test_build_report_html_includes_footer(monkeypatch, tmp_path):
+    import work_ledger.report as report_mod
+
+    monkeypatch.setattr(report_mod, "get_about_info", lambda: _fake_about_info())
+
+    path = tmp_path / "s.jsonl"
+    write_jsonl(path, [])
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    html = build_report_html("s.jsonl", tailer, [], pass_cost_usd=0.0)
+    assert "work-ledger v9.9.9" in html
+    assert "deadbee" in html
+    assert "github.com/dhk/work-ledger" in html
+
+
+def test_build_activity_report_html_includes_footer(monkeypatch):
+    import work_ledger.report as report_mod
+
+    monkeypatch.setattr(report_mod, "get_about_info", lambda: _fake_about_info())
+
+    buckets = [ActivityBucket("Tool: Bash", 5.0)]
+    html = build_activity_report_html("s.jsonl", buckets, total_n_buckets=1)
+    assert "work-ledger v9.9.9" in html
+    assert "deadbee" in html
+
+
+def test_footer_falls_back_to_last_updated_date_when_no_commit(monkeypatch):
+    import work_ledger.report as report_mod
+
+    monkeypatch.setattr(report_mod, "get_about_info", lambda: _fake_about_info(commit=None))
+
+    buckets = [ActivityBucket("Tool: Bash", 5.0)]
+    html = build_activity_report_html("s.jsonl", buckets, total_n_buckets=1)
+    assert "2026-07-20" in html

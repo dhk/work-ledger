@@ -32,6 +32,7 @@ except ImportError:
     )
     sys.exit(1)
 
+from work_ledger.about import get_about_info
 from work_ledger.pattern_client import is_enabled, report_event, submit_findings
 from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns
 
@@ -108,6 +109,26 @@ def submit_review_findings(findings: list[dict]) -> str:
     configured."""
     sent, message = submit_findings(findings)
     return message if not sent else f"{message}: {len(findings)} finding(s)"
+
+
+@mcp.tool()
+def about() -> dict:
+    """The About block (issue #75): short description, version, last-updated,
+    commit (if resolvable from an editable git checkout), and author/repo
+    attribution for this running work-ledger-mcp instance. Static metadata
+    only, not a pattern-library interaction - unconditional, unlike
+    report_recommended/report_used/submit_review_findings, which gate on
+    the patterns opt-in."""
+    info = get_about_info()
+    return {
+        "description": info.description,
+        "version": info.version,
+        "last_updated": info.last_updated,
+        "commit": info.commit,
+        "author_email": info.author_email,
+        "author_url": info.author_url,
+        "repo_url": info.repo_url,
+    }
 
 
 def main():
