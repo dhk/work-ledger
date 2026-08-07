@@ -141,8 +141,8 @@ pytest
 
 The suite is fully offline and hermetic — every test builds its own
 synthetic transcript files rather than touching `~/.claude/projects/` or
-`~/.config/work-ledger/`, and the one call that costs real money
-(`chapters`' Haiku pass) is mocked. See README's "Development" section for
+`~/.config/work-ledger/`, and hosted model calls are mocked. See
+`CONTRIBUTING.md` for
 what each test file covers.
 
 ## Design docs
