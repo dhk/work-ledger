@@ -8,13 +8,14 @@
   `~/.claude/projects/` (work-ledger reads those transcripts directly — if
   you've never run Claude Code, there's nothing for it to show you yet)
 
-Two subcommands additionally call the Anthropic API directly, separate
-from your Claude Code session, and need their own credentials:
+Two features can call the Anthropic API directly, separate from your Claude
+Code session, and need their own credentials:
 
-- `work-ledger chapters` — groups prompts into initiatives via a small
-  Claude Haiku call
-- `work-ledger limits` — no API call itself, but shares the same optional
-  config as `chapters`
+- `work-ledger chapters` — groups prompt and unit snippets into initiatives
+  via Claude Haiku by default; an optional Ollama backend is local instead
+- semantic `rollup`/`waste --cross-session` matching — sends unmatched
+  initiative titles to Haiku only when
+  `WORK_LEDGER_ROLLUP_MATCHING=semantic` is set
 
 Either `ANTHROPIC_API_KEY` set in your environment, or an
 [`ant auth login`](https://platform.claude.com/docs/en/api/sdks/cli)
@@ -50,12 +51,19 @@ pip install --user "git+https://github.com/dhk/work-ledger.git"
 ```sh
 git clone https://github.com/dhk/work-ledger.git
 cd work-ledger
-pip install --user -e .
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
 `-e` (editable) means changes to the source under `work_ledger/` take
 effect immediately without reinstalling — the right choice if you plan to
 read the code or send a PR, not just run the tool.
+
+The virtual environment keeps work-ledger and its dependencies isolated from
+your system Python. Reactivate it with `source .venv/bin/activate` whenever
+you return to this checkout.
 
 ## Verify it worked
 
@@ -70,9 +78,9 @@ written any transcripts yet on this machine, or they're somewhere other
 than `~/.claude/projects/` — pass `--transcript path/to/session.jsonl`
 directly if you know where yours are.
 
-## Setting up chapters and limits
+## Setting up hosted model features
 
-Both call the Anthropic API directly. Pick one:
+For hosted chaptering or opt-in semantic rollup matching, pick one:
 
 ```sh
 # Option 1: API key
@@ -86,14 +94,19 @@ Then:
 
 ```sh
 work-ledger chapters              # first run chapters your active session
-work-ledger limits --once         # rolling-window token snapshot
 ```
 
 `chapters` costs a small amount of real money per session (Haiku, usually
 a fraction of a cent to a few cents) — it prints what each pass cost. If
 credentials aren't set, `chapters` doesn't crash; it falls back to a single
-"Unsorted" chapter and says so explicitly. `limits` makes no model call at
-all — it just re-sums token data your local transcripts already contain.
+"Unsorted" chapter and says so explicitly.
+
+`limits` needs no credentials and makes no model call. It only re-sums token
+data in local transcripts:
+
+```sh
+work-ledger limits --once
+```
 
 ### Calibrating `limits`
 
@@ -191,7 +204,7 @@ directory's permissions.
 
 ## What's next
 
-See the main [README](README.md) for the full command reference, and
+See the [command reference](docs/commands.md) for full CLI detail, and
 [`docs/session-chaptering-design.md`](docs/session-chaptering-design.md)
 for the design rationale behind `chapters` if you're curious how it works
 under the hood.

@@ -13,6 +13,25 @@ proposals, see the other files in this directory.
 
 ## Data source and boundary
 
+```mermaid
+flowchart LR
+    subgraph Local["Local boundary"]
+        T["Claude Code JSONL + subagent sidecars"] --> U["Unit"] --> R["Turn"] --> C["Chapter"]
+        R --> V["Activity, cost, trend, recommendations"]
+        C --> V
+        V --> S["Terminal, local reports, 127.0.0.1 UI"]
+        V --> D["Local cache, config, and history DB"]
+    end
+    C -. "hosted default" .-> A["Anthropic Haiku"]
+    C -. "optional local backend" .-> O["Ollama"]
+    V -. "opt-in counters / explicit findings" .-> P["Personal pattern backend"]
+    V -. "opt-in singleton titles" .-> A
+```
+
+The practical consequence is that raw transcript parsing and every core view
+stay on the user's machine. Only the labeled dashed paths cross a process or
+machine boundary; the exhaustive conditions and payloads are listed below.
+
 Everything work-ledger knows comes from Claude Code's own local session
 transcripts (`~/.claude/projects/**/*.jsonl`), plus their subagent
 sidecars (`<session>/subagents/agent-<id>.jsonl` + `.meta.json`). Nothing

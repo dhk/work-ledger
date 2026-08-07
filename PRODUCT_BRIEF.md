@@ -2,12 +2,12 @@
 
 ## What this is
 
-work-ledger is a lightweight usage analytics tool for **individual Claude
-Code users** — the person watching their own $20/month or $100/month
-subscription, not a team with an observability stack. It reads Claude
-Code's own local session transcripts and turns them into near-real-time
-visibility into what a session or automation is costing, why, and — as
-the tool matures — what to do about it.
+work-ledger is a personal work-analytics tool for **individual Claude Code
+users**, not teams with observability stacks. It reads Claude Code's own
+local session transcripts and turns them into attributable usage, a view of
+how work changes over time, recurring initiatives, and evidence for improving
+how someone works. Its strongest surfaces currently Show; Tell is early and
+Do remains deliberately immature.
 
 ## Who it's for
 
@@ -43,11 +43,14 @@ Full rubric and the reversibility rule that gates stage-3 work:
 - **Not a raw log dump.** Every view is a deliberate grouping (turn, unit,
   chapter, activity type) over the raw transcript, not the transcript
   itself reformatted.
-- **No data leaves this machine without an explicit action.** `export`
-  writes a local file and stops — there is no submit/upload flag, and
-  there never automatically will be. The one exception (the `chapters`
-  Haiku call) is disclosed, costed, and requires the user's own API
-  credentials — never silent, never bundled into another action.
+- **No undisclosed network behavior.** Most analysis is local and `export`
+  writes a local file only. The adopted architecture has exactly five network
+  paths: hosted Haiku chaptering; optional local Ollama chaptering; opt-in
+  pattern counters; separately credentialed, explicit findings submission;
+  and opt-in hosted semantic rollup matching. Content leaves the machine in
+  the hosted chaptering and semantic-rollup paths, and findings text leaves
+  only on explicit submission. The exhaustive contract is
+  [`docs/architecture.md`](docs/architecture.md#network-calls-the-exhaustive-list).
 - **Not a generic pattern-matching DSL.** The shared pattern library
   matches only against `recommend`'s existing fixed rule ids — there's no
   independent matching engine against raw transcript data.
