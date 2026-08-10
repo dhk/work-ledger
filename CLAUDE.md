@@ -68,7 +68,8 @@ Applies to every user-facing entry point this project ships (`work-ledger`,
 `work-ledger-mcp`, and any future one) — a standing requirement for how
 these get built and documented, not a one-off preference. This is the
 rule itself, checked against for any new command; full usage detail and
-the shipped examples live in [docs/commands.md](docs/commands.md).
+the shipped examples live in [docs/commands.md](docs/commands.md), and
+the install/upgrade paths themselves in [INSTALL.md](INSTALL.md).
 
 - **A "cycle"/upgrade path**, in two variants: local editable-clone
   (`git pull`, restart if a long-lived process is running) and
