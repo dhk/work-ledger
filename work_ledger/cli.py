@@ -2979,6 +2979,19 @@ def main():
         "the pool before ranking. The page's title/header shows this scope so it's clear "
         "you're not looking at every session.",
     )
+    serve_parser.add_argument(
+        "--merge-sessions",
+        action="store_true",
+        help="Replace the landing page with one combined chapters -> turns -> units tree "
+        "spanning every session in scope (--top/--since/--until), chronologically "
+        "interleaved - a multi-day/multi-session view for spotting a pattern that repeats "
+        "across sessions, since the same chapter title recurring shows up as separate, "
+        "still-distinct blocks rather than being clustered away (contrast `rollup`, which "
+        "totals cost by initiative - this shows the actual work, unclustered). Each chapter "
+        "is tagged with which session it came from. Not the same thing as a shareable report "
+        "- this is still a live, 127.0.0.1-only page; see `rollup --report` for something you "
+        "can send someone.",
+    )
 
     cycle_parser = subparsers.add_parser(
         "cycle",
@@ -3050,7 +3063,7 @@ def main():
         _validate_top(args.top)
         from work_ledger.server import run_serve  # lazy: only this subcommand needs http.server
 
-        run_serve(port=args.port, since=since, until=until, top=args.top)
+        run_serve(port=args.port, since=since, until=until, top=args.top, merge_sessions=args.merge_sessions)
         return
 
     if args.command == "timeline":

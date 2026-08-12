@@ -8,6 +8,7 @@ from work_ledger.chapters import Chapter, Section
 from work_ledger.report import (
     PNG_UNAVAILABLE_MESSAGE,
     build_activity_report_html,
+    build_merged_session_detail_html,
     build_report_html,
     build_rollup_report_html,
     build_waste_report_html,
@@ -97,6 +98,88 @@ def test_build_rollup_report_html_date_range_scope_note():
 def test_build_rollup_report_html_zero_clusters_does_not_crash():
     html = build_rollup_report_html([], n_sessions_included=0, n_sessions_total=0)
     assert "<!doctype html>" in html
+
+
+def _merged_session(session_id, prompt_id, prompt_text, chapter_title, timestamp, tmp_path_factory=None, path=None):
+    """One (session_id, project, tailer, chapters) tuple for
+    build_merged_session_detail_html tests - a single-turn session
+    chaptered under `chapter_title`."""
+    entries = [
+        user_entry(prompt_id, prompt_text, timestamp=timestamp),
+        *assistant_lines(f"msg-{prompt_id}", "claude-haiku-4-5", {"input_tokens": 100, "output_tokens": 20}, [{"type": "text", "text": "done"}], timestamp=timestamp),
+    ]
+    write_jsonl(path, entries)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+    chapters = [Chapter(title=chapter_title, category="bug-fix", sections=[Section(title="s", prompt_ids=[prompt_id])])]
+    return (session_id, "proj", tailer, chapters)
+
+
+def test_build_merged_session_detail_html_smoke(tmp_path):
+    s1 = _merged_session("s1", "p1", "fix it", "Fix the bug", "2026-08-01T10:00:00Z", path=tmp_path / "s1.jsonl")
+    out = build_merged_session_detail_html([s1])
+
+    assert out.startswith("<!doctype html>")
+    assert "Merged sessions" in out
+    assert "Fix the bug" in out
+    assert "</html>" in out
+
+
+def test_build_merged_session_detail_html_chronological_interleaving(tmp_path):
+    """Chapters must render in chronological order across sessions, not in
+    the order `sessions` was passed in."""
+    later = _merged_session("later", "p1", "second thing", "Second chapter", "2026-08-05T10:00:00Z", path=tmp_path / "later.jsonl")
+    earlier = _merged_session("earlier", "p1", "first thing", "First chapter", "2026-08-01T10:00:00Z", path=tmp_path / "earlier.jsonl")
+
+    # Passed in "later, earlier" order - output must still show First before Second.
+    out = build_merged_session_detail_html([later, earlier])
+    assert out.index("First chapter") < out.index("Second chapter")
+
+
+def test_build_merged_session_detail_html_same_title_not_clustered(tmp_path):
+    """The whole point of merge-sessions vs rollup: the same chapter title
+    recurring across sessions must render as separate blocks, not merged
+    into one."""
+    s1 = _merged_session("s1", "p1", "fix it", "Fix the bug", "2026-08-01T10:00:00Z", path=tmp_path / "s1.jsonl")
+    s2 = _merged_session("s2", "p1", "fix it again", "Fix the bug", "2026-08-03T10:00:00Z", path=tmp_path / "s2.jsonl")
+
+    out = build_merged_session_detail_html([s1, s2])
+    assert out.count('class="chapter-d"') == 2
+
+
+def test_build_merged_session_detail_html_session_badges_present(tmp_path):
+    s1 = _merged_session("s1abcdef", "p1", "fix it", "Fix the bug", "2026-08-01T10:00:00Z", path=tmp_path / "s1.jsonl")
+    out = build_merged_session_detail_html([s1])
+    assert "session-badge" in out
+    assert "s1abcdef"[:8] in out
+
+
+def test_build_merged_session_detail_html_zero_sessions_does_not_crash():
+    out = build_merged_session_detail_html([])
+    assert "<!doctype html>" in out
+    assert "No chapters found" in out
+
+
+def test_build_merged_session_detail_html_leftover_turns_shown_per_session(tmp_path):
+    entries = [
+        user_entry("p1", "uncharted turn", timestamp="2026-08-01T10:00:00Z"),
+        *assistant_lines("msg-p1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "x"}], timestamp="2026-08-01T10:00:01Z"),
+    ]
+    path = tmp_path / "s.jsonl"
+    write_jsonl(path, entries)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    out = build_merged_session_detail_html([("s", "proj", tailer, [])])
+    assert "Not yet chaptered" in out
+    assert "uncharted turn" in out
+
+
+def test_build_merged_session_detail_html_scope_note_in_title(tmp_path):
+    s1 = _merged_session("s1", "p1", "fix it", "Fix the bug", "2026-08-01T10:00:00Z", path=tmp_path / "s1.jsonl")
+    out = build_merged_session_detail_html([s1], since=date(2026, 8, 1), until=date(2026, 8, 12), top=5)
+    assert "top 1 by cost" in out
+    assert "2026-08-01 to 2026-08-12" in out
 
 
 def test_build_activity_report_html_smoke():

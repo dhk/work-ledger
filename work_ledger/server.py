@@ -29,9 +29,9 @@ from urllib.parse import unquote, urlparse
 from rich.console import Console
 
 from work_ledger.chapters import cached_chapters
-from work_ledger.cli import _in_date_range, build_session_rows, top_n_session_rows
+from work_ledger.cli import _in_date_range, build_session_rows, top_n_session_rows, top_n_transcripts_by_cost
 from work_ledger.git_activity import GitActivity, find_git_activity
-from work_ledger.report import build_session_detail_html, build_sessions_index_html
+from work_ledger.report import build_merged_session_detail_html, build_session_detail_html, build_sessions_index_html
 from work_ledger.transcript import TranscriptTailer, find_all_transcripts
 
 DEFAULT_SERVE_PORT = 8765
@@ -111,6 +111,27 @@ def render_landing(since: date | None, until: date | None, top: int | None = Non
     return build_sessions_index_html(rows, scope_note=scope_note)
 
 
+def render_merged_sessions(since: date | None, until: date | None, top: int | None = None) -> str:
+    """`work-ledger serve --merge-sessions`: every session in scope
+    (--top/--since/--until, same top_n_transcripts_by_cost ranking
+    `rollup --top`/`sessions --top` already use), combined into one
+    chronologically-interleaved chapters -> turns -> units tree - see
+    build_merged_session_detail_html's own docstring for how this differs
+    from `rollup` (clustered totals) - re-derived fresh on every request,
+    same as render_landing/render_session_detail, no caching of its own."""
+    transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
+    transcripts = top_n_transcripts_by_cost(transcripts, top)
+
+    sessions = []
+    for path in transcripts:
+        tailer = TranscriptTailer(path)
+        tailer.poll()
+        chapters = cached_chapters(path)  # never get_chapters() - see module docstring
+        sessions.append((path.stem, path.parent.name, tailer, chapters))
+
+    return build_merged_session_detail_html(sessions, since=since, until=until, top=top)
+
+
 def render_session_detail(session_id: str) -> tuple[int, str]:
     matches = _matching_transcripts(session_id)
     if not matches:
@@ -150,7 +171,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
 
         if path in ("", "/"):
-            self._send_html(200, render_landing(self.server.since, self.server.until, self.server.top))
+            if self.server.merge_sessions:
+                self._send_html(200, render_merged_sessions(self.server.since, self.server.until, self.server.top))
+            else:
+                self._send_html(200, render_landing(self.server.since, self.server.until, self.server.top))
             return
 
         if path.startswith("/session/"):
@@ -177,6 +201,7 @@ def run_serve(
     since: date | None = None,
     until: date | None = None,
     top: int | None = None,
+    merge_sessions: bool = False,
 ) -> None:
     """Long-running, like the plain `work-ledger` live dashboard: starts,
     prints where it's listening, and runs until Ctrl-C. One-shot (serve
@@ -187,9 +212,12 @@ def run_serve(
     httpd.since = since
     httpd.until = until
     httpd.top = top
+    httpd.merge_sessions = merge_sessions
     url = f"http://{BIND_HOST}:{port}/"
     console.print(f"[green]work-ledger serve[/green] — [bold]{url}[/bold]")
-    if top is not None:
+    if merge_sessions:
+        console.print("[dim]Merged view: one combined chapters -> turns -> units tree across every session in scope.[/dim]")
+    elif top is not None:
         console.print(f"[dim]Pinned to the {top} most expensive session(s) in range.[/dim]")
     console.print(
         f"[dim]Local-only: bound to {BIND_HOST}, never leaves this machine, no auth needed "

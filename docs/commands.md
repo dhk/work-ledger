@@ -63,6 +63,7 @@ work-ledger trend --report                             # same visual style as ch
 work-ledger serve                                 # local-only web UI - browse every session, drill into chapters/turns/units
 work-ledger serve --port 9000                          # different port (default 8765)
 work-ledger serve --top 5                              # pin the landing page to the 5 most expensive sessions, same ranking as `sessions --top`
+work-ledger serve --top 5 --since 2026-08-01 --merge-sessions  # one combined, chronological chapters/turns/units tree across those 5 sessions
 
 work-ledger sessions                              # list every local session: project, last-active, first/last prompt, cost
 work-ledger sessions --since 2026-07-01                # limit to a date range
@@ -484,6 +485,18 @@ the same grouping `chapters --detail` shows in the terminal.
     badges clickable, linked via `/issues/<n>` (GitHub resolves that
     correctly whether it's actually an issue or a PR). Unset, same
     plain-badge-not-linked degrade.
+- **`--merge-sessions` replaces the landing page with one combined
+  chapters → turns → units tree spanning every session in scope**
+  (`--top`/`--since`/`--until`) — a multi-day/multi-session view for
+  spotting a pattern that repeats across sessions. Chapters from every
+  session are chronologically interleaved, **not clustered by title**
+  (that's `rollup`'s job — totals cost per initiative, discarding session
+  boundaries on purpose). The same chapter title recurring across
+  sessions shows up as separate, still-distinct blocks, each tagged with
+  a small session badge — the repetition is something you see looking at
+  the page, not something this computes or scores for you. Still a live,
+  127.0.0.1-only page, same as everything else here — not the same thing
+  as `rollup --report`'s shareable file.
 - **A session's page shows "Commits during this session" when its repo is
   still available locally** — "what was actually done," not just what
   the prompts said. Correlates the session's own working directory
