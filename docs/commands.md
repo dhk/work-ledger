@@ -91,6 +91,8 @@ work-ledger waste --cross-session                      # same pattern kinds, acr
 work-ledger rollup                                # cluster the same recurring initiative's chapters across every session, total cost
 work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date range
 work-ledger rollup --json                              # machine-readable output
+work-ledger rollup --top 5 --since 2026-08-01 --report  # shareable HTML report, clustered across just this month's 5 costliest sessions
+work-ledger rollup --report --format png --out spend.png   # same, as a PNG image
 
 work-ledger history sync                          # incrementally update the local session history store
 work-ledger history status                        # show what's stored (row count, last sync time)

@@ -1,15 +1,19 @@
 import sys
 import types
 
+from datetime import date
+
 from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter, Section
 from work_ledger.report import (
     PNG_UNAVAILABLE_MESSAGE,
     build_activity_report_html,
     build_report_html,
+    build_rollup_report_html,
     build_waste_report_html,
     png_available,
 )
+from work_ledger.rollup import RollupCluster
 from work_ledger.transcript import TranscriptTailer
 from work_ledger.waste import REPEATED_READ, REPEATED_SUBAGENT, WastePattern
 
@@ -42,6 +46,56 @@ def test_build_report_html_zero_chapters_does_not_crash(tmp_path):
     tailer.poll()
 
     html = build_report_html("empty.jsonl", tailer, [], pass_cost_usd=0.0)
+    assert "<!doctype html>" in html
+
+
+def _cluster(title, sessions, num_chapters=1, cost=1.0):
+    c = RollupCluster(normalized_key=title.lower(), display_title=title, num_chapters=num_chapters, cost_usd=cost)
+    c.sessions.extend(sessions)
+    return c
+
+
+def test_build_rollup_report_html_smoke():
+    clusters = [
+        _cluster("Fix the double-counting bug", ["s1", "s2"], num_chapters=2, cost=12.5),
+        _cluster("Write onboarding docs", ["s3"], num_chapters=1, cost=3.0),
+    ]
+    html = build_rollup_report_html(clusters, n_sessions_included=3, n_sessions_total=3)
+
+    assert html.startswith("<!doctype html>")
+    assert "work-ledger rollup" in html
+    assert "Fix the double-counting bug" in html
+    assert "Write onboarding docs" in html
+    assert "$15.50" in html  # grand total stat tile
+    assert "</html>" in html
+
+
+def test_build_rollup_report_html_recurring_count_only_counts_multi_session_clusters():
+    clusters = [
+        _cluster("Recurring thing", ["s1", "s2"], cost=5.0),
+        _cluster("One-off thing", ["s3"], cost=1.0),
+    ]
+    html = build_rollup_report_html(clusters, n_sessions_included=3, n_sessions_total=3)
+    assert ">1<" in html  # exactly one cluster touched more than one session
+
+
+def test_build_rollup_report_html_top_scope_note_shows_included_vs_total():
+    clusters = [_cluster("X", ["s1"], cost=1.0)]
+    html = build_rollup_report_html(clusters, n_sessions_included=2, n_sessions_total=10, top=2)
+    assert "top 2 sessions by cost" in html
+    assert "of 10 found in range" in html
+
+
+def test_build_rollup_report_html_date_range_scope_note():
+    clusters = [_cluster("X", ["s1"], cost=1.0)]
+    html = build_rollup_report_html(
+        clusters, n_sessions_included=1, n_sessions_total=1, since=date(2026, 8, 1), until=date(2026, 8, 12)
+    )
+    assert "2026-08-01 to 2026-08-12" in html
+
+
+def test_build_rollup_report_html_zero_clusters_does_not_crash():
+    html = build_rollup_report_html([], n_sessions_included=0, n_sessions_total=0)
     assert "<!doctype html>" in html
 
 

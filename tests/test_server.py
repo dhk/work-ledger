@@ -172,6 +172,7 @@ def test_build_session_detail_html_has_tree_sort_controls_and_data_attrs(tmp_pat
     assert 'data-time=' in out
     assert 'data-calls=' in out
     assert 'data-cost=' in out
+    assert 'let currentTreeField = "cost";' in out
     assert "sortTreeContainer" in out
 
 

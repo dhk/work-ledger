@@ -19,6 +19,7 @@ from pathlib import Path
 from work_ledger.about import get_about_info
 from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter
+from work_ledger.rollup import RollupCluster
 from work_ledger.timeline import DayBucket, summarize_timeline
 from work_ledger.transcript import TranscriptTailer
 from work_ledger.trend import CostBucket
@@ -458,6 +459,147 @@ data.forEach((c, i) => {{
   seg.style.width = "100%";
   seg.style.background = seriesColor[i];
   seg.innerHTML = `<div class="tooltip"><b>${{c.label}}</b><br>$${{c.cost.toFixed(2)}} · ${{pct.toFixed(1)}}% of total</div>`;
+  track.appendChild(seg);
+  wrap.appendChild(track);
+
+  root.appendChild(wrap);
+}});
+</script>
+</body>
+</html>
+"""
+
+
+def build_rollup_report_html(
+    clusters: list[RollupCluster],
+    n_sessions_included: int,
+    n_sessions_total: int,
+    since=None,
+    until=None,
+    top: int | None = None,
+) -> str:
+    """Cross-session view: the same clustering `rollup`/`rollup --json`
+    already compute (issue #3, plus #68's opt-in semantic pass), rendered
+    as a shareable bar chart instead of a terminal table - "give my boss a
+    report on what I've been spending our money on" needs a static file,
+    not a localhost-only `serve` page. Same visual language as
+    build_activity_report_html - one bar per recurring initiative, most
+    expensive first - deliberately not per-session, since the whole point
+    of a rollup is showing the same initiative's *total* cost across every
+    session it touched, which is also what surfaces repeated patterns
+    across sessions at a glance (a title recurring here at all means it
+    recurred in your actual work).
+
+    `clusters` must already be sorted most-expensive-first
+    (build_rollup_result's contract, same as group_by_activity's for
+    activity buckets). `n_sessions_included` vs `n_sessions_total` differ
+    only when `top` scoped the pool before clustering - shown so the
+    report is honest about "clustered across N of your M sessions in
+    range," not silently presented as everything."""
+    grand_total = sum(c.cost_usd for c in clusters)
+    colors = _series_colors(len(clusters))
+
+    css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
+    css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
+    style = _style_block(css_vars_light, css_vars_dark)
+
+    scope_bits = []
+    if top is not None:
+        scope_bits.append(f"top {n_sessions_included} session{'s' if n_sessions_included != 1 else ''} by cost")
+    if since and until:
+        scope_bits.append(f"{since.isoformat()} to {until.isoformat()}")
+    elif since:
+        scope_bits.append(f"since {since.isoformat()}")
+    elif until:
+        scope_bits.append(f"until {until.isoformat()}")
+    scope_note = ", ".join(scope_bits) if scope_bits else "every local session found"
+
+    data = [
+        {"label": html.escape(c.display_title), "cost": c.cost_usd, "sessions": c.num_sessions, "chapters": c.num_chapters}
+        for c in clusters
+    ]
+    data_json = json.dumps(data)
+    colors_json = json.dumps([f"var(--series-{i+1})" for i in range(len(clusters))])
+
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>work-ledger rollup — {html.escape(scope_note)}</title>
+{style}
+</head>
+<body>
+<div class="viz-root">
+  <div class="wrap">
+    <h1>work-ledger rollup</h1>
+    <p class="subtitle">Cost by recurring initiative, clustered across sessions — {html.escape(scope_note)}.</p>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <p class="stat-label">Total cost (est.)</p>
+        <div class="stat-value">${grand_total:.2f}</div>
+        <p class="stat-note">across {len(clusters)} initiative{'s' if len(clusters) != 1 else ''}</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Sessions included</p>
+        <div class="stat-value">{n_sessions_included}</div>
+        <p class="stat-note">{f"of {n_sessions_total} found in range" if n_sessions_included != n_sessions_total else "every session in range"}</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Recurring initiatives</p>
+        <div class="stat-value">{sum(1 for c in clusters if c.num_sessions > 1)}</div>
+        <p class="stat-note">touched more than one session</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Cost by initiative, most expensive first</h2>
+      <p class="caption">Same title recurring across sessions is clustered into one bar — the repeated-pattern signal itself.</p>
+      <div id="chapters"></div>
+    </div>
+
+    <p class="footnote">
+      Reuses whatever chapters are already cached per session — never triggers a new
+      chaptering pass. Deterministic title-normalization matching by default; opt in to a
+      batched semantic pass with <code>WORK_LEDGER_ROLLUP_MATCHING=semantic</code> (issue #68).
+      Generated by <code>work-ledger rollup --report</code>.
+    </p>
+    {_footer_html()}
+  </div>
+</div>
+
+<script>
+const data = {data_json};
+const seriesColor = {colors_json};
+const grandTotal = data.reduce((s, c) => s + c.cost, 0) || 1;
+const maxCost = Math.max(...data.map(c => c.cost), 1e-9);
+
+const root = document.getElementById("chapters");
+
+data.forEach((c, i) => {{
+  const pct = (c.cost / grandTotal) * 100;
+  const widthPct = (c.cost / maxCost) * 100;
+
+  const wrap = document.createElement("div");
+  wrap.className = "chapter";
+
+  const head = document.createElement("div");
+  head.className = "chapter-head";
+  head.innerHTML = `
+    <div class="chapter-title"><span class="swatch" style="background:${{seriesColor[i]}}"></span>${{c.label}}</div>
+    <div class="chapter-figs"><b>$${{c.cost.toFixed(2)}}</b> &nbsp;(${{pct.toFixed(0)}}%)</div>
+  `;
+  wrap.appendChild(head);
+
+  const track = document.createElement("div");
+  track.className = "bar-track";
+  track.style.width = widthPct.toFixed(1) + "%";
+
+  const seg = document.createElement("div");
+  seg.className = "bar-seg";
+  seg.style.width = "100%";
+  seg.style.background = seriesColor[i];
+  seg.innerHTML = `<div class="tooltip"><b>${{c.label}}</b><br>$${{c.cost.toFixed(2)}} · ${{pct.toFixed(1)}}% of total<br>${{c.sessions}} session${{c.sessions === 1 ? "" : "s"}} · ${{c.chapters}} chapter${{c.chapters === 1 ? "" : "s"}}</div>`;
   track.appendChild(seg);
   wrap.appendChild(track);
 
@@ -1430,7 +1572,7 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
 
 <script>
 const treeSortFields = {tree_sort_fields_json};  // [[key, label], ...]
-let currentTreeField = "time";
+let currentTreeField = "cost";
 const defaultTreeCaption = "Click a chapter, then a section, then a turn to drill down - same grouping as chapters --detail, browsable instead of flag-driven.";
 
 function sortTreeContainer(container, field) {{
