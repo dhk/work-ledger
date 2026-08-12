@@ -19,6 +19,7 @@ from work_ledger.cli import (
     _turns_unknown,
     _validate_other_threshold,
     _validate_top,
+    _version_string,
     build_session_rows,
 )
 from work_ledger.limits import SessionWindowUsage, WindowUsage
@@ -1092,6 +1093,69 @@ def test_run_rollup_clusters_across_sessions_json(isolated_transcripts_root, cap
     assert data[0]["cost_usd"] > 0
 
 
+def test_run_rollup_top_excludes_cheap_sessions_from_clustering(isolated_transcripts_root, capsys):
+    """--top scopes the *session pool* before clustering (top_n_transcripts_by_cost,
+    same ranking sessions --top/serve --top use) - a cheap session's chapter
+    must not appear in the rollup at all when it's excluded."""
+    from work_ledger.chapters import _save_cache
+
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+
+    path_cheap = proj / "cheap.jsonl"
+    path_expensive = proj / "expensive.jsonl"
+    write_jsonl(
+        path_cheap,
+        [
+            user_entry("p1", "cheap"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 100, "output_tokens": 20}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    write_jsonl(
+        path_expensive,
+        [
+            user_entry("p2", "expensive"),
+            *assistant_lines("m2", "claude-opus-4-8", {"input_tokens": 50_000, "output_tokens": 10_000}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path_cheap, ["p1"], [Chapter(title="Cheap chapter", sections=[Section(title="s", prompt_ids=["p1"])])])
+    _save_cache(path_expensive, ["p2"], [Chapter(title="Expensive chapter", sections=[Section(title="s", prompt_ids=["p2"])])])
+
+    cli.run_rollup(as_json=True, top=1)
+
+    import json
+
+    data = json.loads(capsys.readouterr().out)
+    titles = [c["title"] for c in data]
+    assert "Expensive chapter" in titles
+    assert "Cheap chapter" not in titles
+
+
+def test_run_rollup_report_writes_html_file(isolated_transcripts_root, capsys, tmp_path, monkeypatch):
+    from work_ledger.chapters import _save_cache
+
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    path = proj / "s.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path, ["p1"], [Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])])
+
+    monkeypatch.chdir(tmp_path)
+    cli.run_rollup(report=True, report_format="html")
+
+    out = capsys.readouterr().out
+    assert "Wrote HTML report to" in out
+    written = list(tmp_path.glob("work-ledger-rollup-*.html"))
+    assert len(written) == 1
+    assert "Fix the bug" in written[0].read_text()
+
+
 def test_run_rollup_no_transcripts_exits(isolated_transcripts_root, capsys):
     with pytest.raises(SystemExit) as exc_info:
         cli.run_rollup()
@@ -1643,6 +1707,35 @@ def test_run_cycle_command_error_exits_nonzero(monkeypatch, capsys):
 
     assert exc_info.value.code == 1
     assert "uncommitted changes present" in capsys.readouterr().out
+
+
+# --- _version_string (--version includes commit/date) --------------------
+
+
+def test_version_string_includes_commit_and_date(monkeypatch):
+    import work_ledger.about as about_mod
+
+    monkeypatch.setattr(about_mod, "get_about_info", lambda: _fake_about_info())
+
+    assert _version_string() == "1.2.3 (commit abc1234, 2026-07-20)"
+
+
+def test_version_string_no_commit_falls_back_to_date_only(monkeypatch):
+    """A published (non-git) install has no resolvable commit - never
+    fabricate one, fall back to just the date."""
+    import work_ledger.about as about_mod
+
+    monkeypatch.setattr(about_mod, "get_about_info", lambda: _fake_about_info(commit=None))
+
+    assert _version_string() == "1.2.3 (last updated 2026-07-20)"
+
+
+def test_version_string_no_date_or_commit_is_bare_version(monkeypatch):
+    import work_ledger.about as about_mod
+
+    monkeypatch.setattr(about_mod, "get_about_info", lambda: _fake_about_info(commit=None, last_updated=""))
+
+    assert _version_string() == "1.2.3"
 
 
 # --- run_about_command (issue #75) ----------------------------------------

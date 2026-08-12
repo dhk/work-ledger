@@ -41,6 +41,15 @@ installed. This is the load-bearing structural choice the rest of the
 system follows from: work-ledger is a *reader*, never a participant, in
 the Claude Code session itself.
 
+One deliberate, narrow exception: `git_activity.py` (`serve`'s "Commits
+during this session" panel) also reads the session's own git repo on
+disk, correlated via the transcript's own `cwd` field — `git log`/`git
+remote`, run locally, same subprocess precedent `about.py`'s own commit
+detection already established. Still zero-network, still read-only, but
+it's the one place work-ledger reads something beyond the transcript
+itself. Degrades to simply not showing the panel (never an error) when
+that repo isn't present locally, which is routine, not exceptional.
+
 Known gap in this boundary, tracked separately: an older/different
 install that inlines subagent activity as `isSidechain` entries in the
 main transcript file (rather than the separate-file format above) isn't

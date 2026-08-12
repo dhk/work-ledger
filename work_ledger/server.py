@@ -30,6 +30,7 @@ from rich.console import Console
 
 from work_ledger.chapters import cached_chapters
 from work_ledger.cli import _in_date_range, build_session_rows, top_n_session_rows
+from work_ledger.git_activity import GitActivity, find_git_activity
 from work_ledger.report import build_session_detail_html, build_sessions_index_html
 from work_ledger.transcript import TranscriptTailer, find_all_transcripts
 
@@ -121,7 +122,17 @@ def render_session_detail(session_id: str) -> tuple[int, str]:
     tailer = TranscriptTailer(path)
     tailer.poll()
     chapters = cached_chapters(path)  # never get_chapters() - see module docstring
-    return 200, build_session_detail_html(path.stem, path.parent.name, tailer, chapters)
+
+    turns = tailer.ordered_turns()
+    if turns:
+        git_activity = find_git_activity(tailer.cwd, turns[0].timestamp, turns[-1].timestamp)
+    else:
+        # No turns at all - nothing to correlate a time window against;
+        # same "unavailable, not an error" shape find_git_activity's own
+        # missing-cwd/missing-repo cases already use.
+        git_activity = GitActivity(repo_available=False)
+
+    return 200, build_session_detail_html(path.stem, path.parent.name, tailer, chapters, git_activity)
 
 
 class _RequestHandler(BaseHTTPRequestHandler):

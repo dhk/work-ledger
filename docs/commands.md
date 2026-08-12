@@ -91,6 +91,8 @@ work-ledger waste --cross-session                      # same pattern kinds, acr
 work-ledger rollup                                # cluster the same recurring initiative's chapters across every session, total cost
 work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date range
 work-ledger rollup --json                              # machine-readable output
+work-ledger rollup --top 5 --since 2026-08-01 --report  # shareable HTML report, clustered across just this month's 5 costliest sessions
+work-ledger rollup --report --format png --out spend.png   # same, as a PNG image
 
 work-ledger history sync                          # incrementally update the local session history store
 work-ledger history status                        # show what's stored (row count, last sync time)
@@ -455,15 +457,54 @@ the same grouping `chapters --detail` shows in the terminal.
   same-day session collapses to one date with a time range; a
   long-running or resumed session shows both full dates.
 - **The chapters → sections → turns → units drill-down is sortable too** —
-  by Time (chronological, the default), Calls, or $, another client-side
-  button row. The chosen key cascades through every nesting level at
-  once (chapters among chapters, turns within a section, units within a
-  turn), not just the top one, so "most expensive first" holds true
-  wherever you drill in next. Re-sorting doesn't collapse whatever
-  `<details>` you already had open.
-- **Read-only and makes no API call.** Browsing only ever reads chapters
-  that are already cached (same as `timeline`) — opening this UI can
-  never trigger a paid chaptering pass as a side effect.
+  by $ (the default), Calls, or Time, another client-side button row. The
+  chosen key cascades through every nesting level at once (chapters among
+  chapters, turns within a section, units within a turn), not just the
+  top one, so "most expensive first" holds true wherever you drill in
+  next. Re-sorting doesn't collapse whatever `<details>` you already had
+  open.
+- **Every turn shows ticket/PR reference badges when its prompt text
+  contains them**, plus a lightly cleaned-up synopsis (filler prefix like
+  "ok, " stripped) instead of the raw prompt snippet verbatim — the fix
+  for a session where most work landed in one big "Unsorted" chapter
+  (chaptering didn't run, or fell back) still leaving you with something
+  to go on beyond raw prompt text. Extracted once at parse time from the
+  turn's full (untruncated) prompt text, not the 60-char display snippet,
+  so a reference past that cutoff is still found. Three env vars, all
+  optional, none required for the badges to show up at all:
+  - `WORK_LEDGER_TICKET_PREFIX=SLA,ABBV` — your org's real ticket
+    prefixes, comma-separated, for exact matching. Unset, a generic
+    `LETTERS-digits` pattern is used instead with a small stoplist of
+    common false positives (`UTF-8`, `ISO-8601`, `GPT-4`, ...) —
+    best-effort only, not authoritative.
+  - `WORK_LEDGER_TICKET_URL_TEMPLATE=https://yourorg.atlassian.net/browse/{id}`
+    — makes ticket badges clickable. Unset, they're still shown, just not
+    linked — never a guessed URL.
+  - `WORK_LEDGER_GITHUB_REPO=you/your-repo` — makes `#123`-style PR/issue
+    badges clickable, linked via `/issues/<n>` (GitHub resolves that
+    correctly whether it's actually an issue or a PR). Unset, same
+    plain-badge-not-linked degrade.
+- **A session's page shows "Commits during this session" when its repo is
+  still available locally** — "what was actually done," not just what
+  the prompts said. Correlates the session's own working directory
+  (captured from the transcript's `cwd` field) to `git log` output in its
+  time window, entirely local (no GitHub API call, no token — same
+  local-`git`-subprocess precedent `about.py`'s own commit detection
+  already uses). PR numbers are recovered for free from commit subjects
+  ("Merge pull request #85", "(#85)") and linked when the repo's
+  `origin` remote resolves to a `github.com` URL. This is a time-window
+  match, not proof a commit came from that specific session — and the
+  panel is omitted entirely (not shown empty) when the session's repo
+  isn't found locally, the routine case for an older or moved checkout.
+  Real PR titles/descriptions/review state (not just the bare number)
+  would need the GitHub API and its own opt-in gate — tracked as
+  [#87](https://github.com/dhk/work-ledger/issues/87), not built.
+- **Read-only and makes no network call.** Browsing only ever reads
+  chapters that are already cached (same as `timeline`) — opening this
+  UI can never trigger a paid chaptering pass as a side effect. The
+  commits panel above is the one place this page reads beyond the
+  transcript itself — a local `git log`/`git remote` call, still
+  zero-network, same category as `about.py`'s own existing git reads.
 - **Long-running**, like the plain live dashboard — `Ctrl-C` to stop.
 
 ## Export (anonymized, manual)
@@ -728,6 +769,9 @@ network call until you run `patterns enable` and configure a backend URL.
   connect it to a Claude Code session to consult known patterns live,
   not just when `recommend` runs after the fact. Same reasoning as the
   design doc: this is the actual argument for MCP over a static file.
+  See [INSTALL.md](../INSTALL.md#using-work-ledger-inside-claude-mcp)
+  for the exact `claude mcp add`/Claude Desktop setup steps and this
+  server's scope (patterns only — no usage/cost tools yet).
 - **`submit_review_findings`** (same MCP server) forwards code-review
   findings — the same shape `ReportFindings` already produces — to the
   backend for later manual curation into new library entries (see

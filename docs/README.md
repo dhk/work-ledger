@@ -30,6 +30,7 @@ These files capture rationale and may mix implemented decisions with unbuilt ide
 - [About block](about-block-design.md)
 - [Cycle command](cycle-command-design.md)
 - [Local model chaptering](local-model-chaptering-design.md)
+- [MCP session-aware tools](mcp-session-tools-design.md)
 - [Pattern library](pattern-library-design.md)
 - [Recommendations](recommend-workflow-efficiency-design.md)
 - [Review findings harvesting](review-findings-harvesting-design.md)

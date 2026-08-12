@@ -42,7 +42,7 @@ work-ledger trend             # cost over time
 work-ledger --help
 ```
 
-The complete CLI reference, including reports, rollups, recommendations, patterns, limits, export, the local web UI, and MCP setup, lives in [docs/commands.md](docs/commands.md). The [documentation index](docs/README.md) separates shipped truth from research and proposals.
+The complete CLI reference, including reports, rollups, recommendations, patterns, limits, and export, lives in [docs/commands.md](docs/commands.md). For running work-ledger's local web UI or connecting it to Claude itself via MCP, see [docs/commands.md](docs/commands.md#local-web-ui) and [INSTALL.md](INSTALL.md#using-work-ledger-inside-claude-mcp) respectively. The [documentation index](docs/README.md) separates shipped truth from research and proposals.
 
 ## Privacy and network boundary
 

@@ -1023,6 +1023,23 @@ def top_n_session_rows(rows: list[dict], top: int | None) -> list[dict]:
     return sorted(rows, key=lambda r: r["cost_usd"], reverse=True)[:top]
 
 
+def top_n_transcripts_by_cost(transcripts: list[Path], top: int | None) -> list[Path]:
+    """`transcripts` truncated to the `top` costliest by the exact same
+    ranking top_n_session_rows uses (same build_session_rows cost
+    computation) - or unchanged if `top` is None. Lets `rollup --top`
+    cluster within "my N most expensive sessions" specifically, matching
+    `sessions --top`/`serve --top`'s meaning of --top rather than a
+    second, different one (contrast `activity --report --top`, which
+    truncates already-computed buckets, not sessions - a different axis
+    entirely, not a naming collision in practice since they're different
+    commands)."""
+    if top is None:
+        return transcripts
+    rows = build_session_rows(transcripts)
+    paired = sorted(zip(transcripts, rows), key=lambda pr: pr[1]["cost_usd"], reverse=True)[:top]
+    return [p for p, _ in paired]
+
+
 def run_sessions(
     since: date | None = None,
     until: date | None = None,
@@ -1237,6 +1254,10 @@ def run_rollup(
     until: date | None = None,
     as_json: bool = False,
     confirm: bool = False,
+    top: int | None = None,
+    report: bool = False,
+    report_format: str = "html",
+    report_out: str | None = None,
 ):
     """Cluster the same recurring initiative's chapters across every
     session it touched and total its cost - issue #3. Unlike `chapters
@@ -1253,13 +1274,24 @@ def run_rollup(
     costs nothing beyond having already run `chapters`/`chapters --all`
     at some point. No default date window (unlike `trend`/`timeline`):
     the whole point of a rollup is a true total across every session an
-    initiative touched, not a recent slice."""
+    initiative touched, not a recent slice.
+
+    `top`, when given, clusters within just the N most expensive sessions
+    in range (top_n_transcripts_by_cost - same ranking `sessions --top`/
+    `serve --top` use) instead of every session in range - "merge across
+    just the sessions I already know are expensive" instead of everything.
+    `report` renders the clustering as a shareable HTML/PNG bar chart
+    (build_rollup_report_html) instead of a terminal table/--json - the
+    "give my boss a report on what I've been spending on" case a
+    localhost-only `serve` page can't cover."""
     console = Console()
-    transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
-    if not transcripts:
+    all_transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
+    if not all_transcripts:
         range_note = " in that date range" if (since or until) else ""
         console.print(f"[red]No session transcripts found{range_note}.[/red]")
         sys.exit(1)
+
+    transcripts = top_n_transcripts_by_cost(all_transcripts, top)
 
     result = build_rollup_result(transcripts)
     clusters = result.clusters
@@ -1270,6 +1302,31 @@ def run_rollup(
             "[yellow]No cached chapters found across these sessions.[/yellow] Run "
             "`work-ledger chapters --all` first (small Anthropic API cost) to chapter them."
         )
+        return
+
+    if report:
+        from work_ledger.report import ReportRenderError, build_rollup_report_html, render_png
+
+        html = build_rollup_report_html(
+            clusters,
+            n_sessions_included=len(transcripts),
+            n_sessions_total=len(all_transcripts),
+            since=since,
+            until=until,
+            top=top,
+        )
+        out_path = Path(report_out) if report_out else Path(f"work-ledger-rollup-{date.today().isoformat()}.{report_format}")
+
+        if report_format == "html":
+            out_path.write_text(html, encoding="utf-8")
+        else:
+            try:
+                render_png(html, out_path)
+            except ReportRenderError as e:
+                console.print(f"[red]{escape(str(e))}[/red]")
+                sys.exit(1)
+
+        console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
         return
 
     if as_json:
@@ -2277,6 +2334,23 @@ def run_patterns(action: str):
         return
 
 
+def _version_string() -> str:
+    """The bare version number plus commit/date detail, for --version -
+    reuses about.py's get_about_info() so it can never drift from `about`'s
+    own numbers. Degrades to just the date (no commit) for a published
+    install where commit isn't resolvable (see get_about_info's own
+    editable-git-only commit resolution) - never fabricates a SHA."""
+    from work_ledger.about import get_about_info
+
+    info = get_about_info()
+    date = info.last_updated[:10] if info.last_updated else None
+    if info.commit and date:
+        return f"{info.version} (commit {info.commit}, {date})"
+    if date:
+        return f"{info.version} (last updated {date})"
+    return info.version
+
+
 def _add_transcript_args(parser: argparse.ArgumentParser) -> None:
     """--transcript and --session are two ways to pick a specific
     session, added identically to every subcommand that needs one - see
@@ -2300,7 +2374,7 @@ def _add_transcript_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main():
-    from work_ledger.about import REPO_URL, get_about_info
+    from work_ledger.about import REPO_URL
 
     parser = argparse.ArgumentParser(
         description="Watch Claude Code session cost/token usage in near-real-time.",
@@ -2311,7 +2385,7 @@ def main():
         "-V",
         "--version",
         action="version",
-        version=f"work-ledger {get_about_info().version}",
+        version=f"work-ledger {_version_string()}",
     )
     _add_transcript_args(parser)
     parser.add_argument(
@@ -2717,6 +2791,36 @@ def main():
         "cluster. No effect when the env var is unset (the default) or nothing merged - "
         "visibility only, not an audit trail",
     )
+    rollup_parser.add_argument(
+        "--top",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Cluster within just the N most expensive sessions in range (same ranking as "
+        "`sessions --top`), instead of every session in range - e.g. `rollup --since "
+        "2026-08-01 --top 5` for a merged view of this month's 5 costliest sessions.",
+    )
+    rollup_parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Generate a shareable visual report (HTML or PNG) to a file instead of a "
+        "terminal table/--json - a report you can actually send someone, unlike `serve` "
+        "which only ever binds 127.0.0.1.",
+    )
+    rollup_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["html", "png"],
+        default="html",
+        help="Report format for --report (default: html). png needs the optional "
+        "'report' extra: pip install \"work-ledger[report]\" && playwright install chromium",
+    )
+    rollup_parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output file path for --report (default: work-ledger-rollup-<date>.<format>)",
+    )
 
     export_parser = subparsers.add_parser(
         "export",
@@ -3003,7 +3107,20 @@ def main():
     if args.command == "rollup":
         since = _parse_date_arg(args.since, "--since") if args.since else None
         until = _parse_date_arg(args.until, "--until") if args.until else None
-        run_rollup(since=since, until=until, as_json=args.json, confirm=args.confirm)
+        _validate_top(args.top)
+        if args.report and args.json:
+            print("error: --report and --json are mutually exclusive", file=sys.stderr)
+            sys.exit(2)
+        run_rollup(
+            since=since,
+            until=until,
+            as_json=args.json,
+            confirm=args.confirm,
+            top=args.top,
+            report=args.report,
+            report_format=args.format,
+            report_out=args.out,
+        )
         return
 
     if args.command == "export":
