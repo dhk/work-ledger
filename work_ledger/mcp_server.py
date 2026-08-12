@@ -8,8 +8,11 @@ after-the-fact CLI report (the actual argument for choosing MCP in the
 design doc): a session can consult known patterns while it's happening,
 not just when someone later runs `work-ledger recommend`.
 
-Runs over stdio, the standard local MCP transport - add it to your
-Claude Code MCP config pointing at `work-ledger-mcp` (see README). Reads
+Runs over stdio, the standard local MCP transport - `claude mcp add
+work-ledger -- work-ledger-mcp` for Claude Code, or the equivalent
+mcpServers block for Claude Desktop (see INSTALL.md's "Using work-ledger
+inside Claude (MCP)" section for the exact steps and this server's
+scope). Reads
 the same local pattern content (`load_patterns`) and reports through the
 same best-effort, opt-in client (`pattern_client`) as the CLI path, so
 there is exactly one source of truth for both.

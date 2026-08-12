@@ -728,6 +728,9 @@ network call until you run `patterns enable` and configure a backend URL.
   connect it to a Claude Code session to consult known patterns live,
   not just when `recommend` runs after the fact. Same reasoning as the
   design doc: this is the actual argument for MCP over a static file.
+  See [INSTALL.md](../INSTALL.md#using-work-ledger-inside-claude-mcp)
+  for the exact `claude mcp add`/Claude Desktop setup steps and this
+  server's scope (patterns only — no usage/cost tools yet).
 - **`submit_review_findings`** (same MCP server) forwards code-review
   findings — the same shape `ReportFindings` already produces — to the
   backend for later manual curation into new library entries (see

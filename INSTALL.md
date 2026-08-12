@@ -137,6 +137,53 @@ playwright install chromium
 Without this, `--format png` fails with a clear error telling you to run
 the two commands above — it never silently falls back to HTML.
 
+## Using work-ledger inside Claude (MCP)
+
+`work-ledger-mcp` runs work-ledger's **pattern-library** mechanism as an
+MCP server, so a live Claude Code session can consult it directly instead
+of only seeing it after the fact via `work-ledger recommend`. Needs the
+optional `patterns` extra:
+
+```sh
+pip install --user "work-ledger[patterns]"
+```
+
+Then register it. For Claude Code:
+
+```sh
+claude mcp add work-ledger -- work-ledger-mcp
+```
+
+For Claude Desktop, add the equivalent block to its MCP config instead:
+
+```json
+{
+  "mcpServers": {
+    "work-ledger": { "command": "work-ledger-mcp" }
+  }
+}
+```
+
+Restart/reconnect the client so it picks up the new server, then confirm
+it connected with `claude mcp list` (Claude Code) or the client's own
+MCP/tools indicator.
+
+**Scope — read this before expecting more than it does.** This server
+exposes exactly five tools: `list_patterns`, `report_recommended`,
+`report_used`, `submit_review_findings`, and `about`. It does **not**
+expose `chapters`/`activity`/`sessions`/`trend`/`rollup`/`waste`/`limits`
+— there is currently no way for Claude itself to ask "what did I spend
+this week" through MCP; that's still CLI-only. See
+[docs/commands.md](docs/commands.md#pattern-library-opt-in-experimental)
+for what each of the five tools does.
+
+It's also inert by default: `list_patterns` works immediately (reads
+local pattern files), but `report_recommended`/`report_used`/
+`submit_review_findings` no-op — honestly, not silently — until you run
+`work-ledger patterns enable` and point `WORK_LEDGER_PATTERN_BACKEND_URL`
+at a real deployed backend (see [`backend/README.md`](backend/README.md)).
+Nothing here stands that backend up for you.
+
 ## Upgrading
 
 ```sh
