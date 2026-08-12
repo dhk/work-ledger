@@ -151,6 +151,53 @@ def test_build_session_detail_html_smoke(tmp_path):
     assert "</html>" in out
 
 
+def test_build_session_detail_html_shows_ticket_and_pr_badges(tmp_path):
+    """The "Unsorted is supremely unusful" fix: a turn's ticket/PR
+    references (already extracted at parse time onto Turn.ticket_refs/
+    pr_refs) must render as badges next to its synopsis."""
+    path = tmp_path / "s.jsonl"
+    entries = [
+        user_entry("p1", "fix SLA-42, follow-up to PR #85"),
+        *assistant_lines("msg-p1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "x"}]),
+    ]
+    write_jsonl(path, entries)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    out = build_session_detail_html("s", "proj", tailer, [])
+    assert "ref-badge ref-ticket" in out
+    assert "SLA-42" in out
+    assert "ref-badge ref-pr" in out
+    assert "#85" in out
+
+
+def test_build_session_detail_html_ticket_badge_links_when_url_template_configured(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORK_LEDGER_TICKET_URL_TEMPLATE", "https://yourorg.atlassian.net/browse/{id}")
+    path = tmp_path / "s.jsonl"
+    entries = [
+        user_entry("p1", "fix SLA-42"),
+        *assistant_lines("msg-p1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "x"}]),
+    ]
+    write_jsonl(path, entries)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    out = build_session_detail_html("s", "proj", tailer, [])
+    assert '<a href="https://yourorg.atlassian.net/browse/SLA-42"' in out
+
+
+def test_build_session_detail_html_no_refs_no_badges(tmp_path):
+    path = tmp_path / "s.jsonl"
+    _write_session(path)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    out = build_session_detail_html("s", "proj", tailer, [])
+    # The CSS rule itself is always present in <style> - only the rendered
+    # badge markup (a "ref-badge" class attribute value) should be absent.
+    assert 'class="ref-badge' not in out
+
+
 def test_build_session_detail_html_has_tree_sort_controls_and_data_attrs(tmp_path):
     """The chapter -> section -> turn -> unit tree needs a client-side
     sort control (Time/Calls/$) plus data-time/data-calls/data-cost on

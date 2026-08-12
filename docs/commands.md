@@ -457,12 +457,33 @@ the same grouping `chapters --detail` shows in the terminal.
   same-day session collapses to one date with a time range; a
   long-running or resumed session shows both full dates.
 - **The chapters → sections → turns → units drill-down is sortable too** —
-  by Time (chronological, the default), Calls, or $, another client-side
-  button row. The chosen key cascades through every nesting level at
-  once (chapters among chapters, turns within a section, units within a
-  turn), not just the top one, so "most expensive first" holds true
-  wherever you drill in next. Re-sorting doesn't collapse whatever
-  `<details>` you already had open.
+  by $ (the default), Calls, or Time, another client-side button row. The
+  chosen key cascades through every nesting level at once (chapters among
+  chapters, turns within a section, units within a turn), not just the
+  top one, so "most expensive first" holds true wherever you drill in
+  next. Re-sorting doesn't collapse whatever `<details>` you already had
+  open.
+- **Every turn shows ticket/PR reference badges when its prompt text
+  contains them**, plus a lightly cleaned-up synopsis (filler prefix like
+  "ok, " stripped) instead of the raw prompt snippet verbatim — the fix
+  for a session where most work landed in one big "Unsorted" chapter
+  (chaptering didn't run, or fell back) still leaving you with something
+  to go on beyond raw prompt text. Extracted once at parse time from the
+  turn's full (untruncated) prompt text, not the 60-char display snippet,
+  so a reference past that cutoff is still found. Three env vars, all
+  optional, none required for the badges to show up at all:
+  - `WORK_LEDGER_TICKET_PREFIX=SLA,ABBV` — your org's real ticket
+    prefixes, comma-separated, for exact matching. Unset, a generic
+    `LETTERS-digits` pattern is used instead with a small stoplist of
+    common false positives (`UTF-8`, `ISO-8601`, `GPT-4`, ...) —
+    best-effort only, not authoritative.
+  - `WORK_LEDGER_TICKET_URL_TEMPLATE=https://yourorg.atlassian.net/browse/{id}`
+    — makes ticket badges clickable. Unset, they're still shown, just not
+    linked — never a guessed URL.
+  - `WORK_LEDGER_GITHUB_REPO=you/your-repo` — makes `#123`-style PR/issue
+    badges clickable, linked via `/issues/<n>` (GitHub resolves that
+    correctly whether it's actually an issue or a PR). Unset, same
+    plain-badge-not-linked degrade.
 - **Read-only and makes no API call.** Browsing only ever reads chapters
   that are already cached (same as `timeline`) — opening this UI can
   never trigger a paid chaptering pass as a side effect.

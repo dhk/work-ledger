@@ -19,6 +19,7 @@ from pathlib import Path
 from work_ledger.about import get_about_info
 from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter
+from work_ledger.references import clean_synopsis, pr_url, ticket_url
 from work_ledger.rollup import RollupCluster
 from work_ledger.timeline import DayBucket, summarize_timeline
 from work_ledger.transcript import TranscriptTailer
@@ -1365,6 +1366,14 @@ _DETAIL_EXTRA_CSS = """
   summary.turn-summary .time { color: var(--text-muted); width: 64px; flex: none; font-variant-numeric: tabular-nums; }
   summary.turn-summary .t { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   summary.turn-summary .val { color: var(--text-secondary); white-space: nowrap; flex: none; }
+  .ref-badge {
+    flex: none; font-size: 10.5px; font-weight: 600; border-radius: 4px; padding: 1px 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .ref-badge a { color: inherit; text-decoration: none; }
+  .ref-badge a:hover { text-decoration: underline; }
+  .ref-ticket { color: #4a3aa7; background: rgba(74, 58, 167, 0.12); }
+  .ref-pr { color: #1a7f5a; background: rgba(26, 127, 90, 0.12); }
 
   .units { padding: 2px 0 6px 74px; }
   .unit-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--text-secondary); padding: 3px 0; }
@@ -1432,6 +1441,26 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
     def _turn_cost_str(turn) -> str:
         return "?" if turn.unknown_model_cost and turn.cost_usd == 0 else f"${turn.cost_usd:.4f}"
 
+    def _ref_badges_html(turn) -> str:
+        """Ticket/PR badges for a turn's summary line - the "Unsorted is
+        supremely unusful" fix: even a turn with no chapter title still
+        gets whatever ticket/PR references its own prompt text contained,
+        linked when a URL template is configured (WORK_LEDGER_
+        TICKET_URL_TEMPLATE / WORK_LEDGER_GITHUB_REPO), plain badge text
+        otherwise - never a guessed URL. Empty string when a turn has
+        neither, which is the common case and shouldn't add visual noise."""
+        badges = []
+        for ref in turn.ticket_refs:
+            url = ticket_url(ref)
+            inner = f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{html.escape(ref)}</a>' if url else html.escape(ref)
+            badges.append(f'<span class="ref-badge ref-ticket">{inner}</span>')
+        for ref in turn.pr_refs:
+            url = pr_url(ref)
+            label = f"#{ref}"
+            inner = f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{html.escape(label)}</a>' if url else html.escape(label)
+            badges.append(f'<span class="ref-badge ref-pr">{inner}</span>')
+        return "".join(badges)
+
     def _unit_row(unit, index: int) -> str:
         return (
             f'<div class="unit-row" data-time="{index}" data-calls="1" data-cost="{unit.cost_usd:.6f}">'
@@ -1444,11 +1473,13 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
         time_str = turn.timestamp[11:19] if len(turn.timestamp) >= 19 else turn.timestamp
         units_html = "".join(_unit_row(u, i) for i, u in enumerate(turn.units)) or '<div class="unit-row"><span class="t">(no units)</span></div>'
         n_units = len(turn.units)
+        synopsis = clean_synopsis(turn.prompt_snippet)
+        badges = _ref_badges_html(turn)
         return (
             f'<details class="turn-d" data-time="{index}" data-calls="{n_units}" data-cost="{turn.cost_usd:.6f}">'
             '<summary class="turn-summary">'
             f'<span class="time">{html.escape(time_str)}</span>'
-            f'<span class="t">{html.escape(turn.prompt_snippet)}</span>'
+            f'<span class="t">{html.escape(synopsis)}</span>{badges}'
             f'<span class="val">{n_units} call{"" if n_units == 1 else "s"} · {_turn_cost_str(turn)}</span>'
             "</summary>"
             f'<div class="units">{units_html}</div>'

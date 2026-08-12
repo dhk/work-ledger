@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from work_ledger.pricing import estimate_cost_usd
+from work_ledger.references import extract_pr_refs, extract_ticket_refs
 
 TRANSCRIPTS_ROOT = Path.home() / ".claude" / "projects"
 
@@ -304,6 +305,15 @@ class Turn:
     prompt_snippet: str
     timestamp: str
     units: list[Unit] = field(default_factory=list)
+    # Ticket/PR references found in this turn's full (untruncated) prompt
+    # text - see references.py's module docstring for why this needs the
+    # full text, not prompt_snippet (a reference past the first 60 chars
+    # would otherwise be invisible downstream). Extracted once at parse
+    # time so report.py/cli.py never need to re-read the raw transcript
+    # to show them - same "compute once during parsing, everything
+    # downstream just reads the field" precedent as tool_call_signature.
+    ticket_refs: list[str] = field(default_factory=list)
+    pr_refs: list[str] = field(default_factory=list)
 
     @property
     def input_tokens(self) -> int:
@@ -394,7 +404,8 @@ class TranscriptTailer:
         if entry_type == "user":
             message = obj.get("message") or {}
             is_user_message = message.get("role") == "user"
-            if is_user_message and INTERRUPTION_MARKER in extract_full_user_text(message):
+            full_text = extract_full_user_text(message) if is_user_message else ""
+            if is_user_message and INTERRUPTION_MARKER in full_text:
                 # Scoped to genuine user-message text only (never tool_use/
                 # tool_result content) - see INTERRUPTION_MARKER's docstring
                 # for why a blind substring search overcounts.
@@ -407,6 +418,10 @@ class TranscriptTailer:
                         prompt_id=prompt_id,
                         prompt_snippet=extract_prompt_snippet(message),
                         timestamp=obj.get("timestamp", ""),
+                        # From full_text, not prompt_snippet - a reference
+                        # past the first 60 chars would otherwise be missed.
+                        ticket_refs=extract_ticket_refs(full_text),
+                        pr_refs=extract_pr_refs(full_text),
                     )
                     self.turn_order.append(prompt_id)
                 self._current_prompt_id = prompt_id
