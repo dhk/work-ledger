@@ -19,6 +19,7 @@ from work_ledger.cli import (
     _turns_unknown,
     _validate_other_threshold,
     _validate_top,
+    _version_string,
     build_session_rows,
 )
 from work_ledger.limits import SessionWindowUsage, WindowUsage
@@ -1643,6 +1644,35 @@ def test_run_cycle_command_error_exits_nonzero(monkeypatch, capsys):
 
     assert exc_info.value.code == 1
     assert "uncommitted changes present" in capsys.readouterr().out
+
+
+# --- _version_string (--version includes commit/date) --------------------
+
+
+def test_version_string_includes_commit_and_date(monkeypatch):
+    import work_ledger.about as about_mod
+
+    monkeypatch.setattr(about_mod, "get_about_info", lambda: _fake_about_info())
+
+    assert _version_string() == "1.2.3 (commit abc1234, 2026-07-20)"
+
+
+def test_version_string_no_commit_falls_back_to_date_only(monkeypatch):
+    """A published (non-git) install has no resolvable commit - never
+    fabricate one, fall back to just the date."""
+    import work_ledger.about as about_mod
+
+    monkeypatch.setattr(about_mod, "get_about_info", lambda: _fake_about_info(commit=None))
+
+    assert _version_string() == "1.2.3 (last updated 2026-07-20)"
+
+
+def test_version_string_no_date_or_commit_is_bare_version(monkeypatch):
+    import work_ledger.about as about_mod
+
+    monkeypatch.setattr(about_mod, "get_about_info", lambda: _fake_about_info(commit=None, last_updated=""))
+
+    assert _version_string() == "1.2.3"
 
 
 # --- run_about_command (issue #75) ----------------------------------------

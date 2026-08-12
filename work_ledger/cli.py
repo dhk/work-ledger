@@ -2277,6 +2277,23 @@ def run_patterns(action: str):
         return
 
 
+def _version_string() -> str:
+    """The bare version number plus commit/date detail, for --version -
+    reuses about.py's get_about_info() so it can never drift from `about`'s
+    own numbers. Degrades to just the date (no commit) for a published
+    install where commit isn't resolvable (see get_about_info's own
+    editable-git-only commit resolution) - never fabricates a SHA."""
+    from work_ledger.about import get_about_info
+
+    info = get_about_info()
+    date = info.last_updated[:10] if info.last_updated else None
+    if info.commit and date:
+        return f"{info.version} (commit {info.commit}, {date})"
+    if date:
+        return f"{info.version} (last updated {date})"
+    return info.version
+
+
 def _add_transcript_args(parser: argparse.ArgumentParser) -> None:
     """--transcript and --session are two ways to pick a specific
     session, added identically to every subcommand that needs one - see
@@ -2300,7 +2317,7 @@ def _add_transcript_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main():
-    from work_ledger.about import REPO_URL, get_about_info
+    from work_ledger.about import REPO_URL
 
     parser = argparse.ArgumentParser(
         description="Watch Claude Code session cost/token usage in near-real-time.",
@@ -2311,7 +2328,7 @@ def main():
         "-V",
         "--version",
         action="version",
-        version=f"work-ledger {get_about_info().version}",
+        version=f"work-ledger {_version_string()}",
     )
     _add_transcript_args(parser)
     parser.add_argument(
