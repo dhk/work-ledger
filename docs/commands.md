@@ -65,6 +65,7 @@ work-ledger serve --port 9000                          # different port (default
 
 work-ledger sessions                              # list every local session: project, last-active, first/last prompt, cost
 work-ledger sessions --since 2026-07-01                # limit to a date range
+work-ledger sessions --top 10                          # the 10 most expensive sessions, cost-sorted, instead of newest-first
 work-ledger sessions --json                            # machine-readable output
 
 work-ledger session set abc123    # pin a session - chapters/activity/recommend default to it until cleared

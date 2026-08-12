@@ -967,6 +967,78 @@ def test_run_miso_all_reuses_chapters_all_and_skips_reports(isolated_transcripts
     assert "aren't generated in --all mode" in out
 
 
+def test_run_sessions_top_sorts_by_cost_descending_and_truncates(isolated_transcripts_root, capsys):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+
+    # Three sessions, deliberately written cheap/expensive/mid so the
+    # default (file-order) listing wouldn't already happen to be cost-sorted.
+    path_cheap = proj / "session-cheap.jsonl"
+    path_expensive = proj / "session-expensive.jsonl"
+    path_mid = proj / "session-mid.jsonl"
+    write_jsonl(
+        path_cheap,
+        [
+            user_entry("p1", "cheap one"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 100, "output_tokens": 20}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    write_jsonl(
+        path_expensive,
+        [
+            user_entry("p2", "expensive one"),
+            *assistant_lines("m2", "claude-opus-4-8", {"input_tokens": 50_000, "output_tokens": 10_000}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    write_jsonl(
+        path_mid,
+        [
+            user_entry("p3", "mid one"),
+            *assistant_lines("m3", "claude-haiku-4-5", {"input_tokens": 10_000, "output_tokens": 2_000}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+
+    cli.run_sessions(top=2, as_json=True)
+
+    import json
+
+    data = json.loads(capsys.readouterr().out)
+    assert len(data) == 2
+    assert [row["session"] for row in data] == [path_expensive.stem, path_mid.stem]
+    assert data[0]["cost_usd"] > data[1]["cost_usd"] > 0
+
+
+def test_run_sessions_without_top_keeps_default_order(isolated_transcripts_root, capsys):
+    """No --top given -> every session listed, unfiltered - `top` must not
+    change behavior for the plain `sessions` call sites."""
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+
+    path_a = proj / "session-a.jsonl"
+    path_b = proj / "session-b.jsonl"
+    write_jsonl(
+        path_a,
+        [
+            user_entry("p1", "a"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 100, "output_tokens": 20}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    write_jsonl(
+        path_b,
+        [
+            user_entry("p2", "b"),
+            *assistant_lines("m2", "claude-haiku-4-5", {"input_tokens": 200, "output_tokens": 40}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+
+    cli.run_sessions(as_json=True)
+
+    import json
+
+    data = json.loads(capsys.readouterr().out)
+    assert len(data) == 2
+
+
 def test_run_rollup_clusters_across_sessions_json(isolated_transcripts_root, capsys):
     from work_ledger.chapters import _save_cache
 
