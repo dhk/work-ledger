@@ -42,6 +42,7 @@ flag-driven.
 | [#43](https://github.com/dhk/work-ledger/issues/43) ✅ | **Local web UI** — `work-ledger serve`, browse sessions/chapters as a page | Shipped; reused `report.py`'s visual system |
 | [#42](https://github.com/dhk/work-ledger/issues/42) ✅ | **Local session history store** — sqlite store with incremental, mtime-gated sync (`history.py`) | Shipped; additive infrastructure for future cross-session features, not yet read by #3/#4/#5/#44/#43 |
 | [#66](https://github.com/dhk/work-ledger/issues/66) ✅ (Part 1) | **Timeline narrative summary** ("you used to X, now Y") — Part 1 (deterministic narrative, `timeline --summary`/`timeline --report`) shipped; Part 2 (maturity correlation via #3's rollup clustering) still proposed, not built | Extends #44; Part 2 explicitly not scoped for a real-codebase signal (see design doc) |
+| [#87](https://github.com/dhk/work-ledger/issues/87) ✅ (Tier 1) | **Commit correlation on `serve`** — "Commits during this session" panel, correlating a session's own `cwd` to local `git log` output in its time window (`git_activity.py`); PR numbers recovered from commit subjects, zero new network calls. Tier 2 (real PR titles/description/review state via the GitHub API, needs its own opt-in gate) tracked on the same issue, not built - deliberate: "live with Tier 1 for a while" | Extends #43's `serve`; reuses #86-adjacent references.py's PR-ref extraction |
 
 ## Recommendations — Tell, started, thin
 

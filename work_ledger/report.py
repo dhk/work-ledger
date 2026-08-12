@@ -19,6 +19,7 @@ from pathlib import Path
 from work_ledger.about import get_about_info
 from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter
+from work_ledger.git_activity import GitActivity, commit_url, pr_url_from_commit
 from work_ledger.references import clean_synopsis, pr_url, ticket_url
 from work_ledger.rollup import RollupCluster
 from work_ledger.timeline import DayBucket, summarize_timeline
@@ -1375,6 +1376,16 @@ _DETAIL_EXTRA_CSS = """
   .ref-ticket { color: #4a3aa7; background: rgba(74, 58, 167, 0.12); }
   .ref-pr { color: #1a7f5a; background: rgba(26, 127, 90, 0.12); }
 
+  .commit-row {
+    display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 6px 4px;
+    border-bottom: 1px solid var(--gridline);
+  }
+  .commit-row:last-child { border-bottom: none; }
+  .commit-sha { flex: none; color: var(--text-muted); font-size: 11px; }
+  .commit-sha a { color: inherit; }
+  .commit-row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .commit-row .val { flex: none; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
   .units { padding: 2px 0 6px 74px; }
   .unit-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--text-secondary); padding: 3px 0; }
   .unit-row .kind {
@@ -1408,7 +1419,13 @@ def _format_turn_date_range(turns: list) -> str:
     return f"{first_date} {first_time} → {last_date} {last_time}"
 
 
-def build_session_detail_html(session_id: str, project: str, tailer: TranscriptTailer, chapters: list[Chapter]) -> str:
+def build_session_detail_html(
+    session_id: str,
+    project: str,
+    tailer: TranscriptTailer,
+    chapters: list[Chapter],
+    git_activity: GitActivity | None = None,
+) -> str:
     """Per-session drill-down: chapters -> turns -> units, mirroring
     `chapters --detail`'s terminal rows but as real clickable navigation
     (native <details>/<summary> disclosure - no JS needed for the tree
@@ -1423,7 +1440,15 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
     effect of browsing (see server.py). Any turn not covered by a cached
     chapter (either because none exist yet, or new turns arrived since the
     last chaptering pass) is shown under a synthetic "Not yet chaptered"
-    group rather than silently dropped."""
+    group rather than silently dropped.
+
+    `git_activity` (git_activity.find_git_activity's result, or None -
+    server.py always passes one) adds a "Commits during this session"
+    panel when its repo was actually found locally - "what was actually
+    done," a cross-check independent of chaptering/prompt text. Omitted
+    entirely (not shown empty) when no repo is available, which is the
+    routine case for a session whose repo no longer exists at its
+    recorded path, not something to belabor on every page."""
     all_turns = tailer.ordered_turns()
     date_range = _format_turn_date_range(all_turns)
     grand_total = tailer.total_cost_usd()
@@ -1519,6 +1544,45 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
             "</details>"
         )
 
+    def _commit_row(commit) -> str:
+        owner_repo = git_activity.remote_owner_repo if git_activity else None
+        url = commit_url(owner_repo, commit.sha)
+        sha_html = f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{html.escape(commit.short_sha)}</a>' if url else html.escape(commit.short_sha)
+        pr_badges = ""
+        for ref in commit.pr_refs:
+            pr_link = pr_url_from_commit(owner_repo, ref)
+            label = f"#{ref}"
+            inner = f'<a href="{html.escape(pr_link)}" target="_blank" rel="noopener">{html.escape(label)}</a>' if pr_link else html.escape(label)
+            pr_badges += f'<span class="ref-badge ref-pr">{inner}</span>'
+        date_str = commit.author_date[:16].replace("T", " ") if len(commit.author_date) >= 16 else commit.author_date
+        return (
+            '<div class="commit-row">'
+            f'<code class="commit-sha">{sha_html}</code>'
+            f'<span class="t">{html.escape(commit.subject)}</span>{pr_badges}'
+            f'<span class="val">{html.escape(date_str)}</span>'
+            "</div>"
+        )
+
+    commits_panel_html = ""
+    if git_activity is not None and git_activity.repo_available:
+        if git_activity.commits:
+            rows_html = "".join(_commit_row(c) for c in git_activity.commits)
+            caption = (
+                f"{len(git_activity.commits)} commit{'s' if len(git_activity.commits) != 1 else ''} landed in this "
+                "repo during this session's time window - a time-window match, not proof they came from this "
+                "session specifically (someone else committing to the same repo in that window would show up too)."
+            )
+        else:
+            rows_html = '<p class="caption">No commits found in this repo during this session’s time window.</p>'
+            caption = "This session's local repo was found, but nothing landed in it during this session's time window."
+        commits_panel_html = f"""
+    <div class="panel">
+      <h2>Commits during this session</h2>
+      <p class="caption">{caption}</p>
+      {rows_html}
+    </div>
+"""
+
     chapter_blocks = [_chapter_block(c, f"var(--series-{i+1})", i) for i, c in enumerate(chapters)]
 
     if leftover_turns:
@@ -1591,7 +1655,7 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
       {"".join(chapter_blocks) or '<p class="caption">No turns found in this transcript.</p>'}
       </div>
     </div>
-
+    {commits_panel_html}
     <p class="footnote">
       Read-only - nothing here edits the transcript or its chapter cache, and viewing this page
       never triggers a chaptering API call. Served locally by <code>work-ledger serve</code>;

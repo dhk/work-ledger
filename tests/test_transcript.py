@@ -11,6 +11,52 @@ from work_ledger.transcript import (
 from .conftest import assistant_lines, user_entry, write_jsonl
 
 
+# --- TranscriptTailer.cwd (git_activity.py wiring) -------------------------
+
+
+def test_tailer_captures_cwd_from_entries(transcript_path):
+    import json
+
+    entries = [
+        {"type": "user", "promptId": "p1", "timestamp": "2026-08-01T10:00:00Z", "cwd": "/home/user/work-ledger", "message": {"role": "user", "content": "hi"}},
+        *assistant_lines("msg-1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+    ]
+    transcript_path.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert tailer.cwd == "/home/user/work-ledger"
+
+
+def test_tailer_cwd_none_when_never_present(transcript_path):
+    entries = [
+        user_entry("p1", "hi"),
+        *assistant_lines("msg-1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "done"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert tailer.cwd is None
+
+
+def test_tailer_cwd_keeps_first_seen_value(transcript_path):
+    import json
+
+    entries = [
+        {"type": "user", "promptId": "p1", "timestamp": "2026-08-01T10:00:00Z", "cwd": "/repo-a", "message": {"role": "user", "content": "hi"}},
+        {"type": "user", "promptId": "p2", "timestamp": "2026-08-01T10:05:00Z", "cwd": "/repo-b", "message": {"role": "user", "content": "cd elsewhere"}},
+    ]
+    transcript_path.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert tailer.cwd == "/repo-a"
+
+
 # --- Turn.ticket_refs / pr_refs (references.py wiring) --------------------
 
 

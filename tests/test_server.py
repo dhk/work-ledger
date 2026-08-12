@@ -198,6 +198,83 @@ def test_build_session_detail_html_no_refs_no_badges(tmp_path):
     assert 'class="ref-badge' not in out
 
 
+def test_build_session_detail_html_no_git_activity_omits_panel(tmp_path):
+    """git_activity=None (the default) - and repo_available=False - must
+    not render the commits panel at all, not an empty one. The common
+    case for most sessions (repo no longer present locally)."""
+    from work_ledger.git_activity import GitActivity
+
+    path = tmp_path / "s.jsonl"
+    _write_session(path)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    out_default = build_session_detail_html("s", "proj", tailer, [])
+    out_explicit_unavailable = build_session_detail_html("s", "proj", tailer, [], GitActivity(repo_available=False))
+    for out in (out_default, out_explicit_unavailable):
+        assert "Commits during this session" not in out
+
+
+def test_build_session_detail_html_repo_available_no_commits_shows_note(tmp_path):
+    from work_ledger.git_activity import GitActivity
+
+    path = tmp_path / "s.jsonl"
+    _write_session(path)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    out = build_session_detail_html("s", "proj", tailer, [], GitActivity(repo_available=True, commits=[]))
+    assert "Commits during this session" in out
+    assert "No commits found" in out
+
+
+def test_build_session_detail_html_renders_commits_with_pr_badges_and_links(tmp_path):
+    from work_ledger.git_activity import Commit, GitActivity
+
+    path = tmp_path / "s.jsonl"
+    _write_session(path)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    activity = GitActivity(
+        repo_available=True,
+        commits=[
+            Commit(sha="a" * 40, short_sha="aaaaaaaa", subject="Fix the bug (#85)", author_date="2026-08-12T10:00:00+00:00", pr_refs=["85"]),
+        ],
+        remote_owner_repo="dhk/work-ledger",
+    )
+    out = build_session_detail_html("s", "proj", tailer, [], activity)
+
+    assert "Fix the bug (#85)" in out
+    assert "aaaaaaaa" in out
+    assert '<a href="https://github.com/dhk/work-ledger/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' in out
+    assert '<a href="https://github.com/dhk/work-ledger/issues/85"' in out
+    assert "ref-badge ref-pr" in out
+
+
+def test_build_session_detail_html_commit_without_owner_repo_not_linked(tmp_path):
+    """No GitHub remote resolved - sha/PR refs still shown, just as plain
+    text, never a guessed URL."""
+    from work_ledger.git_activity import Commit, GitActivity
+
+    path = tmp_path / "s.jsonl"
+    _write_session(path)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    activity = GitActivity(
+        repo_available=True,
+        commits=[Commit(sha="b" * 40, short_sha="bbbbbbbb", subject="Fix it (#12)", author_date="2026-08-12T10:00:00+00:00", pr_refs=["12"])],
+        remote_owner_repo=None,
+    )
+    out = build_session_detail_html("s", "proj", tailer, [], activity)
+    commits_section = out.split("Commits during this session")[1].split("footnote")[0]
+
+    assert "bbbbbbbb" in commits_section
+    assert "#12" in commits_section
+    assert "github.com" not in commits_section  # never a guessed URL when no remote resolved
+
+
 def test_build_session_detail_html_has_tree_sort_controls_and_data_attrs(tmp_path):
     """The chapter -> section -> turn -> unit tree needs a client-side
     sort control (Time/Calls/$) plus data-time/data-calls/data-cost on

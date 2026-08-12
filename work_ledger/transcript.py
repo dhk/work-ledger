@@ -362,6 +362,15 @@ class TranscriptTailer:
         # Turn/Unit, since neither carries usage/cost data of its own.
         self.rate_limit_hits: list[RateLimitHit] = []
         self.interruption_count = 0
+        # The session's working directory, first-seen (Claude Code writes
+        # a `cwd` field on user/assistant/system/attachment entries) - used
+        # by git_activity.py to correlate this session to its own repo's
+        # commit history. Session-level, not per-Turn, since it's normally
+        # constant for the whole session; first-seen rather than
+        # last-seen so a mid-session `cd` doesn't silently redefine which
+        # repo "this session" means. None if never present (an older
+        # transcript format, or a session with no entries yet).
+        self.cwd: str | None = None
 
     def poll(self) -> bool:
         """Read any new lines/subagent data since last poll. Returns True if changed."""
@@ -393,6 +402,11 @@ class TranscriptTailer:
 
     def _handle_entry(self, obj: dict) -> bool:
         entry_type = obj.get("type")
+
+        if self.cwd is None:
+            cwd = obj.get("cwd")
+            if cwd:
+                self.cwd = cwd
 
         if obj.get("isSidechain"):
             # This environment writes subagent activity to a separate file
