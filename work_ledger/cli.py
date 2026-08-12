@@ -1012,6 +1012,17 @@ def build_session_rows(transcripts: list[Path]) -> list[dict]:
     return rows
 
 
+def top_n_session_rows(rows: list[dict], top: int | None) -> list[dict]:
+    """`rows` (build_session_rows' shape) truncated to the `top` costliest,
+    cost-descending - or `rows` unchanged if `top` is None. Factored out of
+    run_sessions so server.py's `serve --top` landing page ranks sessions
+    exactly the same way `sessions --top` does, rather than a second
+    reimplementation that could drift."""
+    if top is None:
+        return rows
+    return sorted(rows, key=lambda r: r["cost_usd"], reverse=True)[:top]
+
+
 def run_sessions(
     since: date | None = None,
     until: date | None = None,
@@ -1049,7 +1060,7 @@ def run_sessions(
 
     title = "work-ledger sessions"
     if top is not None:
-        rows = sorted(rows, key=lambda r: r["cost_usd"], reverse=True)[:top]
+        rows = top_n_session_rows(rows, top)
         title = f"work-ledger sessions — top {len(rows)} by cost"
 
     if as_json:
@@ -2854,6 +2865,16 @@ def main():
         default=None,
         help="Only list sessions last modified on/before this date (YYYY-MM-DD) on the landing page",
     )
+    serve_parser.add_argument(
+        "--top",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Pin the landing page to only the N most expensive sessions (same ranking as "
+        "`sessions --top`), instead of every session. Combine with --since/--until to scope "
+        "the pool before ranking. The page's title/header shows this scope so it's clear "
+        "you're not looking at every session.",
+    )
 
     cycle_parser = subparsers.add_parser(
         "cycle",
@@ -2922,9 +2943,10 @@ def main():
     if args.command == "serve":
         since = _parse_date_arg(args.since, "--since") if args.since else None
         until = _parse_date_arg(args.until, "--until") if args.until else None
+        _validate_top(args.top)
         from work_ledger.server import run_serve  # lazy: only this subcommand needs http.server
 
-        run_serve(port=args.port, since=since, until=until)
+        run_serve(port=args.port, since=since, until=until, top=args.top)
         return
 
     if args.command == "timeline":
