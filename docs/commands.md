@@ -62,6 +62,7 @@ work-ledger trend --report                             # same visual style as ch
 
 work-ledger serve                                 # local-only web UI - browse every session, drill into chapters/turns/units
 work-ledger serve --port 9000                          # different port (default 8765)
+work-ledger serve --top 5                              # pin the landing page to the 5 most expensive sessions, same ranking as `sessions --top`
 
 work-ledger sessions                              # list every local session: project, last-active, first/last prompt, cost
 work-ledger sessions --since 2026-07-01                # limit to a date range
@@ -443,6 +444,16 @@ the same grouping `chapters --detail` shows in the terminal.
   chapter titles when it's already been chaptered (free, since it only
   reads the cache), or its first prompt as a fallback for a session that
   isn't chaptered yet.
+- **`--top N` pins the landing page to just the N costliest sessions** —
+  same ranking `sessions --top` uses, so the two always agree. The page's
+  title and header show the active scope (`top 5 by cost`, plus any
+  `--since`/`--until` range) so a filtered view is never mistaken for
+  "every session".
+- **Each session's own page shows the date range (from/to) it actually
+  spans** — its title/subtitle, derived from its first and last turn's
+  real timestamps, not the transcript file's last-modified time. A
+  same-day session collapses to one date with a time range; a
+  long-running or resumed session shows both full dates.
 - **The chapters → sections → turns → units drill-down is sortable too** —
   by Time (chronological, the default), Calls, or $, another client-side
   button row. The chosen key cascades through every nesting level at

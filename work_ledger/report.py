@@ -951,7 +951,7 @@ _TREE_SORT_FIELDS = [
 ]
 
 
-def build_sessions_index_html(rows: list[dict]) -> str:
+def build_sessions_index_html(rows: list[dict], scope_note: str | None = None) -> str:
     """`work-ledger serve`'s landing page - every local session rendered as
     one clickable bar, reusing the exact same stat-tile/bar-track/tooltip
     visual language as build_report_html/build_activity_report_html rather
@@ -971,7 +971,13 @@ def build_sessions_index_html(rows: list[dict]) -> str:
     `rows` is the exact shape cli.build_session_rows() returns (session,
     project, last_active, num_turns, first_prompt, last_prompt, cost_usd,
     duration_minutes, total_tokens) - this function adds only presentation
-    (color, href, escaping, formatting), no new data derivation."""
+    (color, href, escaping, formatting), no new data derivation.
+
+    `scope_note` (see server._scope_note) describes an active --since/
+    --until/--top filter, e.g. "top 5 by cost · 2026-08-01 to 2026-08-12" -
+    shown in both the browser tab title and the page header, so a filtered
+    view never looks indistinguishable from "every session". None (the
+    default) renders exactly as this page did before --top existed."""
     n = len(rows)
     total_cost = sum(r["cost_usd"] for r in rows)
     total_turns = sum(r["num_turns"] for r in rows)
@@ -1001,11 +1007,18 @@ def build_sessions_index_html(rows: list[dict]) -> str:
     sort_fields_json = json.dumps(_SESSION_SORT_FIELDS)
     most_recent = rows[0]["last_active"] if rows else "—"
 
+    title_suffix = f" — {html.escape(scope_note)}" if scope_note else ""
+    subtitle = (
+        f"Showing <b>{html.escape(scope_note)}</b> — click a session to drill into its chapters, turns, and units."
+        if scope_note
+        else 'Every local session found under <code class="path">~/.claude/projects/</code> — click one to drill into its chapters, turns, and units.'
+    )
+
     return f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>work-ledger — sessions</title>
+<title>work-ledger — sessions{title_suffix}</title>
 {style}
 <style>
   .session-row a {{ color: inherit; text-decoration: none; display: block; }}
@@ -1024,7 +1037,7 @@ def build_sessions_index_html(rows: list[dict]) -> str:
 <div class="viz-root">
   <div class="wrap">
     <h1>work-ledger</h1>
-    <p class="subtitle">Every local session found under <code class="path">~/.claude/projects/</code> — click one to drill into its chapters, turns, and units.</p>
+    <p class="subtitle">{subtitle}</p>
 
     <div class="stat-row">
       <div class="stat-tile">
@@ -1224,6 +1237,26 @@ _DETAIL_EXTRA_CSS = """
 """
 
 
+def _format_turn_date_range(turns: list) -> str:
+    """Human-readable from/to date range spanned by a session's turns, for
+    the session detail page's subtitle - "when did this actually happen",
+    which last-active-mtime alone can't answer for a resumed session. A
+    same-day session collapses to one date with a time range; a session
+    that spans multiple calendar days (long-running or resumed across
+    sittings) shows both full dates. Empty string for a turn-less session
+    so callers can omit it cleanly rather than showing a broken range."""
+    if not turns:
+        return ""
+    first, last = turns[0].timestamp, turns[-1].timestamp
+    if len(first) < 16 or len(last) < 16:
+        return ""
+    first_date, first_time = first[:10], first[11:16]
+    last_date, last_time = last[:10], last[11:16]
+    if first_date == last_date:
+        return f"{first_date} · {first_time}" if first_time == last_time else f"{first_date} · {first_time}–{last_time}"
+    return f"{first_date} {first_time} → {last_date} {last_time}"
+
+
 def build_session_detail_html(session_id: str, project: str, tailer: TranscriptTailer, chapters: list[Chapter]) -> str:
     """Per-session drill-down: chapters -> turns -> units, mirroring
     `chapters --detail`'s terminal rows but as real clickable navigation
@@ -1241,6 +1274,7 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
     last chaptering pass) is shown under a synthetic "Not yet chaptered"
     group rather than silently dropped."""
     all_turns = tailer.ordered_turns()
+    date_range = _format_turn_date_range(all_turns)
     grand_total = tailer.total_cost_usd()
     chaptered_ids = {pid for c in chapters for pid in c.prompt_ids}
     leftover_turns = [t for t in all_turns if t.prompt_id not in chaptered_ids]
@@ -1339,12 +1373,13 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
     )
 
     tree_sort_fields_json = json.dumps(_TREE_SORT_FIELDS)
+    date_range_suffix = f" — {html.escape(date_range)}" if date_range else ""
 
     return f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>work-ledger — {html.escape(session_id)}</title>
+<title>work-ledger — {html.escape(session_id)}{date_range_suffix}</title>
 {style}
 <style>
 {_DETAIL_EXTRA_CSS}
@@ -1355,7 +1390,7 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
   <div class="wrap">
     <p><a class="back-link" href="/">&larr; All sessions</a></p>
     <h1>{html.escape(project)}</h1>
-    <p class="subtitle">Session <code class="path">{html.escape(session_id)}</code></p>
+    <p class="subtitle">Session <code class="path">{html.escape(session_id)}</code>{date_range_suffix}</p>
 
     <div class="stat-row">
       <div class="stat-tile">

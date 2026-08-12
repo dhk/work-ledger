@@ -81,6 +81,38 @@ def test_build_sessions_index_html_escapes_prompt_text():
     assert "&lt;script&gt;" in out
 
 
+def test_build_sessions_index_html_scope_note_shown_in_title_and_subtitle():
+    """--top/--since/--until scoping (server._scope_note) must be visible
+    on the page itself - otherwise a filtered landing page is
+    indistinguishable from "every session", which is exactly the
+    confusion a --top pin is meant to avoid."""
+    rows = [
+        {
+            "session": "s1",
+            "project": "proj",
+            "last_active": "2026-07-20T10:00",
+            "num_turns": 1,
+            "first_prompt": "x",
+            "last_prompt": "y",
+            "cost_usd": 1.0,
+            "duration_minutes": 5.0,
+            "total_tokens": 100,
+            "summary": "x",
+        }
+    ]
+    out = build_sessions_index_html(rows, scope_note="top 1 by cost")
+    assert "<title>work-ledger — sessions — top 1 by cost</title>" in out
+    assert "top 1 by cost" in out
+
+
+def test_build_sessions_index_html_no_scope_note_unchanged():
+    """No scope_note (the default) must render exactly like before --top
+    existed - no dangling " — " separator with nothing after it."""
+    out = build_sessions_index_html([])
+    assert "<title>work-ledger — sessions</title>" in out
+    assert "Every local session found under" in out
+
+
 def test_build_sessions_index_html_sort_buttons_present():
     rows = [
         {
@@ -141,6 +173,46 @@ def test_build_session_detail_html_has_tree_sort_controls_and_data_attrs(tmp_pat
     assert 'data-calls=' in out
     assert 'data-cost=' in out
     assert "sortTreeContainer" in out
+
+
+def test_build_session_detail_html_shows_date_range_same_day(tmp_path):
+    """The session detail page's title/subtitle must show when the session
+    actually happened (from/to) - last-active mtime alone can't answer
+    that for a resumed session. Same calendar day -> one date, time range."""
+    path = tmp_path / "s.jsonl"
+    entries = [
+        user_entry("p1", "start", timestamp="2026-08-01T10:00:00Z"),
+        *assistant_lines("msg-p1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "x"}], timestamp="2026-08-01T10:00:01Z"),
+        user_entry("p2", "finish", timestamp="2026-08-01T14:32:00Z"),
+        *assistant_lines("msg-p2", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "y"}], timestamp="2026-08-01T14:32:01Z"),
+    ]
+    write_jsonl(path, entries)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    out = build_session_detail_html("s", "proj", tailer, [])
+    assert "2026-08-01 · 10:00" in out
+    assert "14:32" in out
+
+
+def test_build_session_detail_html_shows_date_range_multi_day(tmp_path):
+    """A session spanning multiple calendar days (long-running or resumed)
+    shows both full dates, not just times."""
+    path = tmp_path / "s.jsonl"
+    entries = [
+        user_entry("p1", "start", timestamp="2026-08-01T10:00:00Z"),
+        *assistant_lines("msg-p1", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "x"}], timestamp="2026-08-01T10:00:01Z"),
+        user_entry("p2", "finish", timestamp="2026-08-03T09:15:00Z"),
+        *assistant_lines("msg-p2", "claude-haiku-4-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "y"}], timestamp="2026-08-03T09:15:01Z"),
+    ]
+    write_jsonl(path, entries)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    out = build_session_detail_html("s", "proj", tailer, [])
+    assert "2026-08-01 10:00" in out
+    assert "2026-08-03 09:15" in out
+    assert "→" in out
 
 
 def test_build_session_detail_html_leftover_turns_shown_as_not_yet_chaptered(tmp_path):
@@ -239,6 +311,33 @@ def test_render_landing_no_sessions_does_not_crash(isolated_transcripts_root):
     assert "<!doctype html>" in out
 
 
+def test_render_landing_top_pins_to_costliest_sessions(isolated_transcripts_root):
+    """`serve --top N` (render_landing's `top` param) must rank and
+    truncate exactly like `sessions --top` does (same top_n_session_rows
+    helper) - the cheap session must not appear, and the scope must show
+    on the page so it doesn't look like "every session"."""
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    _write_session(proj / "cheap.jsonl", prompt_id="p1", text="cheap", cost_usd_tokens=10)
+    _write_session(proj / "expensive.jsonl", prompt_id="p2", text="expensive", cost_usd_tokens=100_000)
+
+    out = render_landing(None, None, top=1)
+    assert "/session/expensive" in out
+    assert "/session/cheap" not in out
+    assert "top 1 by cost" in out
+
+
+def test_render_landing_no_top_lists_every_session(isolated_transcripts_root):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    _write_session(proj / "a.jsonl", prompt_id="p1", text="a")
+    _write_session(proj / "b.jsonl", prompt_id="p2", text="b")
+
+    out = render_landing(None, None)
+    assert "/session/a" in out
+    assert "/session/b" in out
+
+
 def test_render_landing_includes_about_footer(isolated_transcripts_root):
     """serve's landing page renders through report.build_sessions_index_html,
     which grows the shared About-block footer (issue #75) - no separate
@@ -311,6 +410,7 @@ def running_server(isolated_transcripts_root):
     httpd = ThreadingHTTPServer((BIND_HOST, 0), _RequestHandler)
     httpd.since = None
     httpd.until = None
+    httpd.top = None
     port = httpd.server_address[1]
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

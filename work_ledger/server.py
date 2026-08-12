@@ -29,7 +29,7 @@ from urllib.parse import unquote, urlparse
 from rich.console import Console
 
 from work_ledger.chapters import cached_chapters
-from work_ledger.cli import _in_date_range, build_session_rows
+from work_ledger.cli import _in_date_range, build_session_rows, top_n_session_rows
 from work_ledger.report import build_session_detail_html, build_sessions_index_html
 from work_ledger.transcript import TranscriptTailer, find_all_transcripts
 
@@ -76,14 +76,38 @@ def _disambiguation_page(session_id: str, matches: list[Path]) -> str:
     )
 
 
-def render_landing(since: date | None, until: date | None) -> str:
+def _scope_note(since: date | None, until: date | None, top: int | None, n_shown: int) -> str | None:
+    """Human-readable description of an active --since/--until/--top filter,
+    for the landing page's title/header - None when nothing is scoped, so
+    the page reads exactly as it did before this option existed."""
+    parts = []
+    if top is not None:
+        parts.append(f"top {n_shown} by cost")
+    if since and until:
+        parts.append(f"{since.isoformat()} to {until.isoformat()}")
+    elif since:
+        parts.append(f"since {since.isoformat()}")
+    elif until:
+        parts.append(f"until {until.isoformat()}")
+    return " · ".join(parts) if parts else None
+
+
+def render_landing(since: date | None, until: date | None, top: int | None = None) -> str:
     """Every local transcript, newest first, filtered the same way `sessions
     --since/--until` filters - re-derived fresh on every request (no cache),
     so a session that appears on disk after the server starts shows up on
-    the next page load without a restart."""
+    the next page load without a restart.
+
+    `top`, when given, pins the page to just the N costliest sessions in
+    range (same ranking `sessions --top` uses, via the same
+    top_n_session_rows helper) instead of every session - "browse just the
+    sessions I already know are expensive" instead of scrolling past every
+    cheap one to find them."""
     transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
     rows = build_session_rows(transcripts)
-    return build_sessions_index_html(rows)
+    rows = top_n_session_rows(rows, top)
+    scope_note = _scope_note(since, until, top, len(rows))
+    return build_sessions_index_html(rows, scope_note=scope_note)
 
 
 def render_session_detail(session_id: str) -> tuple[int, str]:
@@ -115,7 +139,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
 
         if path in ("", "/"):
-            self._send_html(200, render_landing(self.server.since, self.server.until))
+            self._send_html(200, render_landing(self.server.since, self.server.until, self.server.top))
             return
 
         if path.startswith("/session/"):
@@ -137,7 +161,12 @@ class _RequestHandler(BaseHTTPRequestHandler):
         pass
 
 
-def run_serve(port: int = DEFAULT_SERVE_PORT, since: date | None = None, until: date | None = None) -> None:
+def run_serve(
+    port: int = DEFAULT_SERVE_PORT,
+    since: date | None = None,
+    until: date | None = None,
+    top: int | None = None,
+) -> None:
     """Long-running, like the plain `work-ledger` live dashboard: starts,
     prints where it's listening, and runs until Ctrl-C. One-shot (serve
     once and exit) wasn't chosen - a browsable UI is meant to be left open
@@ -146,8 +175,11 @@ def run_serve(port: int = DEFAULT_SERVE_PORT, since: date | None = None, until: 
     httpd = ThreadingHTTPServer((BIND_HOST, port), _RequestHandler)
     httpd.since = since
     httpd.until = until
+    httpd.top = top
     url = f"http://{BIND_HOST}:{port}/"
     console.print(f"[green]work-ledger serve[/green] — [bold]{url}[/bold]")
+    if top is not None:
+        console.print(f"[dim]Pinned to the {top} most expensive session(s) in range.[/dim]")
     console.print(
         f"[dim]Local-only: bound to {BIND_HOST}, never leaves this machine, no auth needed "
         "(nothing off-localhost can reach it to authenticate against). Read-only - browsing "
