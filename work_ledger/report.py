@@ -1345,6 +1345,10 @@ _DETAIL_EXTRA_CSS = """
     font-size: 10.5px; font-weight: 500; color: var(--text-muted); border: 1px solid var(--border);
     border-radius: 999px; padding: 1px 8px; margin-left: 8px;
   }
+  .session-badge {
+    font-size: 10.5px; font-weight: 500; color: var(--text-secondary); background: var(--surface-1);
+    border-radius: 999px; padding: 1px 8px; margin-left: 8px; font-variant-numeric: tabular-nums;
+  }
 
   .sections { padding: 6px 14px 10px 30px; }
   details.section-d { margin: 6px 0; }
@@ -1396,6 +1400,166 @@ _DETAIL_EXTRA_CSS = """
   .unit-row .kind-subagent { background: #e34948; }
   .unit-row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .unit-row .val { white-space: nowrap; flex: none; }
+"""
+
+
+def _unit_cost_str(unit) -> str:
+    return "?" if unit.unknown_model_cost and unit.cost_usd == 0 else f"${unit.cost_usd:.4f}"
+
+
+def _turn_cost_str(turn) -> str:
+    return "?" if turn.unknown_model_cost and turn.cost_usd == 0 else f"${turn.cost_usd:.4f}"
+
+
+def _ref_badges_html(turn) -> str:
+    """Ticket/PR badges for a turn's summary line - the "Unsorted is
+    supremely unusful" fix: even a turn with no chapter title still gets
+    whatever ticket/PR references its own prompt text contained, linked
+    when a URL template is configured (WORK_LEDGER_TICKET_URL_TEMPLATE /
+    WORK_LEDGER_GITHUB_REPO), plain badge text otherwise - never a
+    guessed URL. Empty string when a turn has neither, which is the
+    common case and shouldn't add visual noise."""
+    badges = []
+    for ref in turn.ticket_refs:
+        url = ticket_url(ref)
+        inner = f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{html.escape(ref)}</a>' if url else html.escape(ref)
+        badges.append(f'<span class="ref-badge ref-ticket">{inner}</span>')
+    for ref in turn.pr_refs:
+        url = pr_url(ref)
+        label = f"#{ref}"
+        inner = f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{html.escape(label)}</a>' if url else html.escape(label)
+        badges.append(f'<span class="ref-badge ref-pr">{inner}</span>')
+    return "".join(badges)
+
+
+def _unit_row(unit, index: int) -> str:
+    return (
+        f'<div class="unit-row" data-time="{index}" data-calls="1" data-cost="{unit.cost_usd:.6f}">'
+        f'<span class="kind kind-{html.escape(unit.kind)}">{html.escape(unit.kind)}</span>'
+        f'<span class="t">{html.escape(unit.label)}</span>'
+        f'<span class="val">{unit.input_tokens:,} in / {unit.output_tokens:,} out · {_unit_cost_str(unit)}</span></div>'
+    )
+
+
+def _turn_block(turn, index: int) -> str:
+    time_str = turn.timestamp[11:19] if len(turn.timestamp) >= 19 else turn.timestamp
+    units_html = "".join(_unit_row(u, i) for i, u in enumerate(turn.units)) or '<div class="unit-row"><span class="t">(no units)</span></div>'
+    n_units = len(turn.units)
+    synopsis = clean_synopsis(turn.prompt_snippet)
+    badges = _ref_badges_html(turn)
+    return (
+        f'<details class="turn-d" data-time="{index}" data-calls="{n_units}" data-cost="{turn.cost_usd:.6f}">'
+        '<summary class="turn-summary">'
+        f'<span class="time">{html.escape(time_str)}</span>'
+        f'<span class="t">{html.escape(synopsis)}</span>{badges}'
+        f'<span class="val">{n_units} call{"" if n_units == 1 else "s"} · {_turn_cost_str(turn)}</span>'
+        "</summary>"
+        f'<div class="units">{units_html}</div>'
+        "</details>"
+    )
+
+
+def _section_block(section, tailer, color: str, index: int) -> str:
+    s_turns = section.turns(tailer)
+    s_cost = sum(t.cost_usd for t in s_turns)
+    n_turns = len(s_turns)
+    turns_html = "".join(_turn_block(t, i) for i, t in enumerate(s_turns)) or '<p class="caption">(no turns)</p>'
+    return (
+        f'<details class="section-d" data-time="{index}" data-calls="{n_turns}" data-cost="{s_cost:.6f}" open>'
+        '<summary class="section-summary">'
+        f'<span class="dot" style="background:{color}"></span>'
+        f'<span class="t">{html.escape(section.title)}</span>'
+        f'<span class="val">{n_turns} turn{"" if n_turns == 1 else "s"} · ${s_cost:.4f}</span>'
+        "</summary>"
+        f'<div class="turns">{turns_html}</div>'
+        "</details>"
+    )
+
+
+def _chapter_block(chapter, tailer, color: str, index: int, grand_total: float, session_badge: str | None = None) -> str:
+    """`session_badge` (e.g. "Aug 1 · a1b2c3d4"), when given, tags which
+    session this chapter came from - used by build_merged_session_detail_html
+    (build_session_detail_html's single-session page never needs it, so
+    it's None there)."""
+    c_turns = chapter.turns(tailer)
+    c_cost = sum(t.cost_usd for t in c_turns)
+    pct = (c_cost / grand_total * 100) if grand_total else 0.0
+    sections_html = "".join(_section_block(s, tailer, color, i) for i, s in enumerate(chapter.sections))
+    badge_html = f'<span class="session-badge">{html.escape(session_badge)}</span>' if session_badge else ""
+    return (
+        f'<details class="chapter-d" data-time="{index}" data-calls="{len(c_turns)}" data-cost="{c_cost:.6f}">'
+        '<summary class="chapter-summary">'
+        '<span class="chapter-title">'
+        f'<span class="swatch" style="background:{color}"></span>{html.escape(chapter.title)}'
+        f'<span class="category-badge">{html.escape(chapter.category)}</span>{badge_html}</span>'
+        f'<span class="chapter-figs"><b>${c_cost:.4f}</b>&nbsp;({pct:.0f}%)</span>'
+        "</summary>"
+        f'<div class="sections">{sections_html}</div>'
+        "</details>"
+    )
+
+
+def _tree_sort_script(default_caption: str) -> str:
+    """Shared <script> block for any page with a chapters-root/.sections/
+    .turns/.units tree - build_session_detail_html and
+    build_merged_session_detail_html both use this, identical Time/Calls/$
+    sort-bar behavior either way. `default_caption` is the caption shown
+    for the default "cost" sort - the two pages phrase what "this tree"
+    actually is slightly differently, so it's a parameter, not baked in."""
+    tree_sort_fields_json = json.dumps(_TREE_SORT_FIELDS)
+    default_caption_json = json.dumps(default_caption)
+    return f"""
+<script>
+const treeSortFields = {tree_sort_fields_json};  // [[key, label], ...]
+let currentTreeField = "cost";
+const defaultTreeCaption = {default_caption_json};
+
+function sortTreeContainer(container, field) {{
+  // Every direct child of a chapters-root/.sections/.turns/.units container
+  // carries data-time/data-calls/data-cost (see _chapter_block/
+  // _section_block/_turn_block/_unit_row) - sort in place and re-append in
+  // the new order. appendChild *moves* existing nodes rather than cloning,
+  // so an open <details> stays open across a re-sort.
+  const children = Array.from(container.children).filter((el) => el.dataset && el.dataset.time !== undefined);
+  if (children.length < 2) return;
+  children.sort((a, b) => {{
+    if (field === "time") return parseFloat(a.dataset.time) - parseFloat(b.dataset.time);
+    if (field === "calls") return parseFloat(b.dataset.calls) - parseFloat(a.dataset.calls);
+    return parseFloat(b.dataset.cost) - parseFloat(a.dataset.cost);
+  }});
+  children.forEach((el) => container.appendChild(el));
+}}
+
+function applyTreeSort(field) {{
+  currentTreeField = field;
+  const buttonsRoot = document.getElementById("tree-sort-buttons");
+  [...buttonsRoot.children].forEach((btn) => btn.classList.toggle("active", btn.dataset.field === field));
+
+  const caption = document.getElementById("tree-sort-caption");
+  const fieldLabel = treeSortFields.find(([k]) => k === field)[1];
+  caption.textContent = field === "time"
+    ? defaultTreeCaption
+    : `Sorted by ${{fieldLabel}}, most first, at every level (chapters, sections, turns, and calls). ${{defaultTreeCaption}}`;
+
+  // Same sort key cascades through every nesting level at once, not just
+  // the top-level chapter list - "most expensive first" should hold true
+  // whichever level you drill into next.
+  document.querySelectorAll(".chapters-root, .sections, .turns, .units").forEach((c) => sortTreeContainer(c, field));
+}}
+
+const treeButtonsRoot = document.getElementById("tree-sort-buttons");
+treeSortFields.forEach(([field, label]) => {{
+  const btn = document.createElement("button");
+  btn.className = "sort-btn" + (field === currentTreeField ? " active" : "");
+  btn.type = "button";
+  btn.dataset.field = field;
+  btn.textContent = label;
+  btn.addEventListener("click", () => applyTreeSort(field));
+  treeButtonsRoot.appendChild(btn);
+}});
+
+applyTreeSort(currentTreeField);
+</script>
 """
 
 
@@ -1460,90 +1624,6 @@ def build_session_detail_html(
     css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
     style = _style_block(css_vars_light, css_vars_dark)
 
-    def _unit_cost_str(unit) -> str:
-        return "?" if unit.unknown_model_cost and unit.cost_usd == 0 else f"${unit.cost_usd:.4f}"
-
-    def _turn_cost_str(turn) -> str:
-        return "?" if turn.unknown_model_cost and turn.cost_usd == 0 else f"${turn.cost_usd:.4f}"
-
-    def _ref_badges_html(turn) -> str:
-        """Ticket/PR badges for a turn's summary line - the "Unsorted is
-        supremely unusful" fix: even a turn with no chapter title still
-        gets whatever ticket/PR references its own prompt text contained,
-        linked when a URL template is configured (WORK_LEDGER_
-        TICKET_URL_TEMPLATE / WORK_LEDGER_GITHUB_REPO), plain badge text
-        otherwise - never a guessed URL. Empty string when a turn has
-        neither, which is the common case and shouldn't add visual noise."""
-        badges = []
-        for ref in turn.ticket_refs:
-            url = ticket_url(ref)
-            inner = f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{html.escape(ref)}</a>' if url else html.escape(ref)
-            badges.append(f'<span class="ref-badge ref-ticket">{inner}</span>')
-        for ref in turn.pr_refs:
-            url = pr_url(ref)
-            label = f"#{ref}"
-            inner = f'<a href="{html.escape(url)}" target="_blank" rel="noopener">{html.escape(label)}</a>' if url else html.escape(label)
-            badges.append(f'<span class="ref-badge ref-pr">{inner}</span>')
-        return "".join(badges)
-
-    def _unit_row(unit, index: int) -> str:
-        return (
-            f'<div class="unit-row" data-time="{index}" data-calls="1" data-cost="{unit.cost_usd:.6f}">'
-            f'<span class="kind kind-{html.escape(unit.kind)}">{html.escape(unit.kind)}</span>'
-            f'<span class="t">{html.escape(unit.label)}</span>'
-            f'<span class="val">{unit.input_tokens:,} in / {unit.output_tokens:,} out · {_unit_cost_str(unit)}</span></div>'
-        )
-
-    def _turn_block(turn, index: int) -> str:
-        time_str = turn.timestamp[11:19] if len(turn.timestamp) >= 19 else turn.timestamp
-        units_html = "".join(_unit_row(u, i) for i, u in enumerate(turn.units)) or '<div class="unit-row"><span class="t">(no units)</span></div>'
-        n_units = len(turn.units)
-        synopsis = clean_synopsis(turn.prompt_snippet)
-        badges = _ref_badges_html(turn)
-        return (
-            f'<details class="turn-d" data-time="{index}" data-calls="{n_units}" data-cost="{turn.cost_usd:.6f}">'
-            '<summary class="turn-summary">'
-            f'<span class="time">{html.escape(time_str)}</span>'
-            f'<span class="t">{html.escape(synopsis)}</span>{badges}'
-            f'<span class="val">{n_units} call{"" if n_units == 1 else "s"} · {_turn_cost_str(turn)}</span>'
-            "</summary>"
-            f'<div class="units">{units_html}</div>'
-            "</details>"
-        )
-
-    def _section_block(section, color: str, index: int) -> str:
-        s_turns = section.turns(tailer)
-        s_cost = sum(t.cost_usd for t in s_turns)
-        n_turns = len(s_turns)
-        turns_html = "".join(_turn_block(t, i) for i, t in enumerate(s_turns)) or '<p class="caption">(no turns)</p>'
-        return (
-            f'<details class="section-d" data-time="{index}" data-calls="{n_turns}" data-cost="{s_cost:.6f}" open>'
-            '<summary class="section-summary">'
-            f'<span class="dot" style="background:{color}"></span>'
-            f'<span class="t">{html.escape(section.title)}</span>'
-            f'<span class="val">{n_turns} turn{"" if n_turns == 1 else "s"} · ${s_cost:.4f}</span>'
-            "</summary>"
-            f'<div class="turns">{turns_html}</div>'
-            "</details>"
-        )
-
-    def _chapter_block(chapter, color: str, index: int) -> str:
-        c_turns = chapter.turns(tailer)
-        c_cost = sum(t.cost_usd for t in c_turns)
-        pct = (c_cost / grand_total * 100) if grand_total else 0.0
-        sections_html = "".join(_section_block(s, color, i) for i, s in enumerate(chapter.sections))
-        return (
-            f'<details class="chapter-d" data-time="{index}" data-calls="{len(c_turns)}" data-cost="{c_cost:.6f}">'
-            '<summary class="chapter-summary">'
-            '<span class="chapter-title">'
-            f'<span class="swatch" style="background:{color}"></span>{html.escape(chapter.title)}'
-            f'<span class="category-badge">{html.escape(chapter.category)}</span></span>'
-            f'<span class="chapter-figs"><b>${c_cost:.4f}</b>&nbsp;({pct:.0f}%)</span>'
-            "</summary>"
-            f'<div class="sections">{sections_html}</div>'
-            "</details>"
-        )
-
     def _commit_row(commit) -> str:
         owner_repo = git_activity.remote_owner_repo if git_activity else None
         url = commit_url(owner_repo, commit.sha)
@@ -1583,7 +1663,7 @@ def build_session_detail_html(
     </div>
 """
 
-    chapter_blocks = [_chapter_block(c, f"var(--series-{i+1})", i) for i, c in enumerate(chapters)]
+    chapter_blocks = [_chapter_block(c, tailer, f"var(--series-{i+1})", i, grand_total) for i, c in enumerate(chapters)]
 
     if leftover_turns:
         color = f"var(--series-{len(chapters)+1})"
@@ -1609,8 +1689,8 @@ def build_session_detail_html(
         "(a small Anthropic API cost); this page never triggers that pass itself"
     )
 
-    tree_sort_fields_json = json.dumps(_TREE_SORT_FIELDS)
     date_range_suffix = f" — {html.escape(date_range)}" if date_range else ""
+    default_tree_caption = "Click a chapter, then a section, then a turn to drill down - same grouping as chapters --detail, browsable instead of flag-driven."
 
     return f"""<!doctype html>
 <html>
@@ -1664,58 +1744,170 @@ def build_session_detail_html(
     {_footer_html()}
   </div>
 </div>
+{_tree_sort_script(default_tree_caption)}
+</body>
+</html>
+"""
 
-<script>
-const treeSortFields = {tree_sort_fields_json};  // [[key, label], ...]
-let currentTreeField = "cost";
-const defaultTreeCaption = "Click a chapter, then a section, then a turn to drill down - same grouping as chapters --detail, browsable instead of flag-driven.";
 
-function sortTreeContainer(container, field) {{
-  // Every direct child of a chapters-root/.sections/.turns/.units container
-  // carries data-time/data-calls/data-cost (see build_session_detail_html's
-  // _chapter_block/_section_block/_turn_block/_unit_row) - sort in place and
-  // re-append in the new order. appendChild *moves* existing nodes rather
-  // than cloning, so an open <details> stays open across a re-sort.
-  const children = Array.from(container.children).filter((el) => el.dataset && el.dataset.time !== undefined);
-  if (children.length < 2) return;
-  children.sort((a, b) => {{
-    if (field === "time") return parseFloat(a.dataset.time) - parseFloat(b.dataset.time);
-    if (field === "calls") return parseFloat(b.dataset.calls) - parseFloat(a.dataset.calls);
-    return parseFloat(b.dataset.cost) - parseFloat(a.dataset.cost);
-  }});
-  children.forEach((el) => container.appendChild(el));
-}}
+def build_merged_session_detail_html(
+    sessions: list,
+    since=None,
+    until=None,
+    top: int | None = None,
+) -> str:
+    """`work-ledger serve --merge-sessions`: one combined chapters -> turns
+    -> units tree spanning every session in `sessions`, chronologically
+    interleaved - NOT clustered by title. Contrast `rollup`, which totals
+    cost per initiative and deliberately discards session/time boundaries
+    to answer "how much has X cost in total"; this answers a different
+    question ("what have I actually been doing, across days/sessions") by
+    keeping every occurrence distinct. The same chapter title recurring
+    across sessions shows up as separate blocks, each tagged with a small
+    session badge - the repetition is something you see looking at the
+    page, not something this computes or scores for you.
 
-function applyTreeSort(field) {{
-  currentTreeField = field;
-  const buttonsRoot = document.getElementById("tree-sort-buttons");
-  [...buttonsRoot.children].forEach((btn) => btn.classList.toggle("active", btn.dataset.field === field));
+    `sessions` is a list of (session_id, project, tailer, chapters)
+    tuples - the exact shape server.py already has one of per session
+    from render_session_detail, just not yet merged into one page.
+    `chapters` is expected to come from chapters.cached_chapters() for
+    each, same "never triggers a paid chaptering pass" invariant every
+    other browsing path in this module keeps.
 
-  const caption = document.getElementById("tree-sort-caption");
-  const fieldLabel = treeSortFields.find(([k]) => k === field)[1];
-  caption.textContent = field === "time"
-    ? defaultTreeCaption
-    : `Sorted by ${{fieldLabel}}, most first, at every level (chapters, sections, turns, and calls). ${{defaultTreeCaption}}`;
+    Deliberately no "Commits during this session" panel: N sessions can
+    span N different repos (different `cwd`s), and there's no single
+    correct "the" repo to correlate git history against - see issue #87's
+    neighborhood if this needs revisiting for the single-repo case."""
+    grand_total = sum(tailer.total_cost_usd() for _, _, tailer, _ in sessions)
+    total_turns = sum(len(tailer.ordered_turns()) for _, _, tailer, _ in sessions)
 
-  // Same sort key cascades through every nesting level at once, not just
-  // the top-level chapter list - "most expensive first" should hold true
-  // whichever level you drill into next.
-  document.querySelectorAll(".chapters-root, .sections, .turns, .units").forEach((c) => sortTreeContainer(c, field));
-}}
+    # One entry per chapter, plus one synthetic "Not yet chaptered" entry
+    # per session that has leftover turns - each tagged with its first
+    # turn's timestamp so the whole set can be sorted chronologically
+    # across session boundaries before rendering. Index/color assignment
+    # happens after sorting (both depend on final position), not before.
+    raw_entries = []  # (first_ts, "chapter" | "leftover", chapter_or_None, tailer, session_badge, leftover_turns_or_None)
+    total_chapters = 0
+    n_leftover_sessions = 0
+    for session_id, _project, tailer, chapters in sessions:
+        s_turns = tailer.ordered_turns()
+        chaptered_ids = {pid for c in chapters for pid in c.prompt_ids}
+        leftover = [t for t in s_turns if t.prompt_id not in chaptered_ids]
+        date_range = _format_turn_date_range(s_turns)
+        short_date = date_range.split(" · ")[0] if date_range else ""
+        session_badge = f"{short_date} · {session_id[:8]}" if short_date else session_id[:8]
 
-const treeButtonsRoot = document.getElementById("tree-sort-buttons");
-treeSortFields.forEach(([field, label]) => {{
-  const btn = document.createElement("button");
-  btn.className = "sort-btn" + (field === currentTreeField ? " active" : "");
-  btn.type = "button";
-  btn.dataset.field = field;
-  btn.textContent = label;
-  btn.addEventListener("click", () => applyTreeSort(field));
-  treeButtonsRoot.appendChild(btn);
-}});
+        for chapter in chapters:
+            c_turns = chapter.turns(tailer)
+            # A turnless chapter (shouldn't happen in practice) sorts last
+            # rather than crashing on an empty sequence.
+            first_ts = c_turns[0].timestamp if c_turns else "9999"
+            raw_entries.append((first_ts, "chapter", chapter, tailer, session_badge, None))
+            total_chapters += 1
 
-applyTreeSort(currentTreeField);
-</script>
+        if leftover:
+            raw_entries.append((leftover[0].timestamp, "leftover", None, tailer, session_badge, leftover))
+            n_leftover_sessions += 1
+
+    raw_entries.sort(key=lambda e: e[0])
+
+    colors = _series_colors(len(raw_entries))
+    css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
+    css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
+    style = _style_block(css_vars_light, css_vars_dark)
+
+    blocks = []
+    for i, (_first_ts, kind, chapter, tailer, session_badge, leftover) in enumerate(raw_entries):
+        color = f"var(--series-{i+1})"
+        if kind == "chapter":
+            blocks.append(_chapter_block(chapter, tailer, color, i, grand_total, session_badge=session_badge))
+        else:
+            leftover_cost = sum(t.cost_usd for t in leftover)
+            pct = (leftover_cost / grand_total * 100) if grand_total else 0.0
+            turns_html = "".join(_turn_block(t, j) for j, t in enumerate(leftover))
+            badge_html = f'<span class="session-badge">{html.escape(session_badge)}</span>'
+            blocks.append(
+                f'<details class="chapter-d" data-time="{i}" data-calls="{len(leftover)}" data-cost="{leftover_cost:.6f}">'
+                '<summary class="chapter-summary">'
+                '<span class="chapter-title">'
+                f'<span class="swatch" style="background:{color}"></span>Not yet chaptered{badge_html}</span>'
+                f'<span class="chapter-figs"><b>${leftover_cost:.4f}</b>&nbsp;({pct:.0f}%)</span>'
+                "</summary>"
+                f'<div class="turns">{turns_html}</div>'
+                "</details>"
+            )
+
+    n_sessions = len(sessions)
+    scope_bits = []
+    if top is not None:
+        scope_bits.append(f"top {n_sessions} by cost")
+    if since and until:
+        scope_bits.append(f"{since.isoformat()} to {until.isoformat()}")
+    elif since:
+        scope_bits.append(f"since {since.isoformat()}")
+    elif until:
+        scope_bits.append(f"until {until.isoformat()}")
+    scope_note = ", ".join(scope_bits) if scope_bits else f"{n_sessions} session{'s' if n_sessions != 1 else ''}"
+    default_tree_caption = (
+        "Each chapter is tagged with which session it came from - the same title recurring across "
+        "sessions is shown separately, not merged, so that repetition is something you see."
+    )
+
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>work-ledger — merged sessions — {html.escape(scope_note)}</title>
+{style}
+<style>
+{_DETAIL_EXTRA_CSS}
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <div class="wrap">
+    <p><a class="back-link" href="/">&larr; All sessions</a></p>
+    <h1>Merged sessions</h1>
+    <p class="subtitle">{html.escape(scope_note)} — chapters chronologically interleaved, not clustered by title (see <code>rollup</code> for cost-by-initiative totals instead).</p>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <p class="stat-label">Total cost (est.)</p>
+        <div class="stat-value">${grand_total:.2f}</div>
+        <p class="stat-note">across {n_sessions} session{'s' if n_sessions != 1 else ''}, {total_turns} turn{'s' if total_turns != 1 else ''}</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Chapters</p>
+        <div class="stat-value">{total_chapters}</div>
+        <p class="stat-note">across every session shown</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Sessions with uncategorized turns</p>
+        <div class="stat-value">{n_leftover_sessions}</div>
+        <p class="stat-note">of {n_sessions} shown</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Chapters, chronologically across sessions</h2>
+      <p class="caption" id="tree-sort-caption">{default_tree_caption}</p>
+      <div class="sort-bar"><span class="label">Sort by:</span><div id="tree-sort-buttons"></div></div>
+      <div class="chapters-root" id="chapters-root">
+      {"".join(blocks) or '<p class="caption">No chapters found across these sessions.</p>'}
+      </div>
+    </div>
+
+    <p class="footnote">
+      Read-only - nothing here edits any transcript or chapter cache, and viewing this page never
+      triggers a chaptering API call. Not the same as <code>rollup</code> (which totals cost by
+      initiative across sessions, clustered) or a shareable report (<code>rollup --report</code>) -
+      this is a live, browsable view, 127.0.0.1-only. Served by
+      <code>work-ledger serve --merge-sessions</code>.
+    </p>
+    {_footer_html()}
+  </div>
+</div>
+{_tree_sort_script(default_tree_caption)}
 </body>
 </html>
 """

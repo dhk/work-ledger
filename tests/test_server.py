@@ -10,6 +10,7 @@ from work_ledger.server import (
     _RequestHandler,
     _matching_transcripts,
     render_landing,
+    render_merged_sessions,
     render_session_detail,
 )
 from work_ledger.transcript import TranscriptTailer
@@ -463,6 +464,36 @@ def test_render_landing_no_top_lists_every_session(isolated_transcripts_root):
     assert "/session/b" in out
 
 
+def test_render_merged_sessions_combines_every_session_in_scope(isolated_transcripts_root):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    _write_session(proj / "a.jsonl", prompt_id="p1", text="a")
+    _write_session(proj / "b.jsonl", prompt_id="p2", text="b")
+
+    out = render_merged_sessions(None, None)
+    assert "Merged sessions" in out
+    # Neither session has cached chapters, so each contributes its own
+    # "Not yet chaptered" leftover block - two, one per session, not one
+    # merged block.
+    assert out.count("Not yet chaptered") == 2
+    assert "<!doctype html>" in out
+
+
+def test_render_merged_sessions_respects_top(isolated_transcripts_root):
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    _write_session(proj / "cheap.jsonl", prompt_id="p1", text="cheap", cost_usd_tokens=10)
+    _write_session(proj / "expensive.jsonl", prompt_id="p2", text="expensive", cost_usd_tokens=100_000)
+
+    out = render_merged_sessions(None, None, top=1)
+    assert "top 1 by cost" in out
+
+
+def test_render_merged_sessions_no_sessions_does_not_crash(isolated_transcripts_root):
+    out = render_merged_sessions(None, None)
+    assert "<!doctype html>" in out
+
+
 def test_render_landing_includes_about_footer(isolated_transcripts_root):
     """serve's landing page renders through report.build_sessions_index_html,
     which grows the shared About-block footer (issue #75) - no separate
@@ -536,6 +567,7 @@ def running_server(isolated_transcripts_root):
     httpd.since = None
     httpd.until = None
     httpd.top = None
+    httpd.merge_sessions = False
     port = httpd.server_address[1]
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
