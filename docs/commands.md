@@ -443,6 +443,13 @@ the same grouping `chapters --detail` shows in the terminal.
   chapter titles when it's already been chaptered (free, since it only
   reads the cache), or its first prompt as a fallback for a session that
   isn't chaptered yet.
+- **The chapters → sections → turns → units drill-down is sortable too** —
+  by Time (chronological, the default), Calls, or $, another client-side
+  button row. The chosen key cascades through every nesting level at
+  once (chapters among chapters, turns within a section, units within a
+  turn), not just the top one, so "most expensive first" holds true
+  wherever you drill in next. Re-sorting doesn't collapse whatever
+  `<details>` you already had open.
 - **Read-only and makes no API call.** Browsing only ever reads chapters
   that are already cached (same as `timeline`) — opening this UI can
   never trigger a paid chaptering pass as a side effect.
