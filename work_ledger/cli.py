@@ -2272,8 +2272,18 @@ def _add_transcript_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main():
+    from work_ledger.about import REPO_URL, get_about_info
+
     parser = argparse.ArgumentParser(
-        description="Watch Claude Code session cost/token usage in near-real-time."
+        description="Watch Claude Code session cost/token usage in near-real-time.",
+        epilog=f"Source and issues: {REPO_URL}\n"
+        "Run `work-ledger about` for version, commit, and author detail.",
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"work-ledger {get_about_info().version}",
     )
     _add_transcript_args(parser)
     parser.add_argument(
