@@ -937,6 +937,19 @@ _SESSION_SORT_FIELDS = [
     ("total_tokens", "Tokens"),
 ]
 
+_TREE_SORT_FIELDS = [
+    # Same (key, label) shape as _SESSION_SORT_FIELDS, but for
+    # build_session_detail_html's chapter -> section -> turn -> unit tree.
+    # "time" is the tree's natural render order (chronological already -
+    # ordered_turns()/chapter.sections come in that order), so it doubles
+    # as "reset to default" rather than needing a separate control; "calls"
+    # and "cost" both sort descending, same "most X first" convention as
+    # the landing page's sort bar.
+    ("time", "Time"),
+    ("calls", "Calls"),
+    ("cost", "$"),
+]
+
 
 def build_sessions_index_html(rows: list[dict]) -> str:
     """`work-ledger serve`'s landing page - every local session rendered as
@@ -1156,6 +1169,14 @@ _DETAIL_EXTRA_CSS = """
   .back-link { color: var(--text-secondary); font-size: 13px; text-decoration: none; }
   .back-link:hover { text-decoration: underline; }
 
+  .sort-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 12.5px; }
+  .sort-bar span.label { color: var(--text-secondary); }
+  .sort-btn {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    border-radius: 999px; padding: 4px 12px; cursor: pointer; font: inherit;
+  }
+  .sort-btn.active { background: var(--text-primary); color: var(--page); border-color: var(--text-primary); }
+
   details.chapter-d { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
   details.chapter-d > summary.chapter-summary {
     display: flex; justify-content: space-between; align-items: center; gap: 12px;
@@ -1235,19 +1256,20 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
     def _turn_cost_str(turn) -> str:
         return "?" if turn.unknown_model_cost and turn.cost_usd == 0 else f"${turn.cost_usd:.4f}"
 
-    def _unit_row(unit) -> str:
+    def _unit_row(unit, index: int) -> str:
         return (
-            f'<div class="unit-row"><span class="kind kind-{html.escape(unit.kind)}">{html.escape(unit.kind)}</span>'
+            f'<div class="unit-row" data-time="{index}" data-calls="1" data-cost="{unit.cost_usd:.6f}">'
+            f'<span class="kind kind-{html.escape(unit.kind)}">{html.escape(unit.kind)}</span>'
             f'<span class="t">{html.escape(unit.label)}</span>'
             f'<span class="val">{unit.input_tokens:,} in / {unit.output_tokens:,} out · {_unit_cost_str(unit)}</span></div>'
         )
 
-    def _turn_block(turn) -> str:
+    def _turn_block(turn, index: int) -> str:
         time_str = turn.timestamp[11:19] if len(turn.timestamp) >= 19 else turn.timestamp
-        units_html = "".join(_unit_row(u) for u in turn.units) or '<div class="unit-row"><span class="t">(no units)</span></div>'
+        units_html = "".join(_unit_row(u, i) for i, u in enumerate(turn.units)) or '<div class="unit-row"><span class="t">(no units)</span></div>'
         n_units = len(turn.units)
         return (
-            '<details class="turn-d">'
+            f'<details class="turn-d" data-time="{index}" data-calls="{n_units}" data-cost="{turn.cost_usd:.6f}">'
             '<summary class="turn-summary">'
             f'<span class="time">{html.escape(time_str)}</span>'
             f'<span class="t">{html.escape(turn.prompt_snippet)}</span>'
@@ -1257,13 +1279,13 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
             "</details>"
         )
 
-    def _section_block(section, color: str) -> str:
+    def _section_block(section, color: str, index: int) -> str:
         s_turns = section.turns(tailer)
         s_cost = sum(t.cost_usd for t in s_turns)
         n_turns = len(s_turns)
-        turns_html = "".join(_turn_block(t) for t in s_turns) or '<p class="caption">(no turns)</p>'
+        turns_html = "".join(_turn_block(t, i) for i, t in enumerate(s_turns)) or '<p class="caption">(no turns)</p>'
         return (
-            '<details class="section-d" open>'
+            f'<details class="section-d" data-time="{index}" data-calls="{n_turns}" data-cost="{s_cost:.6f}" open>'
             '<summary class="section-summary">'
             f'<span class="dot" style="background:{color}"></span>'
             f'<span class="t">{html.escape(section.title)}</span>'
@@ -1273,13 +1295,13 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
             "</details>"
         )
 
-    def _chapter_block(chapter, color: str) -> str:
+    def _chapter_block(chapter, color: str, index: int) -> str:
         c_turns = chapter.turns(tailer)
         c_cost = sum(t.cost_usd for t in c_turns)
         pct = (c_cost / grand_total * 100) if grand_total else 0.0
-        sections_html = "".join(_section_block(s, color) for s in chapter.sections)
+        sections_html = "".join(_section_block(s, color, i) for i, s in enumerate(chapter.sections))
         return (
-            '<details class="chapter-d">'
+            f'<details class="chapter-d" data-time="{index}" data-calls="{len(c_turns)}" data-cost="{c_cost:.6f}">'
             '<summary class="chapter-summary">'
             '<span class="chapter-title">'
             f'<span class="swatch" style="background:{color}"></span>{html.escape(chapter.title)}'
@@ -1290,15 +1312,16 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
             "</details>"
         )
 
-    chapter_blocks = [_chapter_block(c, f"var(--series-{i+1})") for i, c in enumerate(chapters)]
+    chapter_blocks = [_chapter_block(c, f"var(--series-{i+1})", i) for i, c in enumerate(chapters)]
 
     if leftover_turns:
         color = f"var(--series-{len(chapters)+1})"
         leftover_cost = sum(t.cost_usd for t in leftover_turns)
         pct = (leftover_cost / grand_total * 100) if grand_total else 0.0
-        turns_html = "".join(_turn_block(t) for t in leftover_turns)
+        turns_html = "".join(_turn_block(t, i) for i, t in enumerate(leftover_turns))
         chapter_blocks.append(
-            '<details class="chapter-d" open>'
+            f'<details class="chapter-d" data-time="{len(chapters)}" data-calls="{len(leftover_turns)}" '
+            f'data-cost="{leftover_cost:.6f}" open>'
             '<summary class="chapter-summary">'
             '<span class="chapter-title">'
             f'<span class="swatch" style="background:{color}"></span>Not yet chaptered</span>'
@@ -1314,6 +1337,8 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
         else "no chapters cached - run `work-ledger chapters` to add initiative grouping "
         "(a small Anthropic API cost); this page never triggers that pass itself"
     )
+
+    tree_sort_fields_json = json.dumps(_TREE_SORT_FIELDS)
 
     return f"""<!doctype html>
 <html>
@@ -1352,8 +1377,11 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
 
     <div class="panel">
       <h2>Chapters &rarr; turns &rarr; units</h2>
-      <p class="caption">Click a chapter, then a section, then a turn to drill down — same grouping as <code>chapters --detail</code>, browsable instead of flag-driven.</p>
+      <p class="caption" id="tree-sort-caption">Click a chapter, then a section, then a turn to drill down - same grouping as chapters --detail, browsable instead of flag-driven.</p>
+      <div class="sort-bar"><span class="label">Sort by:</span><div id="tree-sort-buttons"></div></div>
+      <div class="chapters-root" id="chapters-root">
       {"".join(chapter_blocks) or '<p class="caption">No turns found in this transcript.</p>'}
+      </div>
     </div>
 
     <p class="footnote">
@@ -1364,6 +1392,58 @@ def build_session_detail_html(session_id: str, project: str, tailer: TranscriptT
     {_footer_html()}
   </div>
 </div>
+
+<script>
+const treeSortFields = {tree_sort_fields_json};  // [[key, label], ...]
+let currentTreeField = "time";
+const defaultTreeCaption = "Click a chapter, then a section, then a turn to drill down - same grouping as chapters --detail, browsable instead of flag-driven.";
+
+function sortTreeContainer(container, field) {{
+  // Every direct child of a chapters-root/.sections/.turns/.units container
+  // carries data-time/data-calls/data-cost (see build_session_detail_html's
+  // _chapter_block/_section_block/_turn_block/_unit_row) - sort in place and
+  // re-append in the new order. appendChild *moves* existing nodes rather
+  // than cloning, so an open <details> stays open across a re-sort.
+  const children = Array.from(container.children).filter((el) => el.dataset && el.dataset.time !== undefined);
+  if (children.length < 2) return;
+  children.sort((a, b) => {{
+    if (field === "time") return parseFloat(a.dataset.time) - parseFloat(b.dataset.time);
+    if (field === "calls") return parseFloat(b.dataset.calls) - parseFloat(a.dataset.calls);
+    return parseFloat(b.dataset.cost) - parseFloat(a.dataset.cost);
+  }});
+  children.forEach((el) => container.appendChild(el));
+}}
+
+function applyTreeSort(field) {{
+  currentTreeField = field;
+  const buttonsRoot = document.getElementById("tree-sort-buttons");
+  [...buttonsRoot.children].forEach((btn) => btn.classList.toggle("active", btn.dataset.field === field));
+
+  const caption = document.getElementById("tree-sort-caption");
+  const fieldLabel = treeSortFields.find(([k]) => k === field)[1];
+  caption.textContent = field === "time"
+    ? defaultTreeCaption
+    : `Sorted by ${{fieldLabel}}, most first, at every level (chapters, sections, turns, and calls). ${{defaultTreeCaption}}`;
+
+  // Same sort key cascades through every nesting level at once, not just
+  // the top-level chapter list - "most expensive first" should hold true
+  // whichever level you drill into next.
+  document.querySelectorAll(".chapters-root, .sections, .turns, .units").forEach((c) => sortTreeContainer(c, field));
+}}
+
+const treeButtonsRoot = document.getElementById("tree-sort-buttons");
+treeSortFields.forEach(([field, label]) => {{
+  const btn = document.createElement("button");
+  btn.className = "sort-btn" + (field === currentTreeField ? " active" : "");
+  btn.type = "button";
+  btn.dataset.field = field;
+  btn.textContent = label;
+  btn.addEventListener("click", () => applyTreeSort(field));
+  treeButtonsRoot.appendChild(btn);
+}});
+
+applyTreeSort(currentTreeField);
+</script>
 </body>
 </html>
 """

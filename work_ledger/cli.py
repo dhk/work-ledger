@@ -1012,7 +1012,12 @@ def build_session_rows(transcripts: list[Path]) -> list[dict]:
     return rows
 
 
-def run_sessions(since: date | None = None, until: date | None = None, as_json: bool = False):
+def run_sessions(
+    since: date | None = None,
+    until: date | None = None,
+    as_json: bool = False,
+    top: int | None = None,
+):
     """Lightweight listing of every local session transcript, newest first -
     no chaptering, no API call, just what's already parsed locally (last
     active time, first/last prompt, turn count, cost). Meant for discovery:
@@ -1025,7 +1030,14 @@ def run_sessions(since: date | None = None, until: date | None = None, as_json: 
     long-running or resumed session's first prompt (e.g. "how do we track
     X") often stops reflecting what the session is actually about by the
     time you're trying to identify it later; the most recent prompt is
-    frequently the more useful cue."""
+    frequently the more useful cue.
+
+    `top`, when given, switches the sort from newest-first to cost-
+    descending and truncates to that many rows - "which sessions are
+    actually expensive" instead of "what did I run most recently". Every
+    session in --since/--until range still gets its cost computed first
+    (no cheaper partial path exists - the cost has to be read to be
+    ranked); `top` only trims what's printed, not what's read."""
     console = Console()
     transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
     if not transcripts:
@@ -1035,13 +1047,18 @@ def run_sessions(since: date | None = None, until: date | None = None, as_json: 
 
     rows = build_session_rows(transcripts)
 
+    title = "work-ledger sessions"
+    if top is not None:
+        rows = sorted(rows, key=lambda r: r["cost_usd"], reverse=True)[:top]
+        title = f"work-ledger sessions — top {len(rows)} by cost"
+
     if as_json:
         import json
 
         console.print_json(json.dumps(rows))
         return
 
-    table = Table(title="work-ledger sessions", expand=True)
+    table = Table(title=title, expand=True)
     table.add_column("Session id", width=10)
     table.add_column("Project", ratio=1, overflow="ellipsis")
     table.add_column("Last active", width=16)
@@ -2272,8 +2289,18 @@ def _add_transcript_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main():
+    from work_ledger.about import REPO_URL, get_about_info
+
     parser = argparse.ArgumentParser(
-        description="Watch Claude Code session cost/token usage in near-real-time."
+        description="Watch Claude Code session cost/token usage in near-real-time.",
+        epilog=f"Source and issues: {REPO_URL}\n"
+        "Run `work-ledger about` for version, commit, and author detail.",
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"work-ledger {get_about_info().version}",
     )
     _add_transcript_args(parser)
     parser.add_argument(
@@ -2522,6 +2549,15 @@ def main():
         "--json",
         action="store_true",
         help="Machine-readable output instead of a terminal table",
+    )
+    sessions_parser.add_argument(
+        "--top",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Show only the N most expensive sessions, sorted by cost descending, instead of "
+        "every session newest-first. Combine with --since/--until to scope the pool before "
+        "ranking (e.g. `sessions --since 2026-08-01 --top 10` for this month's costliest).",
     )
 
     timeline_parser = subparsers.add_parser(
@@ -2879,7 +2915,8 @@ def main():
     if args.command == "sessions":
         since = _parse_date_arg(args.since, "--since") if args.since else None
         until = _parse_date_arg(args.until, "--until") if args.until else None
-        run_sessions(since=since, until=until, as_json=args.json)
+        _validate_top(args.top)
+        run_sessions(since=since, until=until, as_json=args.json, top=args.top)
         return
 
     if args.command == "serve":

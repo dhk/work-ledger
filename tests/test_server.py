@@ -119,6 +119,30 @@ def test_build_session_detail_html_smoke(tmp_path):
     assert "</html>" in out
 
 
+def test_build_session_detail_html_has_tree_sort_controls_and_data_attrs(tmp_path):
+    """The chapter -> section -> turn -> unit tree needs a client-side
+    sort control (Time/Calls/$) plus data-time/data-calls/data-cost on
+    every level's blocks for that JS to sort against - see
+    _TREE_SORT_FIELDS and sortTreeContainer() in report.py."""
+    path = tmp_path / "s.jsonl"
+    _write_session(path)
+    tailer = TranscriptTailer(path)
+    tailer.poll()
+
+    chapters = [Chapter(title="Build the thing", category="feature-build", sections=[Section(title="step", prompt_ids=["p1"])])]
+    out = build_session_detail_html("s", "my-project", tailer, chapters)
+
+    assert "tree-sort-buttons" in out
+    assert '"Time"' in out
+    assert '"Calls"' in out
+    assert '"$"' in out
+    assert 'class="chapters-root"' in out
+    assert 'data-time=' in out
+    assert 'data-calls=' in out
+    assert 'data-cost=' in out
+    assert "sortTreeContainer" in out
+
+
 def test_build_session_detail_html_leftover_turns_shown_as_not_yet_chaptered(tmp_path):
     """A turn outside every cached chapter's prompt_ids (either because
     nothing is chaptered yet, or new turns arrived since the last pass)
