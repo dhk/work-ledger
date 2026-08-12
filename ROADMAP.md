@@ -96,6 +96,7 @@ so they're tracked here without a stage label.
 | [#48](https://github.com/dhk/work-ledger/issues/48) ✅ | No coverage threshold enforced in CI |
 | [#73](https://github.com/dhk/work-ledger/issues/73) ✅ | `work-ledger cycle` — the upgrade/restart command `CLAUDE.md`'s CLI/MCP conventions section already required but nothing implemented; detects editable-vs-published automatically |
 | [#75](https://github.com/dhk/work-ledger/issues/75) ✅ | The "about" block — same convention section's third requirement (description/version/last-updated/commit/author across every CLI command, the MCP server, `serve`, and generated reports); one shared `about.py` computation, reuses #73's install-mode detection |
+| [#91](https://github.com/dhk/work-ledger/issues/91) ✅ | A chaptering call that never got a response (auth rejected, network error, backend unavailable) froze into the cache exactly like a real decision — permanently skipping retry even after the underlying failure was fixed. Distinguished from a real (paid) response that was refused/malformed, which still freezes as before |
 
 #45-48 shipped together in one pass (#51).
 

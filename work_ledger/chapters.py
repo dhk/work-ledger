@@ -671,6 +671,33 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
         else:
             merged_chapters.append(new_chapter)
 
+    if response is None:
+        # The backend call itself never produced a usable response (auth
+        # rejected/missing, network failure, backend unavailable, or any
+        # other exception raised before a response came back) - distinct
+        # from a real response that was refused, malformed, or only
+        # partially covered (response is not None, handled by the normal
+        # save path below). Persisting this Unsorted fallback into the
+        # frozen-prefix cache would turn a transient infra failure into a
+        # permanent one: every later `chapters`/`chapters --all` run would
+        # see these prompt_ids as "already chaptered" and skip them
+        # forever, even after whatever broke (an expired key, a
+        # rate-limited burst across many sessions in one `--all` run) is
+        # fixed. So these turns are left uncached - `merged_chapters` here
+        # is this run's display only, never written to disk - and the next
+        # run retries them for free (a failed call never got billed). A
+        # real response that was refused/malformed/partial still freezes
+        # as before: that's a paid, considered outcome, not an infra
+        # hiccup, and never re-paying for a call already billed is exactly
+        # what "Decided: caching, frozen prefix" (session-chaptering-
+        # design.md) is for.
+        return ChapterResult(
+            chapters=merged_chapters,
+            pass_cost_usd=cost,
+            fallback_reason=fallback_reason,
+            wall_clock_s=wall_clock_s,
+        )
+
     all_chaptered_ids = chaptered_ids + [t.prompt_id for t in new_turns]
     _save_cache(transcript_path, all_chaptered_ids, merged_chapters)
 

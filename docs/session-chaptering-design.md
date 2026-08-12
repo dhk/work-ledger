@@ -326,3 +326,17 @@ shown earlier in this doc) — cheap to read, no drill-down noise.
    explicit plan to revisit if that staleness turns out to matter in
    practice — see the Non-goals framing at the top: this is a first pass,
    not a final answer.
+
+   **Scope note (issue #91):** the freeze applies to a real, paid
+   chaptering decision — a response the backend actually returned,
+   whether it fully covered the session, was refused, or only partially
+   parsed. It does **not** apply when the backend call itself never
+   produced a response at all (rejected/missing credentials, a network
+   failure, a backend-unavailable error, or any other exception raised
+   before a response came back). That case is a zero-cost infra failure,
+   not a decision — freezing it would silently turn a transient outage
+   (an expired key, a rate-limited burst across a large `--all` run) into
+   a session permanently stuck as "Unsorted," with no signal and no way
+   to retry short of hand-deleting its cache file. Those turns are left
+   out of the cache entirely and retried on the next `chapters` run, for
+   free, until a real response comes back.
