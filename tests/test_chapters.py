@@ -229,6 +229,77 @@ def test_get_chapters_model_exception_falls_back_to_unsorted(tmp_path, monkeypat
     assert result.chapters[0].prompt_ids == ["p1"]
 
 
+def test_get_chapters_call_failure_does_not_freeze_into_cache(tmp_path, monkeypatch):
+    """Issue #91: a backend call that never produced a response (exception
+    before any response came back) is a zero-cost infra failure, not a
+    paid decision - it must not be written to the frozen-prefix cache, or
+    a transient outage (expired key, rate-limited burst) would silently
+    turn permanent."""
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    monkeypatch.setattr(
+        "work_ledger.chapters._call_model",
+        lambda outline, prior_titles: (_ for _ in ()).throw(RuntimeError("network error")),
+    )
+
+    result = get_chapters(tailer, transcript_path)
+    assert result.fallback_reason is not None
+    assert result.chapters[0].title == UNSORTED_TITLE  # still shown for this run's display
+
+    chaptered_ids, cached = _load_cache(transcript_path)
+    assert chaptered_ids == []  # nothing persisted - "p1" is still retryable
+    assert cached == []
+
+
+def test_get_chapters_call_failure_retries_on_next_run(tmp_path, monkeypatch):
+    """Following on from the above: once the backend starts working again,
+    the next `get_chapters` call must actually retry the previously-failed
+    turns rather than treating them as already (fallback-)chaptered."""
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    monkeypatch.setattr(
+        "work_ledger.chapters._call_model",
+        lambda outline, prior_titles: (_ for _ in ()).throw(RuntimeError("network error")),
+    )
+    first = get_chapters(tailer, transcript_path)
+    assert first.chapters[0].title == UNSORTED_TITLE
+
+    fake_parsed = _ChaptersOut(
+        chapters=[
+            _ChapterOut(title="Real chapter", category="bug-fix", sections=[_SectionOut(title="s", prompt_ids=["p1"])])
+        ]
+    )
+    monkeypatch.setattr(
+        "work_ledger.chapters._call_model",
+        lambda outline, prior_titles: _fake_response(fake_parsed),
+    )
+    second = get_chapters(tailer, transcript_path)
+    assert [c.title for c in second.chapters] == ["Real chapter"]
+    assert second.fallback_reason is None
+
+
+def test_get_chapters_response_fallback_still_freezes_into_cache(tmp_path, monkeypatch):
+    """Contrast with the call-failure case above: a real response that was
+    refused is a paid, considered outcome, not an infra hiccup - it keeps
+    freezing into the cache exactly as before."""
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    monkeypatch.setattr(
+        "work_ledger.chapters._call_model",
+        lambda outline, prior_titles: _fake_response(None, stop_reason="refusal"),
+    )
+
+    result = get_chapters(tailer, transcript_path)
+    assert result.chapters[0].title == UNSORTED_TITLE
+
+    chaptered_ids, cached = _load_cache(transcript_path)
+    assert chaptered_ids == ["p1"]
+    assert cached[0].title == UNSORTED_TITLE
+
+
 def test_get_chapters_no_api_key_gives_specific_fallback_reason(tmp_path, monkeypatch):
     """The SDK raises a plain TypeError (not an AnthropicError subclass)
     with this exact message when no credential is configured at all -
