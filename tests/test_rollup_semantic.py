@@ -15,6 +15,7 @@ import pytest
 
 from work_ledger.rollup_semantic import (
     DETERMINISTIC_MATCHING,
+    MAX_TOKENS,
     NO_CREDENTIALS_MESSAGE,
     ROLLUP_MATCHING_ENV_VAR,
     SEMANTIC_MATCHING,
@@ -25,6 +26,16 @@ from work_ledger.rollup_semantic import (
     matching_mode,
     propose_merges,
 )
+
+
+def test_max_tokens_matches_chapters_safe_ceiling():
+    """Issue #101: a real run with 213 singleton titles truncated the
+    response at the old, far-too-conservative 4096 - MAX_TOKENS must
+    match chapters.py's already-vetted 16000 ceiling for this API, not
+    silently drift back down."""
+    from work_ledger.chapters import MAX_TOKENS as CHAPTERS_MAX_TOKENS
+
+    assert MAX_TOKENS == CHAPTERS_MAX_TOKENS == 16000
 
 
 # --- matching_mode / is_semantic_enabled ------------------------------------
