@@ -9,6 +9,7 @@ same per-unit rendering for drill-down (`chapters --detail`).
 """
 
 import argparse
+import os
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -51,6 +52,7 @@ from work_ledger.rollup import collapse_to_other as collapse_rollup_clusters_to_
 from work_ledger.rollup import fold_below_cost as fold_rollup_clusters_below_cost
 from work_ledger.rollup import top_n_clusters as top_n_rollup_clusters
 from work_ledger.rollup import with_cumulative as with_rollup_cumulative
+from work_ledger import rollup_presets
 from work_ledger import rollup_semantic
 from work_ledger.session_pin import clear_pinned_session, get_pinned_session, set_pinned_session
 from work_ledger.timeline import (
@@ -752,6 +754,55 @@ def _validate_min_cost(value: float | None) -> None:
         sys.exit(2)
 
 
+def _resolve_rollup_flags(args: argparse.Namespace) -> dict:
+    """Merge --miso's built-in bundle or --preset's saved bundle (lowest
+    precedence) with whatever flags were actually passed on this
+    invocation (highest precedence) - issue #97's answer to "too many
+    flags to remember." --since/--until/--out are deliberately never
+    part of either bundle (see rollup_presets.py) - callers read those
+    straight off `args` as always, untouched by this function.
+
+    A value-bearing flag (e.g. --other-threshold) not passed on the CLI
+    is None on `args` (argparse's own default for every one of these),
+    which doubles as "fall through to the bundle" - the bundle's own
+    absence of a key then falls through again to run_rollup's normal
+    defaults. A store_true flag (e.g. --confirm) can't distinguish
+    "explicitly not requested" from "just not mentioned" - there's no
+    CLI syntax for the former anyway - so it's simply OR'd with the
+    bundle's value: either source asking for it is enough."""
+    bundle: dict = {}
+    if args.miso:
+        bundle = dict(rollup_presets.MISO_PRESET)
+    elif args.preset:
+        stored = rollup_presets.get_preset(args.preset)
+        if stored is None:
+            print(
+                f"error: no saved preset named {args.preset!r}. Run --list-presets to see what's saved.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        bundle = dict(stored)
+
+    def value(flag: str, cli_value):
+        return cli_value if cli_value is not None else bundle.get(flag)
+
+    def flag_on(flag: str, cli_value: bool) -> bool:
+        return bool(cli_value) or bool(bundle.get(flag, False))
+
+    return {
+        "as_json": flag_on("json", args.json),
+        "confirm": flag_on("confirm", args.confirm),
+        "top": value("top", args.top),
+        "report": flag_on("report", args.report),
+        "report_format": value("format", args.format) or "html",
+        "other_threshold": value("other_threshold", args.other_threshold),
+        "top_initiatives": value("top_initiatives", args.top_initiatives),
+        "min_cost": value("min_cost", args.min_cost),
+        "preview": flag_on("preview", args.preview),
+        "semantic": flag_on("semantic", args.semantic),
+    }
+
+
 def _validate_top(value: int | None) -> None:
     if value is not None and value <= 0:
         print(f"error: --top must be a positive integer, got {value}", file=sys.stderr)
@@ -1282,6 +1333,7 @@ def run_rollup(
     top_initiatives: int | None = None,
     min_cost: float | None = None,
     preview: bool = False,
+    semantic: bool = False,
 ):
     """Cluster the same recurring initiative's chapters across every
     session it touched and total its cost - issue #3. Unlike `chapters
@@ -1320,7 +1372,16 @@ def run_rollup(
     collapsed) cluster list rather than each collapsing it their own way.
     `preview` prints the same table the default (no --report/--json)
     path already shows, but also works alongside --report/--json so you
-    can see what a file will contain before writing it."""
+    can see what a file will contain before writing it.
+
+    `semantic` (issue #97) is a normal-flag shorthand for
+    WORK_LEDGER_ROLLUP_MATCHING=semantic, scoped to just this call - sets
+    the env var only for the duration of build_rollup_result below (never
+    touches it if it's already set, and always restores whatever was
+    there before on the way out, including for tests that call this
+    function repeatedly in one process). Doesn't change what the env var
+    itself does or costs - purely "one less thing to remember to type,"
+    see rollup_presets.py."""
     console = Console()
     all_transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
     if not all_transcripts:
@@ -1330,7 +1391,15 @@ def run_rollup(
 
     transcripts = top_n_transcripts_by_cost(all_transcripts, top)
 
-    result = build_rollup_result(transcripts)
+    env_var = rollup_semantic.ROLLUP_MATCHING_ENV_VAR
+    already_set = env_var in os.environ
+    if semantic and not already_set:
+        os.environ[env_var] = rollup_semantic.SEMANTIC_MATCHING
+    try:
+        result = build_rollup_result(transcripts)
+    finally:
+        if semantic and not already_set:
+            del os.environ[env_var]
     clusters = result.clusters
     uncached = _count_sessions_needing_chaptering(transcripts)
 
@@ -2881,7 +2950,7 @@ def main():
         "--format",
         type=str,
         choices=["html", "png", "csv"],
-        default="html",
+        default=None,  # resolved to "html" after merging with --preset/--miso, see _resolve_rollup_flags
         help="Report format for --report (default: html). png needs the optional "
         "'report' extra: pip install \"work-ledger[report]\" && playwright install chromium. "
         "csv needs nothing extra - initiative/sessions/chapters/cost/cumulative columns, "
@@ -2937,6 +3006,55 @@ def main():
         help="Render the same collapsed/cumulative-annotated result --report would write to "
         "a file straight to the terminal instead (or in addition, if --report is also given) "
         "- see what a shareable report will look like before generating one (issue #93).",
+    )
+    rollup_parser.add_argument(
+        "--semantic",
+        action="store_true",
+        help="Shorthand for WORK_LEDGER_ROLLUP_MATCHING=semantic, scoped to just this "
+        "invocation (issue #97) - catches reworded-title duplicates a plain rollup can't. "
+        "Same cost/behavior as setting the env var yourself; this flag doesn't persist "
+        "beyond this run, and doesn't cache anything (see issue #96).",
+    )
+    rollup_parser.add_argument(
+        "--preset",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Replay a saved bundle of flags from a previous --save-preset (issue #97) - "
+        "any flag you also pass explicitly on this invocation still overrides the preset's "
+        "stored value. --since/--until/--out are never part of a saved preset - always pass "
+        "those fresh. Mutually exclusive with --miso.",
+    )
+    rollup_parser.add_argument(
+        "--save-preset",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Save this invocation's resolved flags (after merging with --preset, if also "
+        "given) under NAME in ~/.config/work-ledger/rollup_presets.json for later --preset "
+        "NAME replay (issue #97) - the rollup still runs normally this time too. Never saves "
+        "--since/--until/--out.",
+    )
+    rollup_parser.add_argument(
+        "--list-presets",
+        action="store_true",
+        help="Print every saved preset and its flags, then exit - no rollup is run (issue #97).",
+    )
+    rollup_parser.add_argument(
+        "--delete-preset",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Delete a saved preset, then exit - no rollup is run (issue #97).",
+    )
+    rollup_parser.add_argument(
+        "--miso",
+        action="store_true",
+        help="\"Just give me the standard useful report\" (issue #97, mirrors the `miso` "
+        "command's own precedent) - built-in bundle equivalent to --semantic "
+        "--other-threshold 0.8 --report --confirm --preview. Not customizable and not saved "
+        "anywhere; use a named --preset instead if you want your own bundle. Mutually "
+        "exclusive with --preset.",
     )
 
     export_parser = subparsers.add_parser(
@@ -3235,29 +3353,56 @@ def main():
         return
 
     if args.command == "rollup":
+        if args.list_presets:
+            presets = rollup_presets.load_presets()
+            if not presets:
+                print("No saved rollup presets yet. Create one with `rollup ... --save-preset <name>`.")
+            else:
+                for name in rollup_presets.list_preset_names():
+                    print(f"{name}: {presets[name]}")
+            return
+
+        if args.delete_preset:
+            removed = rollup_presets.delete_preset(args.delete_preset)
+            verb = "Removed" if removed else "No such"
+            print(f"{verb} preset {args.delete_preset!r}.")
+            return
+
+        if args.miso and args.preset:
+            print("error: --miso and --preset are mutually exclusive - pick one", file=sys.stderr)
+            sys.exit(2)
+
         since = _parse_date_arg(args.since, "--since") if args.since else None
         until = _parse_date_arg(args.until, "--until") if args.until else None
-        _validate_top(args.top)
-        if args.other_threshold is not None:
-            _validate_other_threshold(args.other_threshold)
-        _validate_top_initiatives(args.top_initiatives)
-        _validate_min_cost(args.min_cost)
-        if args.report and args.json:
+
+        resolved = _resolve_rollup_flags(args)
+        _validate_top(resolved["top"])
+        if resolved["other_threshold"] is not None:
+            _validate_other_threshold(resolved["other_threshold"])
+        _validate_top_initiatives(resolved["top_initiatives"])
+        _validate_min_cost(resolved["min_cost"])
+        if resolved["report"] and resolved["as_json"]:
             print("error: --report and --json are mutually exclusive", file=sys.stderr)
             sys.exit(2)
+
+        if args.save_preset:
+            rollup_presets.save_preset(args.save_preset, resolved)
+            print(f"Saved preset {args.save_preset!r}.")
+
         run_rollup(
             since=since,
             until=until,
-            as_json=args.json,
-            confirm=args.confirm,
-            top=args.top,
-            report=args.report,
-            report_format=args.format,
+            as_json=resolved["as_json"],
+            confirm=resolved["confirm"],
+            top=resolved["top"],
+            report=resolved["report"],
+            report_format=resolved["report_format"],
             report_out=args.out,
-            other_threshold=args.other_threshold,
-            top_initiatives=args.top_initiatives,
-            min_cost=args.min_cost,
-            preview=args.preview,
+            other_threshold=resolved["other_threshold"],
+            top_initiatives=resolved["top_initiatives"],
+            min_cost=resolved["min_cost"],
+            preview=resolved["preview"],
+            semantic=resolved["semantic"],
         )
         return
 

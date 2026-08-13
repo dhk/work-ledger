@@ -1,3 +1,5 @@
+import types
+
 import pytest
 
 from work_ledger.chapters import Chapter, Section
@@ -11,6 +13,7 @@ from work_ledger.cli import (
     _has_skill_units,
     _in_date_range,
     _parse_date_arg,
+    _resolve_rollup_flags,
     _resolve_transcript_arg,
     _session_duration_minutes,
     _sidechain_warning,
@@ -1385,6 +1388,162 @@ def test_run_rollup_min_cost_takes_precedence_over_other_threshold(isolated_tran
     out = " ".join(capsys.readouterr().out.split())
     assert "--min-cost" in out
     assert "--other-threshold" not in out
+
+
+# --- issue #97: --semantic, --preset/--miso, _resolve_rollup_flags --------
+
+
+def _rollup_args(**overrides):
+    base = dict(
+        json=False,
+        confirm=False,
+        top=None,
+        report=False,
+        format=None,
+        other_threshold=None,
+        top_initiatives=None,
+        min_cost=None,
+        preview=False,
+        semantic=False,
+        preset=None,
+        save_preset=None,
+        list_presets=False,
+        delete_preset=None,
+        miso=False,
+    )
+    base.update(overrides)
+    return types.SimpleNamespace(**base)
+
+
+def test_resolve_rollup_flags_plain_passthrough_no_bundle():
+    """No --miso/--preset: every flag passes straight through, --format
+    falls back to "html" (its pre-#97 argparse default) rather than None."""
+    resolved = _resolve_rollup_flags(_rollup_args(other_threshold=0.5, confirm=True))
+    assert resolved["other_threshold"] == 0.5
+    assert resolved["confirm"] is True
+    assert resolved["report_format"] == "html"
+    assert resolved["top"] is None
+    assert resolved["semantic"] is False
+
+
+def test_resolve_rollup_flags_miso_applies_the_built_in_bundle():
+    from work_ledger import rollup_presets
+
+    resolved = _resolve_rollup_flags(_rollup_args(miso=True))
+    assert resolved["semantic"] is True
+    assert resolved["other_threshold"] == rollup_presets.MISO_PRESET["other_threshold"]
+    assert resolved["report"] is True
+    assert resolved["report_format"] == "html"
+    assert resolved["confirm"] is True
+    assert resolved["preview"] is True
+
+
+def test_resolve_rollup_flags_cli_flag_overrides_miso():
+    resolved = _resolve_rollup_flags(_rollup_args(miso=True, other_threshold=0.5))
+    assert resolved["other_threshold"] == 0.5  # explicit CLI value wins over --miso's 0.8
+
+
+def test_resolve_rollup_flags_preset_bundle_applies(monkeypatch):
+    monkeypatch.setattr(
+        "work_ledger.rollup_presets.get_preset",
+        lambda name: {"other_threshold": 0.9, "top_initiatives": None, "confirm": True} if name == "x" else None,
+    )
+    resolved = _resolve_rollup_flags(_rollup_args(preset="x"))
+    assert resolved["other_threshold"] == 0.9
+    assert resolved["confirm"] is True
+
+
+def test_resolve_rollup_flags_cli_flag_overrides_preset(monkeypatch):
+    monkeypatch.setattr(
+        "work_ledger.rollup_presets.get_preset",
+        lambda name: {"other_threshold": 0.9} if name == "x" else None,
+    )
+    resolved = _resolve_rollup_flags(_rollup_args(preset="x", other_threshold=0.5))
+    assert resolved["other_threshold"] == 0.5
+
+
+def test_resolve_rollup_flags_unknown_preset_exits(monkeypatch, capsys):
+    monkeypatch.setattr("work_ledger.rollup_presets.get_preset", lambda name: None)
+    with pytest.raises(SystemExit) as exc_info:
+        _resolve_rollup_flags(_rollup_args(preset="nope"))
+    assert exc_info.value.code == 2
+    assert "nope" in capsys.readouterr().err
+
+
+def test_resolve_rollup_flags_store_true_flags_or_with_bundle(monkeypatch):
+    """A store_true flag not passed on the CLI (False) still resolves
+    True if the bundle asked for it - there's no CLI syntax for
+    "explicitly not this," so OR-ing is correct."""
+    monkeypatch.setattr(
+        "work_ledger.rollup_presets.get_preset",
+        lambda name: {"preview": True} if name == "x" else None,
+    )
+    resolved = _resolve_rollup_flags(_rollup_args(preset="x", preview=False))
+    assert resolved["preview"] is True
+
+
+def test_run_rollup_semantic_sets_env_var_only_for_the_call(isolated_transcripts_root, monkeypatch, capsys):
+    from work_ledger import rollup_semantic
+    from work_ledger.chapters import _save_cache
+
+    monkeypatch.delenv(rollup_semantic.ROLLUP_MATCHING_ENV_VAR, raising=False)
+
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    path = proj / "s.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path, ["p1"], [Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])])
+
+    seen_during_call = []
+
+    def fake_build_rollup_result(transcripts):
+        import os
+
+        seen_during_call.append(os.environ.get(rollup_semantic.ROLLUP_MATCHING_ENV_VAR))
+        from work_ledger.rollup import build_rollup_result as real
+
+        return real(transcripts)
+
+    monkeypatch.setattr("work_ledger.cli.build_rollup_result", fake_build_rollup_result)
+
+    cli.run_rollup(semantic=True)
+
+    assert seen_during_call == [rollup_semantic.SEMANTIC_MATCHING]  # set during the call...
+    import os
+
+    assert rollup_semantic.ROLLUP_MATCHING_ENV_VAR not in os.environ  # ...and cleaned up after
+
+
+def test_run_rollup_semantic_does_not_clobber_already_set_env_var(isolated_transcripts_root, monkeypatch):
+    import os
+
+    from work_ledger import rollup_semantic
+    from work_ledger.chapters import _save_cache
+
+    monkeypatch.setenv(rollup_semantic.ROLLUP_MATCHING_ENV_VAR, rollup_semantic.SEMANTIC_MATCHING)
+
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    path = proj / "s.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path, ["p1"], [Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])])
+
+    cli.run_rollup(semantic=True)
+
+    # Still set afterward - run_rollup must never delete an env var it didn't set itself.
+    assert os.environ[rollup_semantic.ROLLUP_MATCHING_ENV_VAR] == rollup_semantic.SEMANTIC_MATCHING
 
 
 def test_run_rollup_table_shows_cumulative_column(isolated_transcripts_root, capsys):
