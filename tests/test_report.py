@@ -10,11 +10,12 @@ from work_ledger.report import (
     build_activity_report_html,
     build_merged_session_detail_html,
     build_report_html,
+    build_rollup_csv,
     build_rollup_report_html,
     build_waste_report_html,
     png_available,
 )
-from work_ledger.rollup import RollupCluster
+from work_ledger.rollup import RollupCluster, collapse_to_other
 from work_ledger.transcript import TranscriptTailer
 from work_ledger.waste import REPEATED_READ, REPEATED_SUBAGENT, WastePattern
 
@@ -98,6 +99,75 @@ def test_build_rollup_report_html_date_range_scope_note():
 def test_build_rollup_report_html_zero_clusters_does_not_crash():
     html = build_rollup_report_html([], n_sessions_included=0, n_sessions_total=0)
     assert "<!doctype html>" in html
+
+
+# --- issue #93: cumulative %, "All other" coloring, CSV export -------------
+
+
+def test_build_rollup_report_html_embeds_cumulative_percent():
+    import re
+
+    clusters = [_cluster("Big", ["s1"], cost=80.0), _cluster("Small", ["s2"], cost=20.0)]
+    html = build_rollup_report_html(clusters, n_sessions_included=2, n_sessions_total=2)
+    cum_values = [float(m) for m in re.findall(r'"cumPct":\s*([\d.]+)', html)]
+    assert cum_values == [80.0, 100.0]
+
+
+def test_build_rollup_report_html_other_cluster_uses_overflow_color_slot():
+    clusters = [_cluster("A", ["s1"], cost=90.0), _cluster("B", ["s2"], cost=5.0), _cluster("C", ["s3"], cost=5.0)]
+    collapsed = collapse_to_other(clusters, threshold=0.8)
+    html = build_rollup_report_html(collapsed, n_sessions_included=3, n_sessions_total=3)
+    assert "var(--overflow)" in html
+    assert "All other" in html
+    # The overflow var itself must actually be defined for this page,
+    # unlike the plain (no collapsing) case which never references it.
+    assert "--overflow:" in html
+
+
+def test_build_rollup_report_html_no_overflow_var_when_nothing_collapsed():
+    clusters = [_cluster("A", ["s1"], cost=1.0)]
+    html = build_rollup_report_html(clusters, n_sessions_included=1, n_sessions_total=1)
+    assert "var(--overflow)" not in html
+
+
+def test_build_rollup_csv_columns_and_cumulative_values():
+    import csv
+    import io
+
+    clusters = [
+        _cluster("A", ["s1", "s2"], num_chapters=3, cost=80.0),
+        _cluster("B", ["s3"], cost=20.0),
+    ]
+    rows = list(csv.DictReader(io.StringIO(build_rollup_csv(clusters))))
+    assert len(rows) == 2
+    assert rows[0]["initiative"] == "A"
+    assert rows[0]["sessions"] == "2"
+    assert rows[0]["chapters"] == "3"
+    assert rows[0]["is_other"] == "no"
+    assert float(rows[0]["cumulative_pct"]) == 80.0
+    assert float(rows[1]["cumulative_pct"]) == 100.0
+
+
+def test_build_rollup_csv_marks_other_cluster():
+    import csv
+    import io
+
+    clusters = [_cluster("A", ["s1"], cost=90.0), _cluster("B", ["s2"], cost=5.0), _cluster("C", ["s3"], cost=5.0)]
+    collapsed = collapse_to_other(clusters, threshold=0.8)
+    rows = list(csv.DictReader(io.StringIO(build_rollup_csv(collapsed))))
+    assert rows[-1]["is_other"] == "yes"
+    assert rows[-1]["initiative"].startswith("All other")
+    assert all(r["is_other"] == "no" for r in rows[:-1])
+
+
+def test_build_rollup_csv_empty_clusters_returns_header_only():
+    import csv
+    import io
+
+    text = build_rollup_csv([])
+    rows = list(csv.DictReader(io.StringIO(text)))
+    assert rows == []
+    assert "initiative" in text.splitlines()[0]
 
 
 def _merged_session(session_id, prompt_id, prompt_text, chapter_title, timestamp, tmp_path_factory=None, path=None):

@@ -42,7 +42,13 @@ from work_ledger.limits import (
 from work_ledger import pattern_client
 from work_ledger.patterns import DEFAULT_PATTERNS_DIR, load_patterns, patterns_for_rule
 from work_ledger.recommend import generate_recommendations
-from work_ledger.rollup import RollupResult, build_rollup_result
+from work_ledger.rollup import (
+    RollupResult,
+    build_rollup_result,
+    is_other_cluster,
+)
+from work_ledger.rollup import collapse_to_other as collapse_rollup_clusters_to_other
+from work_ledger.rollup import with_cumulative as with_rollup_cumulative
 from work_ledger import rollup_semantic
 from work_ledger.session_pin import clear_pinned_session, get_pinned_session, set_pinned_session
 from work_ledger.timeline import (
@@ -1258,6 +1264,8 @@ def run_rollup(
     report: bool = False,
     report_format: str = "html",
     report_out: str | None = None,
+    other_threshold: float | None = None,
+    preview: bool = False,
 ):
     """Cluster the same recurring initiative's chapters across every
     session it touched and total its cost - issue #3. Unlike `chapters
@@ -1280,10 +1288,19 @@ def run_rollup(
     in range (top_n_transcripts_by_cost - same ranking `sessions --top`/
     `serve --top` use) instead of every session in range - "merge across
     just the sessions I already know are expensive" instead of everything.
-    `report` renders the clustering as a shareable HTML/PNG bar chart
-    (build_rollup_report_html) instead of a terminal table/--json - the
-    "give my boss a report on what I've been spending on" case a
-    localhost-only `serve` page can't cover."""
+    `report` renders the clustering as a shareable HTML/PNG/CSV file
+    (build_rollup_report_html/build_rollup_csv) instead of a terminal
+    table/--json - the "give my boss a report on what I've been spending
+    on" case a localhost-only `serve` page can't cover.
+
+    `other_threshold` (issue #93), when given, folds initiatives beyond
+    that cumulative-cost fraction into one "All other" cluster
+    (rollup.collapse_to_other) - applied once, up front, so the table/
+    --preview/--report/--json below all agree on the same (possibly
+    collapsed) cluster list rather than each collapsing it their own way.
+    `preview` prints the same table the default (no --report/--json)
+    path already shows, but also works alongside --report/--json so you
+    can see what a file will contain before writing it."""
     console = Console()
     all_transcripts = [p for p in find_all_transcripts() if _in_date_range(p, since, until)]
     if not all_transcripts:
@@ -1304,30 +1321,36 @@ def run_rollup(
         )
         return
 
-    if report:
-        from work_ledger.report import ReportRenderError, build_rollup_report_html, render_png
+    n_before_collapse = len(clusters)
+    if other_threshold is not None:
+        clusters = collapse_rollup_clusters_to_other(clusters, threshold=other_threshold)
 
-        html = build_rollup_report_html(
-            clusters,
-            n_sessions_included=len(transcripts),
-            n_sessions_total=len(all_transcripts),
-            since=since,
-            until=until,
-            top=top,
-        )
+    if report:
+        from work_ledger.report import ReportRenderError, build_rollup_csv, build_rollup_report_html, render_png
+
         out_path = Path(report_out) if report_out else Path(f"work-ledger-rollup-{date.today().isoformat()}.{report_format}")
 
-        if report_format == "html":
-            out_path.write_text(html, encoding="utf-8")
+        if report_format == "csv":
+            out_path.write_text(build_rollup_csv(clusters), encoding="utf-8")
         else:
-            try:
-                render_png(html, out_path)
-            except ReportRenderError as e:
-                console.print(f"[red]{escape(str(e))}[/red]")
-                sys.exit(1)
+            html_content = build_rollup_report_html(
+                clusters,
+                n_sessions_included=len(transcripts),
+                n_sessions_total=len(all_transcripts),
+                since=since,
+                until=until,
+                top=top,
+            )
+            if report_format == "html":
+                out_path.write_text(html_content, encoding="utf-8")
+            else:
+                try:
+                    render_png(html_content, out_path)
+                except ReportRenderError as e:
+                    console.print(f"[red]{escape(str(e))}[/red]")
+                    sys.exit(1)
 
         console.print(f"[green]Wrote {report_format.upper()} report to {out_path}[/green]")
-        return
 
     if as_json:
         import json
@@ -1340,10 +1363,14 @@ def run_rollup(
                 "sessions": c.sessions,
                 "cost_usd": c.cost_usd,
                 "unknown_model_cost": c.unknown_model_cost,
+                "is_other": is_other_cluster(c),
             }
             for c in clusters
         ]
         console.print_json(json.dumps(data))
+
+    show_table = preview or (not report and not as_json)
+    if not show_table:
         return
 
     console.print(
@@ -1356,17 +1383,25 @@ def run_rollup(
     table.add_column("Sessions", justify="right", width=9)
     table.add_column("Chapters", justify="right", width=9)
     table.add_column("Cost (est.)", justify="right", width=12)
+    # Cumulative % only, not also cumulative $ - the Pareto-relevant number,
+    # and keeping this column narrow leaves the Initiative column (the one
+    # that actually needs the room) from getting ellipsis-truncated too
+    # aggressively in an 80-col terminal. Exact cumulative dollars are
+    # already in --json/--format csv for anyone who wants them.
+    table.add_column("Cumulative", justify="right", width=10)
 
     grand_total_cost = 0.0
     any_unknown = False
-    for c in clusters:
+    for c, _cum_cost, cum_pct in with_rollup_cumulative(clusters):
         any_unknown = any_unknown or c.unknown_model_cost
         grand_total_cost += c.cost_usd
+        title_cell = f"[dim italic]{c.display_title}[/dim italic]" if is_other_cluster(c) else c.display_title
         table.add_row(
-            c.display_title,
+            title_cell,
             str(c.num_sessions),
             str(c.num_chapters),
             _turn_cost_str(c.cost_usd, c.unknown_model_cost),
+            f"{cum_pct:.0f}%",
         )
 
     unknown_note = " (some models unpriced)" if any_unknown else ""
@@ -1376,8 +1411,15 @@ def run_rollup(
         "",
         Text("GRAND TOTAL", style="bold"),
         Text(f"${grand_total_cost:.4f}{unknown_note}", style="bold green"),
+        Text("100%", style="bold green"),
     )
     console.print(table)
+    if other_threshold is not None and len(clusters) < n_before_collapse:
+        n_folded = n_before_collapse - len(clusters) + 1
+        console.print(
+            f"[dim]{n_folded} of {n_before_collapse} initiatives folded into 'All other' at "
+            f"--other-threshold {other_threshold} (shown as one row above).[/dim]"
+        )
     if uncached:
         console.print(
             f"[dim]{uncached} of {len(transcripts)} session(s) have no cached chapters yet and "
@@ -2803,23 +2845,44 @@ def main():
     rollup_parser.add_argument(
         "--report",
         action="store_true",
-        help="Generate a shareable visual report (HTML or PNG) to a file instead of a "
+        help="Generate a shareable report (HTML, PNG, or CSV) to a file instead of a "
         "terminal table/--json - a report you can actually send someone, unlike `serve` "
         "which only ever binds 127.0.0.1.",
     )
     rollup_parser.add_argument(
         "--format",
         type=str,
-        choices=["html", "png"],
+        choices=["html", "png", "csv"],
         default="html",
         help="Report format for --report (default: html). png needs the optional "
-        "'report' extra: pip install \"work-ledger[report]\" && playwright install chromium",
+        "'report' extra: pip install \"work-ledger[report]\" && playwright install chromium. "
+        "csv needs nothing extra - initiative/sessions/chapters/cost/cumulative columns, "
+        "plain text for a spreadsheet (issue #93).",
     )
     rollup_parser.add_argument(
         "--out",
         type=str,
         default=None,
         help="Output file path for --report (default: work-ledger-rollup-<date>.<format>)",
+    )
+    rollup_parser.add_argument(
+        "--other-threshold",
+        type=float,
+        default=None,
+        metavar="FRACTION",
+        help="Show initiatives individually until their running cost crosses this fraction "
+        "of the total (e.g. 0.8 for 80%%), then fold the rest into one 'All other' cluster - "
+        "shortens a long tail of small recurring initiatives (issue #93). Opt-in (no effect "
+        "unless given, unlike `activity --report`'s always-on default) - distinct from "
+        "--top, which scopes which *sessions* get clustered before this ever runs. Applies "
+        "to every output mode this run produces (table, --preview, --report, --json).",
+    )
+    rollup_parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Render the same collapsed/cumulative-annotated result --report would write to "
+        "a file straight to the terminal instead (or in addition, if --report is also given) "
+        "- see what a shareable report will look like before generating one (issue #93).",
     )
 
     export_parser = subparsers.add_parser(
@@ -3121,6 +3184,8 @@ def main():
         since = _parse_date_arg(args.since, "--since") if args.since else None
         until = _parse_date_arg(args.until, "--until") if args.until else None
         _validate_top(args.top)
+        if args.other_threshold is not None:
+            _validate_other_threshold(args.other_threshold)
         if args.report and args.json:
             print("error: --report and --json are mutually exclusive", file=sys.stderr)
             sys.exit(2)
@@ -3133,6 +3198,8 @@ def main():
             report=args.report,
             report_format=args.format,
             report_out=args.out,
+            other_threshold=args.other_threshold,
+            preview=args.preview,
         )
         return
 

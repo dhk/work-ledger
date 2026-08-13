@@ -294,3 +294,76 @@ def build_rollup(transcripts: list[Path]) -> list[RollupCluster]:
     #68; existing callers that only want the clusters (not the semantic
     pass's own metadata) keep working unchanged."""
     return build_rollup_result(transcripts).clusters
+
+
+_OTHER_KEY = "__other__"
+
+
+def collapse_to_other(clusters: list[RollupCluster], threshold: float = 0.8) -> list[RollupCluster]:
+    """Issue #93: the same shape as `activity.collapse_to_other`, over
+    `RollupCluster`s instead of `ActivityBucket`s - keep clusters
+    individually until their running cost crosses `threshold` (a fraction
+    of the grand total, e.g. 0.8 for 80%), then fold everything after
+    that into one residual "All other" cluster. `clusters` must already
+    be sorted most-expensive-first (`build_rollup_result`'s contract).
+
+    Unlike activity's version, this is opt-in only (callers pass a
+    `threshold` because a rollup's initiative count is far less bounded
+    than activity's fixed handful of types) and, since a rollup cluster
+    already aggregates sessions/chapters, the residual cluster sums those
+    too rather than just cost - so "N sessions" in a report/table stays
+    honest even when most of them are folded into "All other"."""
+    total = sum(c.cost_usd for c in clusters)
+    if total <= 0 or not clusters:
+        return list(clusters)
+
+    kept: list[RollupCluster] = []
+    running = 0.0
+    for i, c in enumerate(clusters):
+        running += c.cost_usd
+        kept.append(c)
+        if running / total >= threshold:
+            rest = clusters[i + 1 :]
+            if rest:
+                pct = int(round(threshold * 100))
+                other_sessions: list[str] = []
+                for r in rest:
+                    for s in r.sessions:
+                        if s not in other_sessions:
+                            other_sessions.append(s)
+                kept.append(
+                    RollupCluster(
+                        normalized_key=_OTHER_KEY,
+                        display_title=f"All other ({len(rest)} initiative{'s' if len(rest) != 1 else ''}, after {pct}%)",
+                        sessions=other_sessions,
+                        num_chapters=sum(r.num_chapters for r in rest),
+                        cost_usd=sum(r.cost_usd for r in rest),
+                        unknown_model_cost=any(r.unknown_model_cost for r in rest),
+                    )
+                )
+            return kept
+    return kept
+
+
+def is_other_cluster(cluster: RollupCluster) -> bool:
+    """Whether `cluster` is `collapse_to_other`'s residual bucket, not a
+    real initiative - callers (report.py's chart, the CSV export) use
+    this to render it visually distinct rather than as just the next row."""
+    return cluster.normalized_key == _OTHER_KEY
+
+
+def with_cumulative(clusters: list[RollupCluster]) -> list[tuple[RollupCluster, float, float]]:
+    """Pair each cluster (in the given, already most-expensive-first
+    order) with its running cost and running percent-of-total so far -
+    `(cluster, cumulative_cost_usd, cumulative_pct)`. One shared
+    computation so "cumulative" means exactly the same thing in the
+    terminal table, `--preview`, the `--report` chart, and `--format csv`
+    (issue #93) - each of those renders this tuple differently, but none
+    of them recomputes the running sum its own way."""
+    total = sum(c.cost_usd for c in clusters) or 1.0
+    running = 0.0
+    out = []
+    for c in clusters:
+        running += c.cost_usd
+        out.append((c, running, running / total * 100))
+    return out
