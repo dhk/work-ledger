@@ -48,6 +48,8 @@ from work_ledger.rollup import (
     is_other_cluster,
 )
 from work_ledger.rollup import collapse_to_other as collapse_rollup_clusters_to_other
+from work_ledger.rollup import fold_below_cost as fold_rollup_clusters_below_cost
+from work_ledger.rollup import top_n_clusters as top_n_rollup_clusters
 from work_ledger.rollup import with_cumulative as with_rollup_cumulative
 from work_ledger import rollup_semantic
 from work_ledger.session_pin import clear_pinned_session, get_pinned_session, set_pinned_session
@@ -738,6 +740,18 @@ def _validate_other_threshold(value: float) -> None:
         sys.exit(2)
 
 
+def _validate_top_initiatives(value: int | None) -> None:
+    if value is not None and value <= 0:
+        print(f"error: --top-initiatives must be a positive integer, got {value}", file=sys.stderr)
+        sys.exit(2)
+
+
+def _validate_min_cost(value: float | None) -> None:
+    if value is not None and value < 0:
+        print(f"error: --min-cost must be zero or positive, got {value}", file=sys.stderr)
+        sys.exit(2)
+
+
 def _validate_top(value: int | None) -> None:
     if value is not None and value <= 0:
         print(f"error: --top must be a positive integer, got {value}", file=sys.stderr)
@@ -1265,6 +1279,8 @@ def run_rollup(
     report_format: str = "html",
     report_out: str | None = None,
     other_threshold: float | None = None,
+    top_initiatives: int | None = None,
+    min_cost: float | None = None,
     preview: bool = False,
 ):
     """Cluster the same recurring initiative's chapters across every
@@ -1293,9 +1309,13 @@ def run_rollup(
     table/--json - the "give my boss a report on what I've been spending
     on" case a localhost-only `serve` page can't cover.
 
-    `other_threshold` (issue #93), when given, folds initiatives beyond
-    that cumulative-cost fraction into one "All other" cluster
-    (rollup.collapse_to_other) - applied once, up front, so the table/
+    `other_threshold`/`top_initiatives`/`min_cost` (issue #93) each fold
+    part of the cluster list into one "All other" cluster - a percentage-
+    of-total cutoff, a hard count cutoff, and an absolute-dollar cutoff
+    respectively (rollup.collapse_to_other/top_n_clusters/
+    fold_below_cost). At most one actually runs per call - precedence is
+    top_initiatives, then min_cost, then other_threshold, matching each
+    flag's own help text - applied once, up front, so the table/
     --preview/--report/--json below all agree on the same (possibly
     collapsed) cluster list rather than each collapsing it their own way.
     `preview` prints the same table the default (no --report/--json)
@@ -1322,8 +1342,16 @@ def run_rollup(
         return
 
     n_before_collapse = len(clusters)
-    if other_threshold is not None:
+    collapse_note = None
+    if top_initiatives is not None:
+        clusters = top_n_rollup_clusters(clusters, top_initiatives)
+        collapse_note = f"--top-initiatives {top_initiatives}"
+    elif min_cost is not None:
+        clusters = fold_rollup_clusters_below_cost(clusters, min_cost)
+        collapse_note = f"--min-cost {min_cost:.2f}"
+    elif other_threshold is not None:
         clusters = collapse_rollup_clusters_to_other(clusters, threshold=other_threshold)
+        collapse_note = f"--other-threshold {other_threshold}"
 
     if report:
         from work_ledger.report import ReportRenderError, build_rollup_csv, build_rollup_report_html, render_png
@@ -1414,11 +1442,11 @@ def run_rollup(
         Text("100%", style="bold green"),
     )
     console.print(table)
-    if other_threshold is not None and len(clusters) < n_before_collapse:
+    if collapse_note is not None and len(clusters) < n_before_collapse:
         n_folded = n_before_collapse - len(clusters) + 1
         console.print(
             f"[dim]{n_folded} of {n_before_collapse} initiatives folded into 'All other' at "
-            f"--other-threshold {other_threshold} (shown as one row above).[/dim]"
+            f"{collapse_note} (shown as one row above).[/dim]"
         )
     if uncached:
         console.print(
@@ -2875,7 +2903,33 @@ def main():
         "shortens a long tail of small recurring initiatives (issue #93). Opt-in (no effect "
         "unless given, unlike `activity --report`'s always-on default) - distinct from "
         "--top, which scopes which *sessions* get clustered before this ever runs. Applies "
-        "to every output mode this run produces (table, --preview, --report, --json).",
+        "to every output mode this run produces (table, --preview, --report, --json). Lowest "
+        "precedence of the three collapsing flags - overridden by --top-initiatives or "
+        "--min-cost if either is also given.",
+    )
+    rollup_parser.add_argument(
+        "--top-initiatives",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Show only the N costliest initiatives individually, folding everything else "
+        "into one 'All other' cluster - a hard count cutoff instead of --other-threshold's "
+        "percentage-of-total one (issue #93). Distinct from the existing --top, which scopes "
+        "which *sessions* get clustered before this ever runs, not which *initiatives* get "
+        "shown afterward. Takes precedence over --min-cost and --other-threshold if more "
+        "than one is given.",
+    )
+    rollup_parser.add_argument(
+        "--min-cost",
+        type=float,
+        default=None,
+        metavar="DOLLARS",
+        help="Fold any initiative costing less than this many dollars into one 'All other' "
+        "cluster (issue #93). Unlike --other-threshold's percentage-of-total cutoff, this is "
+        "a stable absolute floor - the same --min-cost folds the same set of initiatives "
+        "every time, regardless of how total spend shifts month to month. Takes precedence "
+        "over --other-threshold if both are given; --top-initiatives takes precedence over "
+        "this if all three are given.",
     )
     rollup_parser.add_argument(
         "--preview",
@@ -3186,6 +3240,8 @@ def main():
         _validate_top(args.top)
         if args.other_threshold is not None:
             _validate_other_threshold(args.other_threshold)
+        _validate_top_initiatives(args.top_initiatives)
+        _validate_min_cost(args.min_cost)
         if args.report and args.json:
             print("error: --report and --json are mutually exclusive", file=sys.stderr)
             sys.exit(2)
@@ -3199,6 +3255,8 @@ def main():
             report_format=args.format,
             report_out=args.out,
             other_threshold=args.other_threshold,
+            top_initiatives=args.top_initiatives,
+            min_cost=args.min_cost,
             preview=args.preview,
         )
         return

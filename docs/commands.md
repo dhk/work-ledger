@@ -96,6 +96,8 @@ work-ledger rollup --top 5 --since 2026-08-01 --report  # shareable HTML report,
 work-ledger rollup --report --format png --out spend.png   # same, as a PNG image
 work-ledger rollup --report --format csv --out spend.csv   # same, as plain-text CSV for a spreadsheet
 work-ledger rollup --other-threshold 0.8                # fold the long tail beyond 80% cumulative cost into one "All other" row
+work-ledger rollup --top-initiatives 5                   # keep only the 5 costliest initiatives, fold the rest
+work-ledger rollup --min-cost 10                         # fold any initiative costing less than $10 into "All other"
 work-ledger rollup --preview --report --format png       # see the table before the file gets written
 
 work-ledger history sync                          # incrementally update the local session history store
@@ -745,7 +747,8 @@ call (structured-output, enforced JSON schema — the same discipline
 ### Cumulative spend, "All other" collapsing, CSV, and `--preview` (issue #93)
 
 Requested after actually using `rollup --report` for a real cross-session
-report — four small additions, all opt-in except the first:
+report — cumulative %, plus three collapsing flags and two file/terminal
+output modes, all opt-in except the first:
 
 - **Cumulative %** shows up automatically wherever initiatives are
   listed — the terminal table's `Cumulative` column, each bar's small
@@ -765,6 +768,18 @@ report — four small additions, all opt-in except the first:
   the same collapsed cluster list. Distinct from `--top`, which scopes
   which *sessions* get clustered before this ever runs, not which
   *initiatives* get shown afterward.
+- **`--top-initiatives N`** and **`--min-cost DOLLARS`** are two more
+  ways to shape the same "All other" folding — a hard count cutoff
+  (`rollup.top_n_clusters`, keep only the N costliest) and an absolute-
+  dollar floor (`rollup.fold_below_cost`, fold anything costing less
+  than `$DOLLARS`) respectively, instead of `--other-threshold`'s
+  percentage-of-total. `--min-cost` is the one to reach for when you
+  want a *stable* cutoff that doesn't shift as total spend changes month
+  to month — an 80%-of-total cutoff folds a different set of initiatives
+  every time your total changes, `--min-cost 10` always folds the same
+  "anything under $10" set. At most one of the three collapsing flags
+  actually runs per invocation — precedence is `--top-initiatives`, then
+  `--min-cost`, then `--other-threshold`.
 - **`--format csv`** (alongside `html`/`png` for `--report`) writes the
   same clusters as plain text — `initiative,sessions,chapters,cost_usd,
   pct_of_total,cumulative_cost_usd,cumulative_pct,is_other,

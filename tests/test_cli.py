@@ -17,8 +17,10 @@ from work_ledger.cli import (
     _threshold_note,
     _turns_cost,
     _turns_unknown,
+    _validate_min_cost,
     _validate_other_threshold,
     _validate_top,
+    _validate_top_initiatives,
     _version_string,
     build_session_rows,
 )
@@ -136,6 +138,40 @@ def test_validate_top_rejects_non_positive_values(value, capsys):
         _validate_top(value)
     assert exc_info.value.code == 2
     assert "--top" in capsys.readouterr().err
+
+
+def test_validate_top_initiatives_accepts_none():
+    _validate_top_initiatives(None)  # must not raise/exit - optional
+
+
+@pytest.mark.parametrize("value", [1, 5, 100])
+def test_validate_top_initiatives_accepts_positive_values(value):
+    _validate_top_initiatives(value)  # must not raise/exit
+
+
+@pytest.mark.parametrize("value", [0, -1, -10])
+def test_validate_top_initiatives_rejects_non_positive_values(value, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        _validate_top_initiatives(value)
+    assert exc_info.value.code == 2
+    assert "--top-initiatives" in capsys.readouterr().err
+
+
+def test_validate_min_cost_accepts_none():
+    _validate_min_cost(None)  # must not raise/exit - optional
+
+
+@pytest.mark.parametrize("value", [0.0, 0.01, 10.0, 1000.0])
+def test_validate_min_cost_accepts_non_negative_values(value):
+    _validate_min_cost(value)  # must not raise/exit
+
+
+@pytest.mark.parametrize("value", [-0.01, -1, -100])
+def test_validate_min_cost_rejects_negative_values(value, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        _validate_min_cost(value)
+    assert exc_info.value.code == 2
+    assert "--min-cost" in capsys.readouterr().err
 
 
 def test_in_date_range_no_bounds_always_true(tmp_path):
@@ -1274,6 +1310,81 @@ def test_run_rollup_no_other_threshold_shows_every_initiative(isolated_transcrip
     assert "Small initiative one" in out
     assert "Small initiative two" in out
     assert "All other" not in out
+
+
+def test_run_rollup_top_initiatives_keeps_n_costliest(isolated_transcripts_root, capsys):
+    proj = "proj"
+    _make_costed_session(isolated_transcripts_root, proj, "s-a", "p1", "Big initiative", 7000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-b", "p2", "Medium initiative", 2000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-c", "p3", "Small initiative one", 600)
+    _make_costed_session(isolated_transcripts_root, proj, "s-d", "p4", "Small initiative two", 400)
+
+    cli.run_rollup(top_initiatives=1)
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Big initiative" in out
+    assert "Medium initiative" not in out
+    assert "Small initiative one" not in out
+    assert "All other" in out
+    assert "folded into 'All other'" in out
+
+
+def test_run_rollup_min_cost_folds_below_the_floor(isolated_transcripts_root, capsys):
+    import json
+
+    proj = "proj"
+    _make_costed_session(isolated_transcripts_root, proj, "s-a", "p1", "Big initiative", 7000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-b", "p2", "Medium initiative", 2000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-c", "p3", "Small initiative one", 600)
+    _make_costed_session(isolated_transcripts_root, proj, "s-d", "p4", "Small initiative two", 400)
+
+    cli.run_rollup(as_json=True)
+    full = {d["title"]: d["cost_usd"] for d in json.loads(capsys.readouterr().out)}
+
+    # A floor between the Small pair and the Medium initiative's cost.
+    floor = (full["Small initiative one"] + full["Medium initiative"]) / 2
+    cli.run_rollup(as_json=True, min_cost=floor)
+    collapsed = json.loads(capsys.readouterr().out)
+
+    other = next(d for d in collapsed if d["is_other"])
+    assert other["title"].startswith("All other")
+    assert round(other["cost_usd"], 6) == round(
+        full["Small initiative one"] + full["Small initiative two"], 6
+    )
+    assert not any(d["title"] in ("Big initiative", "Medium initiative") for d in collapsed if d["is_other"])
+
+
+def test_run_rollup_top_initiatives_takes_precedence_over_other_threshold(isolated_transcripts_root, capsys):
+    """Issue #93 follow-up: when more than one collapsing flag is given,
+    --top-initiatives wins - matches the documented precedence."""
+    proj = "proj"
+    _make_costed_session(isolated_transcripts_root, proj, "s-a", "p1", "Big initiative", 7000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-b", "p2", "Medium initiative", 2000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-c", "p3", "Small initiative one", 600)
+    _make_costed_session(isolated_transcripts_root, proj, "s-d", "p4", "Small initiative two", 400)
+
+    # other_threshold=0.8 alone would keep Big+Medium (2 individual rows);
+    # top_initiatives=1 must win and keep only Big.
+    cli.run_rollup(other_threshold=0.8, top_initiatives=1)
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Big initiative" in out
+    assert "Medium initiative" not in out
+    assert "--top-initiatives 1" in out  # the folded-note names the flag that actually ran
+
+
+def test_run_rollup_min_cost_takes_precedence_over_other_threshold(isolated_transcripts_root, capsys):
+    proj = "proj"
+    _make_costed_session(isolated_transcripts_root, proj, "s-a", "p1", "Big initiative", 7000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-b", "p2", "Medium initiative", 2000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-c", "p3", "Small initiative one", 600)
+    _make_costed_session(isolated_transcripts_root, proj, "s-d", "p4", "Small initiative two", 400)
+
+    cli.run_rollup(other_threshold=0.8, min_cost=1000000.0)  # an absurdly high floor - folds everything
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "--min-cost" in out
+    assert "--other-threshold" not in out
 
 
 def test_run_rollup_table_shows_cumulative_column(isolated_transcripts_root, capsys):
