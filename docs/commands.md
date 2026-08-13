@@ -99,6 +99,10 @@ work-ledger rollup --other-threshold 0.8                # fold the long tail bey
 work-ledger rollup --top-initiatives 5                   # keep only the 5 costliest initiatives, fold the rest
 work-ledger rollup --min-cost 10                         # fold any initiative costing less than $10 into "All other"
 work-ledger rollup --preview --report --format png       # see the table before the file gets written
+work-ledger rollup --semantic --other-threshold 0.8 --since 2026-08-01 --report --confirm --preview --save-preset boss-report
+                                                          # run it once, save the shape (never the date range)
+work-ledger rollup --since 2026-09-01 --preset boss-report   # replay it next month, fresh dates
+work-ledger rollup --miso --since 2026-08-01              # "just give me the standard useful report" - no preset needed
 
 work-ledger history sync                          # incrementally update the local session history store
 work-ledger history status                        # show what's stored (row count, last sync time)
@@ -789,6 +793,44 @@ output modes, all opt-in except the first:
   one the default (no `--report`/`--json`) path already shows — but also
   works *alongside* `--report`, so you can check what a shareable file
   will actually contain before writing/opening it.
+
+### `--semantic`, named presets, and `--miso` (issue #97)
+
+With everything above, a real report command got long enough to be hard
+to remember:
+
+```sh
+WORK_LEDGER_ROLLUP_MATCHING=semantic work-ledger rollup --since 2026-08-01 --other-threshold 0.8 --report --confirm --preview
+```
+
+Three additions to make that easier without changing what any of it
+actually costs or does:
+
+- **`--semantic`** is a normal CLI flag, shorthand for
+  `WORK_LEDGER_ROLLUP_MATCHING=semantic` scoped to just this invocation
+  — sets the env var only for the duration of the call and restores
+  whatever was there before (including "nothing," and including if you'd
+  already set it yourself — this flag never clobbers that). Same cost,
+  same behavior as the env var; one less thing to type.
+- **Named presets** — `rollup ... --save-preset boss-report` captures
+  this invocation's resolved flags to
+  `~/.config/work-ledger/rollup_presets.json`; `rollup --preset
+  boss-report` replays them next time, with any flag you also pass
+  explicitly on that later invocation still overriding the preset's
+  stored value. **`--since`/`--until`/`--out` are never saved** — always
+  pass those fresh, so a preset from August doesn't silently replay
+  August's dates in October. `--list-presets` shows what's saved;
+  `--delete-preset NAME` removes one.
+- **`--miso`** is a built-in, non-customizable bundle for "just give me
+  the standard useful report" — mirrors the existing `miso` command's
+  own "one flag, sensible defaults" precedent. Equivalent to `--semantic
+  --other-threshold 0.8 --report --confirm --preview`, nothing to name or
+  save. Mutually exclusive with `--preset` — pick one.
+
+Precedence when more than one source could supply a value: an explicit
+CLI flag on this invocation wins, then `--preset`'s stored bundle *or*
+`--miso`'s built-in bundle (mutually exclusive with each other), then
+`rollup`'s own ordinary defaults.
 
 ## Pattern library (opt-in, experimental)
 
