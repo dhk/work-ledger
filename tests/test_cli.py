@@ -1156,6 +1156,201 @@ def test_run_rollup_report_writes_html_file(isolated_transcripts_root, capsys, t
     assert "Fix the bug" in written[0].read_text()
 
 
+def test_run_rollup_report_writes_csv_file(isolated_transcripts_root, capsys, tmp_path, monkeypatch):
+    """Issue #93: --format csv is a third --report output alongside
+    html/png, with the same clusters plus cumulative columns."""
+    from work_ledger.chapters import _save_cache
+
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    path = proj / "s.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path, ["p1"], [Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])])
+
+    monkeypatch.chdir(tmp_path)
+    cli.run_rollup(report=True, report_format="csv")
+
+    out = capsys.readouterr().out
+    assert "Wrote CSV report to" in out
+    written = list(tmp_path.glob("work-ledger-rollup-*.csv"))
+    assert len(written) == 1
+
+    import csv as csv_module
+
+    rows = list(csv_module.DictReader(written[0].read_text().splitlines()))
+    assert len(rows) == 1
+    assert rows[0]["initiative"] == "Fix the bug"
+    assert rows[0]["is_other"] == "no"
+    assert float(rows[0]["cumulative_pct"]) == 100.0
+
+
+def _make_costed_session(root, project, name, prompt_id, title, output_tokens):
+    from work_ledger.chapters import _save_cache
+
+    proj_dir = root / project
+    proj_dir.mkdir(exist_ok=True)
+    path = proj_dir / f"{name}.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry(prompt_id, "do work"),
+            *assistant_lines(
+                f"m-{prompt_id}", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": output_tokens},
+                [{"type": "text", "text": "done"}],
+            ),
+        ],
+    )
+    _save_cache(path, [prompt_id], [Chapter(title=title, sections=[Section(title="s", prompt_ids=[prompt_id])])])
+    return path
+
+
+def test_run_rollup_other_threshold_collapses_small_clusters_json(isolated_transcripts_root, capsys):
+    """Issue #93: --other-threshold folds initiatives beyond the given
+    cumulative-cost fraction into one 'All other' cluster, applied before
+    the --json output is built."""
+    import json
+
+    proj = "proj"
+    # Cost scales with output tokens (input tokens held constant across
+    # all four) - widely separated so the 80% crossing point isn't close
+    # to any rounding edge: Big ~70%, Big+Medium ~90%, cumulative.
+    _make_costed_session(isolated_transcripts_root, proj, "s-a", "p1", "Big initiative", 7000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-b", "p2", "Medium initiative", 2000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-c", "p3", "Small initiative one", 600)
+    _make_costed_session(isolated_transcripts_root, proj, "s-d", "p4", "Small initiative two", 400)
+
+    cli.run_rollup(as_json=True)
+    full = json.loads(capsys.readouterr().out)
+    assert len(full) == 4
+    full_by_title = {d["title"]: d["cost_usd"] for d in full}
+    small_total = full_by_title["Small initiative one"] + full_by_title["Small initiative two"]
+
+    cli.run_rollup(as_json=True, other_threshold=0.8)
+    collapsed = json.loads(capsys.readouterr().out)
+
+    assert len(collapsed) == 3  # Big, Medium, All other
+    other = next(d for d in collapsed if d["is_other"])
+    assert other["title"].startswith("All other")
+    assert round(other["cost_usd"], 6) == round(small_total, 6)
+    assert sum(1 for d in collapsed if d["is_other"]) == 1
+    assert not any(d["is_other"] for d in collapsed if d is not other)
+
+
+def test_run_rollup_other_threshold_note_and_row_in_table(isolated_transcripts_root, capsys):
+    proj = "proj"
+    _make_costed_session(isolated_transcripts_root, proj, "s-a", "p1", "Big initiative", 7000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-b", "p2", "Medium initiative", 2000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-c", "p3", "Small initiative one", 600)
+    _make_costed_session(isolated_transcripts_root, proj, "s-d", "p4", "Small initiative two", 400)
+
+    cli.run_rollup(other_threshold=0.8)
+
+    out = " ".join(capsys.readouterr().out.split())  # collapse rich's line-wrapping
+    assert "Big initiative" in out
+    assert "Medium initiative" in out
+    assert "All other" in out
+    assert "Small initiative one" not in out  # folded away, not shown as its own row
+    assert "folded into 'All other'" in out
+
+
+def test_run_rollup_no_other_threshold_shows_every_initiative(isolated_transcripts_root, capsys):
+    """Opt-in only (issue #93): without --other-threshold, nothing is
+    folded, matching every prior release's behavior exactly."""
+    proj = "proj"
+    _make_costed_session(isolated_transcripts_root, proj, "s-a", "p1", "Big initiative", 7000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-b", "p2", "Medium initiative", 2000)
+    _make_costed_session(isolated_transcripts_root, proj, "s-c", "p3", "Small initiative one", 600)
+    _make_costed_session(isolated_transcripts_root, proj, "s-d", "p4", "Small initiative two", 400)
+
+    cli.run_rollup()
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Small initiative one" in out
+    assert "Small initiative two" in out
+    assert "All other" not in out
+
+
+def test_run_rollup_table_shows_cumulative_column(isolated_transcripts_root, capsys):
+    """Ask #1: cumulative $ and % are shown in the default (no-flags)
+    table, not gated behind any new flag."""
+    from work_ledger.chapters import _save_cache
+
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    path = proj / "s.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path, ["p1"], [Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])])
+
+    cli.run_rollup()
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Cumulative" in out
+    assert "100%" in out  # a single cluster is trivially 100% cumulative
+
+
+def test_run_rollup_preview_shows_table_alongside_report(isolated_transcripts_root, capsys, tmp_path, monkeypatch):
+    """--preview works alongside --report - see what the file will
+    contain without opening it (issue #93)."""
+    from work_ledger.chapters import _save_cache
+
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    path = proj / "s.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path, ["p1"], [Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])])
+
+    monkeypatch.chdir(tmp_path)
+    cli.run_rollup(report=True, report_format="html", preview=True)
+
+    out = capsys.readouterr().out
+    assert "Wrote HTML report to" in out  # the file was still written
+    assert "Fix the bug" in out  # ...and the table was also printed
+    assert "work-ledger rollup" in out
+
+
+def test_run_rollup_preview_without_report_matches_default_table(isolated_transcripts_root, capsys):
+    """Without --report, --preview shows the same table the no-flags
+    default already does - it's an explicit alias for that case, not a
+    different rendering."""
+    from work_ledger.chapters import _save_cache
+
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    path = proj / "s.jsonl"
+    write_jsonl(
+        path,
+        [
+            user_entry("p1", "fix it"),
+            *assistant_lines("m1", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+        ],
+    )
+    _save_cache(path, ["p1"], [Chapter(title="Fix the bug", sections=[Section(title="s", prompt_ids=["p1"])])])
+
+    cli.run_rollup(preview=True)
+
+    out = capsys.readouterr().out
+    assert "Fix the bug" in out
+    assert "Cumulative" in out
+
+
 def test_run_rollup_no_transcripts_exits(isolated_transcripts_root, capsys):
     with pytest.raises(SystemExit) as exc_info:
         cli.run_rollup()

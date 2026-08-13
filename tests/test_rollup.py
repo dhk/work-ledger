@@ -1,5 +1,13 @@
 from work_ledger.chapters import UNSORTED_TITLE, Chapter, Section, _save_cache
-from work_ledger.rollup import RollupCluster, build_rollup, build_rollup_result, normalize_title
+from work_ledger.rollup import (
+    RollupCluster,
+    build_rollup,
+    build_rollup_result,
+    collapse_to_other,
+    is_other_cluster,
+    normalize_title,
+    with_cumulative,
+)
 from work_ledger.rollup_semantic import ROLLUP_MATCHING_ENV_VAR, SemanticMergeResult
 
 from .conftest import assistant_lines, user_entry, write_jsonl
@@ -425,3 +433,90 @@ def test_build_rollup_result_semantic_pass_ignores_already_multi_session_cluster
     # The deterministic pass already merged path_a/path_b into one 2-session cluster.
     multi_cluster = next(c for c in result.clusters if c.num_sessions == 2)
     assert sorted(multi_cluster.sessions) == sorted([path_a.stem, path_b.stem])
+
+
+# --- issue #93: collapse_to_other / is_other_cluster / with_cumulative -----
+
+
+def _cluster(title, cost, sessions=None, chapters=1, unknown=False):
+    return RollupCluster(
+        normalized_key=normalize_title(title),
+        display_title=title,
+        sessions=sessions if sessions is not None else [title.lower().replace(" ", "-")],
+        num_chapters=chapters,
+        cost_usd=cost,
+        unknown_model_cost=unknown,
+    )
+
+
+def test_collapse_to_other_keeps_everything_under_threshold():
+    clusters = [_cluster("A", 50.0), _cluster("B", 30.0), _cluster("C", 20.0)]
+    # 50/100 = 50% < 80%, 80/100 = 80% >= 80% -> stop after B, fold C.
+    collapsed = collapse_to_other(clusters, threshold=0.8)
+    assert [c.display_title for c in collapsed[:2]] == ["A", "B"]
+    assert len(collapsed) == 3
+    assert is_other_cluster(collapsed[2])
+    assert collapsed[2].cost_usd == 20.0
+
+
+def test_collapse_to_other_no_collapse_when_nothing_left_over():
+    clusters = [_cluster("A", 90.0), _cluster("B", 10.0)]
+    collapsed = collapse_to_other(clusters, threshold=0.8)
+    # Running hits 90% right at A, but there's nothing after it once B is
+    # also within the kept set - wait: A alone already >= 0.8, so B is the
+    # "rest" and gets folded.
+    assert len(collapsed) == 2
+    assert is_other_cluster(collapsed[1])
+
+
+def test_collapse_to_other_never_folds_when_threshold_is_never_crossed():
+    clusters = [_cluster("A", 1.0), _cluster("B", 1.0)]
+    collapsed = collapse_to_other(clusters, threshold=1.5)  # unreachable fraction
+    assert collapsed == clusters
+    assert not any(is_other_cluster(c) for c in collapsed)
+
+
+def test_collapse_to_other_empty_list_is_a_noop():
+    assert collapse_to_other([], threshold=0.8) == []
+
+
+def test_collapse_to_other_residual_bucket_sums_sessions_chapters_and_unknown_flag():
+    clusters = [
+        _cluster("A", 80.0, sessions=["s-a"]),
+        _cluster("B", 10.0, sessions=["s-b"], chapters=2, unknown=True),
+        _cluster("C", 10.0, sessions=["s-b", "s-c"], chapters=3),  # s-b shared with B - deduped
+    ]
+    collapsed = collapse_to_other(clusters, threshold=0.8)
+    other = collapsed[-1]
+    assert is_other_cluster(other)
+    assert other.cost_usd == 20.0
+    assert other.num_chapters == 5
+    assert other.unknown_model_cost is True
+    assert sorted(other.sessions) == ["s-b", "s-c"]  # deduped, not double-counted
+    assert other.num_sessions == 2
+
+
+def test_is_other_cluster_false_for_a_real_cluster():
+    assert not is_other_cluster(_cluster("Real initiative", 5.0))
+
+
+def test_with_cumulative_running_totals_in_order():
+    clusters = [_cluster("A", 50.0), _cluster("B", 30.0), _cluster("C", 20.0)]
+    paired = with_cumulative(clusters)
+    assert [c.display_title for c, _cum, _pct in paired] == ["A", "B", "C"]
+    assert [round(cum, 2) for _c, cum, _pct in paired] == [50.0, 80.0, 100.0]
+    assert [round(pct, 1) for _c, _cum, pct in paired] == [50.0, 80.0, 100.0]
+
+
+def test_with_cumulative_empty_list():
+    assert with_cumulative([]) == []
+
+
+def test_with_cumulative_matches_collapse_to_other_ordering():
+    """The two are meant to compose - collapsing first, then computing
+    cumulative over the collapsed (shorter) list, still sums to 100%."""
+    clusters = [_cluster("A", 50.0), _cluster("B", 30.0), _cluster("C", 15.0), _cluster("D", 5.0)]
+    collapsed = collapse_to_other(clusters, threshold=0.8)
+    paired = with_cumulative(collapsed)
+    assert round(paired[-1][1], 2) == 100.0
+    assert round(paired[-1][2], 1) == 100.0

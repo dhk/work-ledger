@@ -12,7 +12,9 @@ an optional dependency (`pip install "work-ledger[report]"` + a one-time
 generation itself has no extra dependency.
 """
 
+import csv
 import html
+import io
 import json
 from pathlib import Path
 
@@ -21,7 +23,7 @@ from work_ledger.activity import ActivityBucket
 from work_ledger.chapters import Chapter
 from work_ledger.git_activity import GitActivity, commit_url, pr_url_from_commit
 from work_ledger.references import clean_synopsis, pr_url, ticket_url
-from work_ledger.rollup import RollupCluster
+from work_ledger.rollup import RollupCluster, is_other_cluster, with_cumulative
 from work_ledger.timeline import DayBucket, summarize_timeline
 from work_ledger.transcript import TranscriptTailer
 from work_ledger.trend import CostBucket
@@ -499,11 +501,31 @@ def build_rollup_report_html(
     report is honest about "clustered across N of your M sessions in
     range," not silently presented as everything."""
     grand_total = sum(c.cost_usd for c in clusters)
-    colors = _series_colors(len(clusters))
+    # (cluster, cumulative_cost_usd, cumulative_pct) in the same order as
+    # `clusters` - issue #93's shared computation, so "cumulative" means
+    # the same thing here as in the terminal table/--preview/--format csv.
+    cumulative = with_cumulative(clusters)
+
+    # A collapse_to_other residual cluster (see rollup.py) always renders
+    # in the neutral overflow color, never a categorical slot - it's a sum
+    # of many different initiatives, not one of them. Same convention
+    # build_activity_report_html's is_other/bucket_colors uses.
+    is_other = [is_other_cluster(c) for c in clusters]
+    n_kept = sum(1 for o in is_other if not o)
+    colors = _series_colors(n_kept)
 
     css_vars_light = "\n".join(f"    --series-{i+1}: {light};" for i, (light, _dark) in enumerate(colors))
     css_vars_dark = "\n".join(f"    --series-{i+1}: {dark};" for i, (_light, dark) in enumerate(colors))
     style = _style_block(css_vars_light, css_vars_dark)
+
+    bucket_colors = []
+    kept_i = 0
+    for other in is_other:
+        if other:
+            bucket_colors.append("var(--overflow)")
+        else:
+            bucket_colors.append(f"var(--series-{kept_i + 1})")
+            kept_i += 1
 
     scope_bits = []
     if top is not None:
@@ -517,11 +539,17 @@ def build_rollup_report_html(
     scope_note = ", ".join(scope_bits) if scope_bits else "every local session found"
 
     data = [
-        {"label": html.escape(c.display_title), "cost": c.cost_usd, "sessions": c.num_sessions, "chapters": c.num_chapters}
-        for c in clusters
+        {
+            "label": html.escape(c.display_title),
+            "cost": c.cost_usd,
+            "sessions": c.num_sessions,
+            "chapters": c.num_chapters,
+            "cumPct": cum_pct,
+        }
+        for c, _cum_cost, cum_pct in cumulative
     ]
     data_json = json.dumps(data)
-    colors_json = json.dumps([f"var(--series-{i+1})" for i in range(len(clusters))])
+    colors_json = json.dumps(bucket_colors)
 
     return f"""<!doctype html>
 <html>
@@ -529,6 +557,11 @@ def build_rollup_report_html(
 <meta charset="utf-8">
 <title>work-ledger rollup — {html.escape(scope_note)}</title>
 {style}
+<style>
+  .viz-root {{ --overflow: {_OVERFLOW_LIGHT}; }}
+  @media (prefers-color-scheme: dark) {{ .viz-root {{ --overflow: {_OVERFLOW_DARK}; }} }}
+  .cum-note {{ color: var(--text-muted); font-size: 11px; margin-left: 6px; }}
+</style>
 </head>
 <body>
 <div class="viz-root">
@@ -549,7 +582,7 @@ def build_rollup_report_html(
       </div>
       <div class="stat-tile">
         <p class="stat-label">Recurring initiatives</p>
-        <div class="stat-value">{sum(1 for c in clusters if c.num_sessions > 1)}</div>
+        <div class="stat-value">{sum(1 for c, other in zip(clusters, is_other) if not other and c.num_sessions > 1)}</div>
         <p class="stat-note">touched more than one session</p>
       </div>
     </div>
@@ -589,7 +622,7 @@ data.forEach((c, i) => {{
   head.className = "chapter-head";
   head.innerHTML = `
     <div class="chapter-title"><span class="swatch" style="background:${{seriesColor[i]}}"></span>${{c.label}}</div>
-    <div class="chapter-figs"><b>$${{c.cost.toFixed(2)}}</b> &nbsp;(${{pct.toFixed(0)}}%)</div>
+    <div class="chapter-figs"><b>$${{c.cost.toFixed(2)}}</b> &nbsp;(${{pct.toFixed(0)}}%)<span class="cum-note">cum ${{c.cumPct.toFixed(0)}}%</span></div>
   `;
   wrap.appendChild(head);
 
@@ -601,7 +634,7 @@ data.forEach((c, i) => {{
   seg.className = "bar-seg";
   seg.style.width = "100%";
   seg.style.background = seriesColor[i];
-  seg.innerHTML = `<div class="tooltip"><b>${{c.label}}</b><br>$${{c.cost.toFixed(2)}} · ${{pct.toFixed(1)}}% of total<br>${{c.sessions}} session${{c.sessions === 1 ? "" : "s"}} · ${{c.chapters}} chapter${{c.chapters === 1 ? "" : "s"}}</div>`;
+  seg.innerHTML = `<div class="tooltip"><b>${{c.label}}</b><br>$${{c.cost.toFixed(2)}} · ${{pct.toFixed(1)}}% of total (cumulative ${{c.cumPct.toFixed(1)}}%)<br>${{c.sessions}} session${{c.sessions === 1 ? "" : "s"}} · ${{c.chapters}} chapter${{c.chapters === 1 ? "" : "s"}}</div>`;
   track.appendChild(seg);
   wrap.appendChild(track);
 
@@ -611,6 +644,43 @@ data.forEach((c, i) => {{
 </body>
 </html>
 """
+
+
+def build_rollup_csv(clusters: list[RollupCluster]) -> str:
+    """CSV sibling of build_rollup_report_html (issue #93) - the same
+    deliberately-grouped rollup clusters already shown in the table/chart
+    (never raw transcript rows - see PRODUCT_BRIEF.md's "not a raw log
+    dump" non-goal), as plain text for a spreadsheet instead of a
+    browser. `clusters` is expected in the same most-expensive-first,
+    optionally-already-collapsed (rollup.collapse_to_other) order every
+    other rollup output uses; cumulative columns come from the same
+    rollup.with_cumulative() every other output shares, so a CSV and an
+    HTML report built from the same clusters always agree on what
+    "cumulative" means."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "initiative", "sessions", "chapters", "cost_usd", "pct_of_total",
+            "cumulative_cost_usd", "cumulative_pct", "is_other", "unknown_model_cost",
+        ]
+    )
+    grand_total = sum(c.cost_usd for c in clusters) or 1.0
+    for c, cum_cost, cum_pct in with_cumulative(clusters):
+        writer.writerow(
+            [
+                c.display_title,
+                c.num_sessions,
+                c.num_chapters,
+                f"{c.cost_usd:.4f}",
+                f"{c.cost_usd / grand_total * 100:.2f}",
+                f"{cum_cost:.4f}",
+                f"{cum_pct:.2f}",
+                "yes" if is_other_cluster(c) else "no",
+                "yes" if c.unknown_model_cost else "no",
+            ]
+        )
+    return buf.getvalue()
 
 
 _WASTE_KIND_LABELS = {

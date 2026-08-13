@@ -94,6 +94,9 @@ work-ledger rollup --since 2026-07-01 --until 2026-07-11   # limit to a date ran
 work-ledger rollup --json                              # machine-readable output
 work-ledger rollup --top 5 --since 2026-08-01 --report  # shareable HTML report, clustered across just this month's 5 costliest sessions
 work-ledger rollup --report --format png --out spend.png   # same, as a PNG image
+work-ledger rollup --report --format csv --out spend.csv   # same, as plain-text CSV for a spreadsheet
+work-ledger rollup --other-threshold 0.8                # fold the long tail beyond 80% cumulative cost into one "All other" row
+work-ledger rollup --preview --report --format png       # see the table before the file gets written
 
 work-ledger history sync                          # incrementally update the local session history store
 work-ledger history status                        # show what's stored (row count, last sync time)
@@ -738,6 +741,39 @@ call (structured-output, enforced JSON schema — the same discipline
   minimal, visibility only, not an audit trail.
 - Uses `chapters.CHAPTER_MODEL` (`claude-haiku-4-5`, the same model
   `chapters` itself already calls) — no separate model configuration.
+
+### Cumulative spend, "All other" collapsing, CSV, and `--preview` (issue #93)
+
+Requested after actually using `rollup --report` for a real cross-session
+report — four small additions, all opt-in except the first:
+
+- **Cumulative %** shows up automatically wherever initiatives are
+  listed — the terminal table's `Cumulative` column, each bar's small
+  "cum N%" note on the `--report` chart, and a `cumulative_cost_usd`/
+  `cumulative_pct` column in `--format csv` and `--json`'s `is_other`-
+  tagged rows. One shared computation (`rollup.with_cumulative`), so
+  "cumulative" means the same running-total-so-far in every output.
+- **`--other-threshold FRACTION`** folds initiatives beyond that
+  cumulative-cost fraction into one "All other" cluster
+  (`rollup.collapse_to_other`, the same mechanism `activity --report`'s
+  `--other-threshold` already uses, ported to `RollupCluster`) —
+  shortens a long tail of small recurring initiatives in the chart/table.
+  Opt-in only (no effect unless given), unlike `activity --report`'s
+  always-on 0.8 default: a rollup's initiative count is far less bounded
+  than activity's fixed handful of types. Applies to every output this
+  run produces — the table, `--preview`, `--report`, and `--json` all see
+  the same collapsed cluster list. Distinct from `--top`, which scopes
+  which *sessions* get clustered before this ever runs, not which
+  *initiatives* get shown afterward.
+- **`--format csv`** (alongside `html`/`png` for `--report`) writes the
+  same clusters as plain text — `initiative,sessions,chapters,cost_usd,
+  pct_of_total,cumulative_cost_usd,cumulative_pct,is_other,
+  unknown_model_cost` — for a spreadsheet instead of a browser. No new
+  dependency (stdlib `csv`).
+- **`--preview`** prints the table straight to the terminal — the same
+  one the default (no `--report`/`--json`) path already shows — but also
+  works *alongside* `--report`, so you can check what a shareable file
+  will actually contain before writing/opening it.
 
 ## Pattern library (opt-in, experimental)
 
