@@ -1546,6 +1546,42 @@ def test_run_rollup_semantic_does_not_clobber_already_set_env_var(isolated_trans
     assert os.environ[rollup_semantic.ROLLUP_MATCHING_ENV_VAR] == rollup_semantic.SEMANTIC_MATCHING
 
 
+def test_run_rollup_semantic_flag_still_prints_the_fallback_note(isolated_transcripts_root, monkeypatch, capsys):
+    """Regression test: --semantic sets WORK_LEDGER_ROLLUP_MATCHING only
+    for the duration of build_rollup_result and restores it before the
+    function finishes - _print_semantic_matching_note runs *after* that
+    restore, so if it re-checked the env var live (its old behavior) it
+    would silently print nothing, including swallowing a semantic-pass
+    failure's own fallback_reason. Must still show the note."""
+    from work_ledger import rollup_semantic
+    from work_ledger.chapters import _save_cache
+
+    monkeypatch.delenv(rollup_semantic.ROLLUP_MATCHING_ENV_VAR, raising=False)
+
+    proj = isolated_transcripts_root / "proj"
+    proj.mkdir()
+    for i, title in enumerate(["First initiative", "Second initiative"]):
+        path = proj / f"s{i}.jsonl"
+        write_jsonl(
+            path,
+            [
+                user_entry(f"p{i}", "do work"),
+                *assistant_lines(f"m{i}", "claude-haiku-4-5", {"input_tokens": 1000, "output_tokens": 200}, [{"type": "text", "text": "done"}]),
+            ],
+        )
+        _save_cache(path, [f"p{i}"], [Chapter(title=title, sections=[Section(title="s", prompt_ids=[f"p{i}"])])])
+
+    # Force a real semantic-pass failure (not just "nothing to merge") so
+    # a fallback_reason genuinely exists - exactly the case that must
+    # still be visible after the env var's already been restored.
+    monkeypatch.setattr("anthropic.Anthropic", lambda: (_ for _ in ()).throw(RuntimeError("no client")))
+
+    cli.run_rollup(semantic=True)
+
+    out = capsys.readouterr().out
+    assert "Note:" in out or "found nothing new to merge" in out
+
+
 def test_run_rollup_table_shows_cumulative_column(isolated_transcripts_root, capsys):
     """Ask #1: cumulative $ and % are shown in the default (no-flags)
     table, not gated behind any new flag."""

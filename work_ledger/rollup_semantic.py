@@ -174,7 +174,22 @@ def propose_merges(titles: list[str]) -> SemanticMergeResult:
     if len(titles) < 2:
         return SemanticMergeResult(groups=[])
 
-    import anthropic  # imported lazily - only needed when semantic matching actually runs
+    try:
+        import anthropic  # imported lazily - only needed when semantic matching actually runs
+    except ImportError as e:
+        # issue #99: a broken/incomplete environment (missing or
+        # mismatched anthropic install) must degrade the same as every
+        # other failure mode this function already handles, not crash
+        # before ever reaching the try/except below - which can't even
+        # be entered if the import itself is what failed, since its
+        # except clauses reference `anthropic.AuthenticationError` etc.
+        return SemanticMergeResult(
+            groups=[],
+            fallback_reason=(
+                f"the `anthropic` package failed to import ({e}); semantic matching skipped, "
+                "falling back to deterministic-only clustering"
+            ),
+        )
 
     try:
         client = anthropic.Anthropic()

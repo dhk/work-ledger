@@ -300,6 +300,31 @@ def test_get_chapters_response_fallback_still_freezes_into_cache(tmp_path, monke
     assert cached[0].title == UNSORTED_TITLE
 
 
+def test_get_chapters_anthropic_import_failure_falls_back_without_caching(tmp_path, monkeypatch):
+    """Issue #99: `import anthropic` itself failing (a broken/incomplete
+    environment) must degrade exactly like any other call failure - same
+    "Unsorted, not cached, retried for free" treatment as #91 - rather
+    than crashing before `_call_model` is ever reached."""
+    transcript_path = tmp_path / "s.jsonl"
+    tailer = _make_turns_transcript(transcript_path, ["p1"])
+
+    monkeypatch.setitem(sys.modules, "anthropic", None)  # forces `import anthropic` to raise ImportError
+
+    def fail_if_called(outline, prior_titles):
+        raise AssertionError("_call_model must not be reached if the anthropic import itself failed")
+
+    monkeypatch.setattr("work_ledger.chapters._call_model", fail_if_called)
+
+    result = get_chapters(tailer, transcript_path)
+    assert result.fallback_reason is not None
+    assert "failed to import" in result.fallback_reason
+    assert result.chapters[0].title == UNSORTED_TITLE
+
+    chaptered_ids, cached = _load_cache(transcript_path)
+    assert chaptered_ids == []  # nothing persisted - retryable, same as #91's other call failures
+    assert cached == []
+
+
 def test_get_chapters_no_api_key_gives_specific_fallback_reason(tmp_path, monkeypatch):
     """The SDK raises a plain TypeError (not an AnthropicError subclass)
     with this exact message when no credential is configured at all -
@@ -545,6 +570,18 @@ def test_check_credentials_false_when_nothing_resolves(monkeypatch):
     # the same fact must never be phrased two different ways (see
     # NO_CREDENTIALS_MESSAGE's docstring in chapters.py).
     assert msg == NO_CREDENTIALS_MESSAGE
+
+
+def test_check_credentials_degrades_when_anthropic_fails_to_import(monkeypatch):
+    """Issue #99: this function's whole contract is "return (bool, str),
+    never raise" - a broken/incomplete environment (missing or mismatched
+    anthropic install) must degrade the same as any other failure mode,
+    not crash the status check that's specifically meant to surface a
+    problem safely before any real work happens."""
+    monkeypatch.setitem(sys.modules, "anthropic", None)  # forces `import anthropic` to raise ImportError
+    ok, msg = check_credentials()
+    assert ok is False
+    assert "failed to import" in msg
 
 
 def test_get_chapters_no_key_fallback_reason_matches_check_credentials_wording(tmp_path, monkeypatch):

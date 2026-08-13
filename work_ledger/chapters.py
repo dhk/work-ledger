@@ -546,9 +546,21 @@ def check_credentials() -> tuple[bool, str]:
     if backend_name == "ollama":
         return _check_ollama_credentials()
 
-    import anthropic  # imported lazily - only needed for `chapters`/`miso`, not the live dashboard
+    try:
+        import anthropic  # imported lazily - only needed for `chapters`/`miso`, not the live dashboard
 
-    client = anthropic.Anthropic()
+        client = anthropic.Anthropic()
+    except ImportError as e:
+        # issue #99: this function's whole contract is "return (bool,
+        # str), never raise" - a status check that itself crashes on a
+        # broken/incomplete environment defeats the entire point of
+        # `miso --check-status`/its own up-front notice (surface a
+        # problem before doing any real work, not discover it mid-run).
+        return False, (
+            f"the `anthropic` package failed to import ({e}); check your Python "
+            "environment (e.g. reinstall with `pip install --force-reinstall anthropic`)"
+        )
+
     if client.api_key or client.auth_token or client.credentials:
         return True, "Anthropic credentials found (env var or `ant auth login` profile)"
     return False, NO_CREDENTIALS_MESSAGE
@@ -576,44 +588,58 @@ def get_chapters(tailer: TranscriptTailer, transcript_path: Path) -> ChapterResu
     fallback_reason = None
     new_chapter_dicts: list[_ChapterOut] = []
 
-    import anthropic  # imported lazily - only needed for `chapters`, not the live dashboard
-
     try:
-        response = _call_model(outline, prior_titles)
-    except anthropic.AuthenticationError as e:
-        # A real 401 from the server - a key was sent and rejected (invalid,
-        # revoked, or malformed), distinct from no key being present at all
-        # (see the TypeError branch below) - worth flagging differently
-        # since the fix is "check the key," not "set a key." Only ever
-        # raised by AnthropicBackend, but harmless to catch regardless of
-        # which backend is configured.
-        fallback_reason = (
-            f"ANTHROPIC_API_KEY was rejected by the server ({e}); new turns grouped as "
-            "Unsorted. Check the key is still valid at console.anthropic.com."
-        )
+        import anthropic  # imported lazily - only needed for `chapters`, not the live dashboard
+    except ImportError as e:
+        # issue #99: a broken/incomplete environment (missing or
+        # mismatched anthropic install, a transitively-broken dependency
+        # of it) is exactly as unable to chapter anything as a network
+        # failure would be, and deserves the identical "Unsorted, not
+        # cached, retried for free next run" treatment (#91) rather than
+        # crashing before even reaching the try/except below that's
+        # supposed to catch every other failure mode. Nested in an
+        # `else:` below rather than one flat try/except, since the except
+        # clauses there reference `anthropic.AuthenticationError` etc. -
+        # they can't even be evaluated if the import itself is what failed.
+        fallback_reason = f"the `anthropic` package failed to import ({e}); new turns grouped as Unsorted"
         response = None
-    except TypeError as e:
-        # The SDK raises a plain TypeError, not an AnthropicError subclass,
-        # when it can't find any credential at all (verified against the
-        # installed anthropic SDK, not guessed) - client-side, before any
-        # network call, so this costs nothing to check.
-        if "Could not resolve authentication method" in str(e):
-            fallback_reason = NO_CREDENTIALS_MESSAGE
-        else:
+    else:
+        try:
+            response = _call_model(outline, prior_titles)
+        except anthropic.AuthenticationError as e:
+            # A real 401 from the server - a key was sent and rejected (invalid,
+            # revoked, or malformed), distinct from no key being present at all
+            # (see the TypeError branch below) - worth flagging differently
+            # since the fix is "check the key," not "set a key." Only ever
+            # raised by AnthropicBackend, but harmless to catch regardless of
+            # which backend is configured.
+            fallback_reason = (
+                f"ANTHROPIC_API_KEY was rejected by the server ({e}); new turns grouped as "
+                "Unsorted. Check the key is still valid at console.anthropic.com."
+            )
+            response = None
+        except TypeError as e:
+            # The SDK raises a plain TypeError, not an AnthropicError subclass,
+            # when it can't find any credential at all (verified against the
+            # installed anthropic SDK, not guessed) - client-side, before any
+            # network call, so this costs nothing to check.
+            if "Could not resolve authentication method" in str(e):
+                fallback_reason = NO_CREDENTIALS_MESSAGE
+            else:
+                fallback_reason = f"chaptering call failed ({e}); new turns grouped as Unsorted"
+            response = None
+        except BackendUnavailableError as e:
+            # A backend-specific, anticipated failure mode (e.g. OllamaBackend's
+            # missing package / unreachable server / schema mismatch) - the
+            # message is already user-facing, so it's used verbatim rather than
+            # wrapped in the generic "chaptering call failed (...)" phrasing
+            # below. Never falls back to a different backend - just Unsorted,
+            # same as every other failure mode here.
+            fallback_reason = str(e)
+            response = None
+        except Exception as e:  # noqa: BLE001 - any other failure here falls back, never crashes
             fallback_reason = f"chaptering call failed ({e}); new turns grouped as Unsorted"
-        response = None
-    except BackendUnavailableError as e:
-        # A backend-specific, anticipated failure mode (e.g. OllamaBackend's
-        # missing package / unreachable server / schema mismatch) - the
-        # message is already user-facing, so it's used verbatim rather than
-        # wrapped in the generic "chaptering call failed (...)" phrasing
-        # below. Never falls back to a different backend - just Unsorted,
-        # same as every other failure mode here.
-        fallback_reason = str(e)
-        response = None
-    except Exception as e:  # noqa: BLE001 - any other failure here falls back, never crashes
-        fallback_reason = f"chaptering call failed ({e}); new turns grouped as Unsorted"
-        response = None
+            response = None
 
     def _all_unsorted() -> list[_ChapterOut]:
         return [
