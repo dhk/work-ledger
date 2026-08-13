@@ -104,6 +104,17 @@ so they're tracked here without a stage label.
 
 #45-48 shipped together in one pass (#51).
 
+## Meta / repo hygiene — cross-cutting, not staged, not product work
+
+Doesn't advance the transcript-analytics product itself — filed here as
+the closest fit among the repos this touches, per the guardrail below,
+rather than left untracked.
+
+| Issue | What |
+|---|---|
+| [#80](https://github.com/dhk/work-ledger/issues/80) | Audit and rebalance CLAUDE.md across all 12 repos this account works in: extend the 7 with none, link out the heaviest inlined content instead of duplicating docs that already exist elsewhere |
+| [#81](https://github.com/dhk/work-ledger/issues/81) | Add the same CLAUDE.md/AGENTS.md scaffolding to `dhk/repo-template`, so new repos start thin instead of needing #80's retrofit — pending migration to that repo's own tracker |
+
 ## Using this as a guardrail
 
 Before filing a new issue or starting a design doc: check it against
