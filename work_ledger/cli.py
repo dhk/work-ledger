@@ -1286,17 +1286,32 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
         )
 
 
-def _print_semantic_matching_note(console: Console, result: RollupResult, confirm: bool) -> None:
+def _print_semantic_matching_note(
+    console: Console, result: RollupResult, confirm: bool, semantic_enabled: bool | None = None
+) -> None:
     """Print whatever the semantic pass (#68) did this run - a no-op
-    entirely when `WORK_LEDGER_ROLLUP_MATCHING=semantic` isn't configured,
-    which is how default output (env var unset) stays byte-for-byte
-    unchanged. Otherwise always distinguishes "found nothing new to
-    merge" from "the pass couldn't run at all" (see rollup_semantic.py's
-    module docstring - never a silent difference between the two).
-    `--confirm` additionally lists exactly which singleton titles merged
-    into which cluster - deliberately minimal, visibility only, not an
-    audit trail (see the design doc's Non-goals)."""
-    if not rollup_semantic.is_semantic_enabled():
+    entirely when semantic matching wasn't in effect, which is how
+    default output (env var unset) stays byte-for-byte unchanged.
+    Otherwise always distinguishes "found nothing new to merge" from
+    "the pass couldn't run at all" (see rollup_semantic.py's module
+    docstring - never a silent difference between the two). `--confirm`
+    additionally lists exactly which singleton titles merged into which
+    cluster - deliberately minimal, visibility only, not an audit trail
+    (see the design doc's Non-goals).
+
+    `semantic_enabled`, when given, is trusted over re-checking the env
+    var live (issue #97/#99's bug: run_rollup's `--semantic` sets
+    WORK_LEDGER_ROLLUP_MATCHING only for the duration of its own
+    build_rollup_result call and restores it before this function ever
+    runs, so re-deriving "was semantic on" from the env var here would
+    silently print nothing - including swallowing a semantic-pass
+    failure's own fallback_reason, exactly the note this function
+    exists to surface). None (the default) falls back to checking the
+    env var live, unchanged behavior for callers that never touch it
+    temporarily (`waste --cross-session`)."""
+    if semantic_enabled is None:
+        semantic_enabled = rollup_semantic.is_semantic_enabled()
+    if not semantic_enabled:
         return
     if result.semantic_fallback_reason:
         console.print(f"[yellow]Note: {result.semantic_fallback_reason}[/yellow]")
@@ -1393,6 +1408,9 @@ def run_rollup(
 
     env_var = rollup_semantic.ROLLUP_MATCHING_ENV_VAR
     already_set = env_var in os.environ
+    semantic_enabled_this_run = semantic or already_set  # captured before restoring below - see
+    # _print_semantic_matching_note's semantic_enabled param docstring for why this can't just
+    # re-check the env var later
     if semantic and not already_set:
         os.environ[env_var] = rollup_semantic.SEMANTIC_MATCHING
     try:
@@ -1522,7 +1540,7 @@ def run_rollup(
             f"[dim]{uncached} of {len(transcripts)} session(s) have no cached chapters yet and "
             "aren't reflected above - run `work-ledger chapters --all` to include them.[/dim]"
         )
-    _print_semantic_matching_note(console, result, confirm)
+    _print_semantic_matching_note(console, result, confirm, semantic_enabled=semantic_enabled_this_run)
 
 
 _INSTALL_MODE_LABELS = {

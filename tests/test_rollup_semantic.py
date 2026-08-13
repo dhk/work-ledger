@@ -9,6 +9,8 @@ AnthropicBackend.call() - monkeypatching `anthropic.Anthropic` itself with
 a fake client whose `.messages.parse(**kwargs)` returns a fake response -
 never a real network call."""
 
+import sys
+
 import pytest
 
 from work_ledger.rollup_semantic import (
@@ -270,3 +272,17 @@ def test_propose_merges_never_raises_on_any_failure(monkeypatch):
     except Exception as e:  # noqa: BLE001
         pytest.fail(f"propose_merges must never raise, got {e!r}")
     assert result.fallback_reason is not None
+
+
+def test_propose_merges_degrades_when_anthropic_fails_to_import(monkeypatch):
+    """Issue #99: a broken/incomplete environment (missing or mismatched
+    anthropic install) must degrade the same as any other failure mode
+    this function already handles, not crash before ever reaching the
+    try/except below - which can't even be entered if the import itself
+    is what failed, since its except clauses reference
+    anthropic.AuthenticationError etc."""
+    monkeypatch.setitem(sys.modules, "anthropic", None)  # forces `import anthropic` to raise ImportError
+
+    result = propose_merges(["A", "B"])
+    assert result.groups == []
+    assert "failed to import" in result.fallback_reason
