@@ -1,11 +1,15 @@
+import pytest
+
 from work_ledger.chapters import UNSORTED_TITLE, Chapter, Section, _save_cache
 from work_ledger.rollup import (
     RollupCluster,
     build_rollup,
     build_rollup_result,
     collapse_to_other,
+    fold_below_cost,
     is_other_cluster,
     normalize_title,
+    top_n_clusters,
     with_cumulative,
 )
 from work_ledger.rollup_semantic import ROLLUP_MATCHING_ENV_VAR, SemanticMergeResult
@@ -520,3 +524,82 @@ def test_with_cumulative_matches_collapse_to_other_ordering():
     paired = with_cumulative(collapsed)
     assert round(paired[-1][1], 2) == 100.0
     assert round(paired[-1][2], 1) == 100.0
+
+
+def test_top_n_clusters_keeps_n_costliest_and_folds_rest():
+    clusters = [_cluster("A", 50.0), _cluster("B", 30.0), _cluster("C", 15.0), _cluster("D", 5.0)]
+    top2 = top_n_clusters(clusters, 2)
+    assert [c.display_title for c in top2[:2]] == ["A", "B"]
+    assert len(top2) == 3
+    assert is_other_cluster(top2[2])
+    assert top2[2].cost_usd == 20.0
+    assert "beyond top 2" in top2[2].display_title
+
+
+def test_top_n_clusters_n_covers_everything_no_fold():
+    clusters = [_cluster("A", 5.0), _cluster("B", 3.0)]
+    result = top_n_clusters(clusters, 5)
+    assert result == clusters
+    assert not any(is_other_cluster(c) for c in result)
+
+
+def test_top_n_clusters_rejects_non_positive_n():
+    with pytest.raises(ValueError):
+        top_n_clusters([_cluster("A", 1.0)], 0)
+    with pytest.raises(ValueError):
+        top_n_clusters([_cluster("A", 1.0)], -1)
+
+
+def test_top_n_clusters_empty_list():
+    assert top_n_clusters([], 3) == []
+
+
+def test_fold_below_cost_keeps_clusters_at_or_above_floor():
+    clusters = [_cluster("Big", 50.0), _cluster("Mid", 15.0), _cluster("Small", 8.0), _cluster("Tiny", 2.0)]
+    result = fold_below_cost(clusters, 10.0)
+    assert [c.display_title for c in result[:2]] == ["Big", "Mid"]
+    assert len(result) == 3
+    other = result[2]
+    assert is_other_cluster(other)
+    assert other.cost_usd == 10.0  # Small (8) + Tiny (2)
+    assert "each under $10.00" in other.display_title
+
+
+def test_fold_below_cost_nothing_below_floor_is_a_noop():
+    clusters = [_cluster("A", 50.0), _cluster("B", 30.0)]
+    result = fold_below_cost(clusters, 1.0)
+    assert result == clusters
+    assert not any(is_other_cluster(c) for c in result)
+
+
+def test_fold_below_cost_everything_below_floor_folds_all():
+    clusters = [_cluster("A", 5.0), _cluster("B", 3.0)]
+    result = fold_below_cost(clusters, 100.0)
+    assert len(result) == 1
+    assert is_other_cluster(result[0])
+    assert result[0].cost_usd == 8.0
+
+
+def test_fold_below_cost_empty_list():
+    assert fold_below_cost([], 10.0) == []
+
+
+def test_fold_below_cost_residual_sums_sessions_chapters_and_unknown_flag():
+    clusters = [
+        _cluster("Big", 50.0, sessions=["s-a"]),
+        _cluster("Small", 3.0, sessions=["s-b"], chapters=2, unknown=True),
+        _cluster("Tiny", 1.0, sessions=["s-b", "s-c"], chapters=3),
+    ]
+    result = fold_below_cost(clusters, 10.0)
+    other = result[-1]
+    assert other.num_chapters == 5
+    assert other.unknown_model_cost is True
+    assert sorted(other.sessions) == ["s-b", "s-c"]
+
+
+def test_top_n_clusters_and_fold_below_cost_compose_with_cumulative():
+    clusters = [_cluster("A", 50.0), _cluster("B", 30.0), _cluster("C", 15.0), _cluster("D", 5.0)]
+    for collapsed in (top_n_clusters(clusters, 2), fold_below_cost(clusters, 10.0)):
+        paired = with_cumulative(collapsed)
+        assert round(paired[-1][1], 2) == 100.0
+        assert round(paired[-1][2], 1) == 100.0

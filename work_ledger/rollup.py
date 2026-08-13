@@ -299,6 +299,29 @@ def build_rollup(transcripts: list[Path]) -> list[RollupCluster]:
 _OTHER_KEY = "__other__"
 
 
+def _make_other_cluster(rest: list[RollupCluster], detail: str) -> RollupCluster:
+    """Build the residual "All other" cluster from whatever a collapsing
+    mechanism folded away - shared by `collapse_to_other`/`top_n_clusters`/
+    `fold_below_cost` so all three aggregate sessions (deduped, not just
+    concatenated - two folded clusters can share a session)/chapters/
+    unknown-cost identically; only the display label's `detail` clause
+    (e.g. "after 80%", "beyond top 5", "each under $10.00") differs
+    between them."""
+    other_sessions: list[str] = []
+    for r in rest:
+        for s in r.sessions:
+            if s not in other_sessions:
+                other_sessions.append(s)
+    return RollupCluster(
+        normalized_key=_OTHER_KEY,
+        display_title=f"All other ({len(rest)} initiative{'s' if len(rest) != 1 else ''}, {detail})",
+        sessions=other_sessions,
+        num_chapters=sum(r.num_chapters for r in rest),
+        cost_usd=sum(r.cost_usd for r in rest),
+        unknown_model_cost=any(r.unknown_model_cost for r in rest),
+    )
+
+
 def collapse_to_other(clusters: list[RollupCluster], threshold: float = 0.8) -> list[RollupCluster]:
     """Issue #93: the same shape as `activity.collapse_to_other`, over
     `RollupCluster`s instead of `ActivityBucket`s - keep clusters
@@ -312,7 +335,11 @@ def collapse_to_other(clusters: list[RollupCluster], threshold: float = 0.8) -> 
     than activity's fixed handful of types) and, since a rollup cluster
     already aggregates sessions/chapters, the residual cluster sums those
     too rather than just cost - so "N sessions" in a report/table stays
-    honest even when most of them are folded into "All other"."""
+    honest even when most of them are folded into "All other".
+
+    See also `top_n_clusters` (count cutoff instead of percentage) and
+    `fold_below_cost` (absolute-dollar cutoff instead of percentage-of-
+    total) - `run_rollup` (cli.py) picks at most one of the three per run."""
     total = sum(c.cost_usd for c in clusters)
     if total <= 0 or not clusters:
         return list(clusters)
@@ -326,22 +353,44 @@ def collapse_to_other(clusters: list[RollupCluster], threshold: float = 0.8) -> 
             rest = clusters[i + 1 :]
             if rest:
                 pct = int(round(threshold * 100))
-                other_sessions: list[str] = []
-                for r in rest:
-                    for s in r.sessions:
-                        if s not in other_sessions:
-                            other_sessions.append(s)
-                kept.append(
-                    RollupCluster(
-                        normalized_key=_OTHER_KEY,
-                        display_title=f"All other ({len(rest)} initiative{'s' if len(rest) != 1 else ''}, after {pct}%)",
-                        sessions=other_sessions,
-                        num_chapters=sum(r.num_chapters for r in rest),
-                        cost_usd=sum(r.cost_usd for r in rest),
-                        unknown_model_cost=any(r.unknown_model_cost for r in rest),
-                    )
-                )
+                kept.append(_make_other_cluster(rest, f"after {pct}%"))
             return kept
+    return kept
+
+
+def top_n_clusters(clusters: list[RollupCluster], n: int) -> list[RollupCluster]:
+    """Issue #93 follow-up: `activity.top_n`'s `RollupCluster` analog -
+    keep the `n` costliest clusters individually, folding everything else
+    into one residual "All other" cluster (same aggregation as
+    `collapse_to_other`, see `_make_other_cluster`). A hard count cutoff,
+    unlike `collapse_to_other`'s percentage-of-total one. `clusters` must
+    already be sorted most-expensive-first."""
+    if n <= 0:
+        raise ValueError(f"n must be positive, got {n}")
+    kept = list(clusters[:n])
+    rest = clusters[n:]
+    if rest:
+        kept.append(_make_other_cluster(rest, f"beyond top {n}"))
+    return kept
+
+
+def fold_below_cost(clusters: list[RollupCluster], min_cost: float) -> list[RollupCluster]:
+    """Issue #93 follow-up: an absolute-dollar sibling to
+    `collapse_to_other`'s percentage-of-total cutoff - keep a cluster
+    individually while its own cost is >= `min_cost`, fold every cluster
+    below that into one residual "All other" cluster (same aggregation,
+    see `_make_other_cluster`). Unlike `collapse_to_other`, this isn't
+    about a *cumulative running total* - each cluster is judged on its
+    own cost against a fixed dollar floor, so the same `min_cost` folds
+    the same set of clusters every time regardless of how total spend
+    shifts month to month (an 80%-of-total cutoff, by contrast, folds a
+    different set every time total spend changes). `clusters` must
+    already be sorted most-expensive-first; the result stays sorted
+    (filtering preserves relative order)."""
+    kept = [c for c in clusters if c.cost_usd >= min_cost]
+    rest = [c for c in clusters if c.cost_usd < min_cost]
+    if rest:
+        kept.append(_make_other_cluster(rest, f"each under ${min_cost:.2f}"))
     return kept
 
 
