@@ -129,6 +129,9 @@ class RollupCluster:
     num_chapters: int = 0
     cost_usd: float = 0.0
     unknown_model_cost: bool = False
+    # Model ids in this cluster's turns that had no rate (#104), so the
+    # rollup's total can name them the same way every other surface does.
+    unpriced_models: set[str] = field(default_factory=set)
 
     @property
     def num_sessions(self) -> int:
@@ -197,6 +200,8 @@ def _build_deterministic_clusters(transcripts: list[Path]) -> dict[str, RollupCl
             cluster.cost_usd += sum(t.cost_usd for t in turns)
             if any(t.unknown_model_cost for t in turns):
                 cluster.unknown_model_cost = True
+                for t in turns:
+                    cluster.unpriced_models |= t.unpriced_models
             if path.stem not in cluster.sessions:
                 cluster.sessions.append(path.stem)
 
@@ -249,6 +254,7 @@ def _apply_semantic_pass(clusters: dict[str, RollupCluster]) -> RollupResult:
             merged.num_chapters += source.num_chapters
             merged.cost_usd += source.cost_usd
             merged.unknown_model_cost = merged.unknown_model_cost or source.unknown_model_cost
+            merged.unpriced_models |= source.unpriced_models
             for session in source.sessions:
                 if session not in merged.sessions:
                     merged.sessions.append(session)
@@ -319,6 +325,7 @@ def _make_other_cluster(rest: list[RollupCluster], detail: str) -> RollupCluster
         num_chapters=sum(r.num_chapters for r in rest),
         cost_usd=sum(r.cost_usd for r in rest),
         unknown_model_cost=any(r.unknown_model_cost for r in rest),
+        unpriced_models=set().union(*(r.unpriced_models for r in rest)) if rest else set(),
     )
 
 

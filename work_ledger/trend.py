@@ -55,6 +55,11 @@ class CostBucket:
     cost_usd: float = 0.0
     num_turns: int = 0
     unknown_model_cost: bool = False
+    # Which model ids in this period had no rate (#104). A trend is where
+    # a missing rate shows up most starkly - a run of "?" periods next to
+    # priced ones - so this is the surface that most needs to say which
+    # model to add rather than just that something is missing.
+    unpriced_models: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -66,6 +71,13 @@ class TrendResult:
     @property
     def total_cost_usd(self) -> float:
         return sum(b.cost_usd for b in self.buckets)
+
+    @property
+    def unpriced_models(self) -> list[str]:
+        models: set[str] = set()
+        for b in self.buckets:
+            models |= b.unpriced_models
+        return sorted(models)
 
 
 def build_trend(transcripts: list[Path], bucket: str = "day") -> TrendResult:
@@ -97,6 +109,7 @@ def build_trend(transcripts: list[Path], bucket: str = "day") -> TrendResult:
             b.num_turns += 1
             if turn.unknown_model_cost:
                 b.unknown_model_cost = True
+                b.unpriced_models |= turn.unpriced_models
 
     ordered = sorted(buckets.values(), key=lambda b: b.period)
     return TrendResult(buckets=ordered, bucket_size=bucket, total_sessions=total_sessions)

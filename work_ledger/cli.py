@@ -12,6 +12,7 @@ import argparse
 import os
 import sys
 import time
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -126,6 +127,37 @@ def _turn_cost_str(turn_or_turns_cost: float, unknown: bool) -> str:
     return "?" if unknown and turn_or_turns_cost == 0 else f"${turn_or_turns_cost:.4f}"
 
 
+def _unpriced_note(unknown: bool) -> str:
+    """The " (some models unpriced)" suffix on a total's cost cell. Stays
+    short deliberately - the cost column is narrow, so the model names go
+    in the table's caption (see _unpriced_caption) where they fit."""
+    return " (some models unpriced)" if unknown else ""
+
+
+def _unpriced_caption(models: Iterable[str]) -> str | None:
+    """The full-width line under a table naming the models that had no
+    rate, or None when there's nothing to name.
+
+    Naming them is the point of #104: `claude-opus-5` went unpriced for
+    weeks while it was the default model, and every surface said only that
+    *some* model was unpriced - identical text whether 0.1% or 99% of turns
+    were affected, and never a hint which one-line table entry was missing.
+    Returns None rather than "" so it can be assigned straight to
+    Table.caption, where None means "no caption".
+    """
+    named = sorted(set(models))
+    if not named:
+        return None
+    return f"Unpriced (no rate in pricing.py, shown as \"?\"): {', '.join(named)}"
+
+
+def _turns_unpriced_models(turns: Iterable[Turn]) -> set[str]:
+    models: set[str] = set()
+    for turn in turns:
+        models |= turn.unpriced_models
+    return models
+
+
 def _new_table(title: str) -> Table:
     table = Table(title=title, expand=True)
     table.add_column("Time", style="dim", width=8)
@@ -170,7 +202,8 @@ def build_table(tailer: TranscriptTailer, transcript_name: str, detail: bool = F
     add_turn_rows(table, tailer.ordered_turns(), detail=detail)
 
     total_cost = tailer.total_cost_usd()
-    unknown_note = " (some models unpriced)" if tailer.has_unknown_model() else ""
+    unknown_note = _unpriced_note(tailer.has_unknown_model())
+    table.caption = _unpriced_caption(tailer.unpriced_models())
     table.add_section()
     table.add_row(
         "",
@@ -261,6 +294,7 @@ def build_chapters_table(
     total_in = 0
     total_out = 0
     any_unknown = False
+    unpriced_models: set[str] = set()
 
     for i, chapter in enumerate(chapters, start=1):
         turns = chapter.turns(tailer)
@@ -271,6 +305,7 @@ def build_chapters_table(
         total_in += sum(t.input_tokens for t in turns)
         total_out += sum(t.output_tokens for t in turns)
         any_unknown = any_unknown or unknown
+        unpriced_models |= _turns_unpriced_models(turns)
 
         table.add_row(
             "",
@@ -297,7 +332,8 @@ def build_chapters_table(
 
         table.add_section()
 
-    unknown_note = " (some models unpriced)" if any_unknown else ""
+    unknown_note = _unpriced_note(any_unknown)
+    table.caption = _unpriced_caption(unpriced_models)
     table.add_row(
         "",
         Text("TOTAL (shown)", style="bold"),
@@ -1214,6 +1250,7 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
                     "top_chapter": None,
                     "cost_usd": 0.0,
                     "unknown_model_cost": False,
+                    "unpriced_models": [],
                     "skipped_sidechain_count": tailer.skipped_sidechain_count,
                 }
             )
@@ -1236,6 +1273,7 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
                 "top_chapter": top_chapter.title if top_chapter else None,
                 "cost_usd": session_cost,
                 "unknown_model_cost": tailer.has_unknown_model(),
+                "unpriced_models": tailer.unpriced_models(),
                 "skipped_sidechain_count": tailer.skipped_sidechain_count,
             }
         )
@@ -1254,8 +1292,10 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
     table.add_column("Cost (est.)", justify="right", width=12)
 
     any_unknown = False
+    unpriced_models: set[str] = set()
     for row in rows:
         any_unknown = any_unknown or row["unknown_model_cost"]
+        unpriced_models |= set(row["unpriced_models"])
         cost_str = _turn_cost_str(row["cost_usd"], row["unknown_model_cost"])
         table.add_row(
             row["session_date"],
@@ -1265,7 +1305,8 @@ def run_chapters_all(since: date | None = None, until: date | None = None, as_js
             cost_str,
         )
 
-    unknown_note = " (some models unpriced)" if any_unknown else ""
+    unknown_note = _unpriced_note(any_unknown)
+    table.caption = _unpriced_caption(unpriced_models)
     table.add_section()
     table.add_row(
         "",
@@ -1478,6 +1519,7 @@ def run_rollup(
                 "sessions": c.sessions,
                 "cost_usd": c.cost_usd,
                 "unknown_model_cost": c.unknown_model_cost,
+                "unpriced_models": sorted(c.unpriced_models),
                 "is_other": is_other_cluster(c),
             }
             for c in clusters
@@ -1507,8 +1549,10 @@ def run_rollup(
 
     grand_total_cost = 0.0
     any_unknown = False
+    unpriced_models: set[str] = set()
     for c, _cum_cost, cum_pct in with_rollup_cumulative(clusters):
         any_unknown = any_unknown or c.unknown_model_cost
+        unpriced_models |= c.unpriced_models
         grand_total_cost += c.cost_usd
         title_cell = f"[dim italic]{c.display_title}[/dim italic]" if is_other_cluster(c) else c.display_title
         table.add_row(
@@ -1519,7 +1563,8 @@ def run_rollup(
             f"{cum_pct:.0f}%",
         )
 
-    unknown_note = " (some models unpriced)" if any_unknown else ""
+    unknown_note = _unpriced_note(any_unknown)
+    table.caption = _unpriced_caption(unpriced_models)
     table.add_section()
     table.add_row(
         "",
@@ -2255,9 +2300,12 @@ def _render_trend(console: Console, result) -> None:
         f"${result.total_cost_usd:.4f}[/dim]"
     )
     if any(b.unknown_model_cost for b in buckets):
+        named = result.unpriced_models
+        which = f" Unpriced: {', '.join(named)}." if named else ""
         console.print(
             "[yellow]Some periods include unpriced models - their cost is a floor, not exact "
-            "(shown as \"?\" where the whole period's cost is unknown).[/yellow]"
+            "(shown as \"?\" where the whole period's cost is unknown)."
+            f"{which}[/yellow]"
         )
 
 
@@ -2324,6 +2372,7 @@ def run_trend(
                 "cost_usd": b.cost_usd,
                 "num_turns": b.num_turns,
                 "unknown_model_cost": b.unknown_model_cost,
+                "unpriced_models": sorted(b.unpriced_models),
             }
             for b in result.buckets
         ]

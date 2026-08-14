@@ -34,7 +34,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from work_ledger.pricing import estimate_cost_usd
+from work_ledger.pricing import estimate_cost_usd, unpriced_model_label
 from work_ledger.references import extract_pr_refs, extract_ticket_refs
 
 TRANSCRIPTS_ROOT = Path.home() / ".claude" / "projects"
@@ -170,21 +170,28 @@ class RateLimitHit:
     text: str
 
 
-def _aggregate_subagent_usage(jsonl_path: Path) -> tuple[int, int, float, bool]:
+def _aggregate_subagent_usage(jsonl_path: Path) -> tuple[int, int, float, bool, set[str]]:
     """Sum token usage/cost across every distinct assistant message in a
     subagent transcript (deduping by message.id for the same reason as the
-    main transcript - see module docstring)."""
+    main transcript - see module docstring).
+
+    The trailing set names any model ids that had no rate, so callers can
+    report which model is unpriced rather than only that one was (#104).
+    """
     seen_message_ids: set[str] = set()
     input_tokens = output_tokens = 0
     cost = 0.0
     unknown = False
+    unpriced: set[str] = set()
     try:
         lines = jsonl_path.read_text(encoding="utf-8").splitlines()
     except OSError:
         # Can't read the subagent transcript - its cost is unknown, not $0.
         # Flagging unknown=True surfaces "?" in the UI instead of silently
         # under-reporting (same philosophy as pricing.py's unpriced-model case).
-        return 0, 0, 0.0, True
+        # No model id to name here: the miss is an unreadable file, not a
+        # missing rate, so `unpriced` stays empty rather than blaming a model.
+        return 0, 0, 0.0, True, unpriced
     for line in lines:
         line = line.strip()
         if not line:
@@ -208,11 +215,12 @@ def _aggregate_subagent_usage(jsonl_path: Path) -> tuple[int, int, float, bool]:
         c = estimate_cost_usd(model, usage)
         if c is None:
             unknown = True
+            unpriced.add(unpriced_model_label(model))
         else:
             cost += c
         input_tokens += usage.get("input_tokens", 0) or 0
         output_tokens += usage.get("output_tokens", 0) or 0
-    return input_tokens, output_tokens, cost, unknown
+    return input_tokens, output_tokens, cost, unknown, unpriced
 
 
 @dataclass
@@ -256,11 +264,18 @@ class Unit:
     own_output_tokens: int = 0
     own_cost_usd: float = 0.0
     own_unknown_model: bool = False
+    # The model id behind own_unknown_model, when the miss was a missing
+    # rate rather than something else. Kept alongside the bool rather than
+    # replacing it: "cost is unknown" and "this specific model has no rate"
+    # are different facts, and only the first is true when e.g. a subagent
+    # transcript can't be read at all (#104).
+    own_unpriced_model: str | None = None
     # Populated later (async) once a matching subagent transcript is found.
     subagent_input_tokens: int = 0
     subagent_output_tokens: int = 0
     subagent_cost_usd: float = 0.0
     subagent_unknown_model: bool = False
+    subagent_unpriced_models: set[str] = field(default_factory=set)
 
     @property
     def kind(self) -> str:
@@ -298,6 +313,18 @@ class Unit:
     def unknown_model_cost(self) -> bool:
         return self.own_unknown_model or self.subagent_unknown_model
 
+    @property
+    def unpriced_models(self) -> set[str]:
+        """Every model id in this unit (its own call plus any subagent's)
+        that had no rate. Empty when cost is fully priced - and also when
+        cost is unknown for a reason other than a missing rate, so callers
+        must not treat empty as "everything priced"; ask
+        `unknown_model_cost` for that."""
+        models = set(self.subagent_unpriced_models)
+        if self.own_unpriced_model:
+            models.add(self.own_unpriced_model)
+        return models
+
 
 @dataclass
 class Turn:
@@ -330,6 +357,10 @@ class Turn:
     @property
     def unknown_model_cost(self) -> bool:
         return any(u.unknown_model_cost for u in self.units)
+
+    @property
+    def unpriced_models(self) -> set[str]:
+        return set().union(*(u.unpriced_models for u in self.units)) if self.units else set()
 
     @property
     def num_assistant_messages(self) -> int:
@@ -488,9 +519,11 @@ class TranscriptTailer:
             cost = estimate_cost_usd(model, usage)
             if cost is None:
                 unit.own_unknown_model = True
+                unit.own_unpriced_model = unpriced_model_label(model)
             else:
                 unit.own_cost_usd = cost
                 unit.own_unknown_model = False
+                unit.own_unpriced_model = None
 
             for block in message.get("content") or []:
                 if not isinstance(block, dict):
@@ -557,11 +590,12 @@ class TranscriptTailer:
             if unit is None:
                 continue  # dispatching message not seen yet, or a stale/unrelated file
 
-            input_tok, output_tok, cost, unknown = _aggregate_subagent_usage(jsonl_path)
+            input_tok, output_tok, cost, unknown, unpriced = _aggregate_subagent_usage(jsonl_path)
             unit.subagent_input_tokens = input_tok
             unit.subagent_output_tokens = output_tok
             unit.subagent_cost_usd = cost
             unit.subagent_unknown_model = unknown
+            unit.subagent_unpriced_models = unpriced
             agent_type = meta.get("agentType")
             if agent_type:
                 unit.subagent_agent_type = agent_type
@@ -582,6 +616,15 @@ class TranscriptTailer:
 
     def has_unknown_model(self) -> bool:
         return any(t.unknown_model_cost for t in self.turns.values())
+
+    def unpriced_models(self) -> list[str]:
+        """Sorted model ids seen in this session that have no rate, for the
+        "some models unpriced" notes to name (#104). Empty doesn't imply
+        everything is priced - see Unit.unpriced_models."""
+        models: set[str] = set()
+        for turn in self.turns.values():
+            models |= turn.unpriced_models
+        return sorted(models)
 
     def has_skipped_sidechain(self) -> bool:
         """True if any inline isSidechain entry was seen and skipped (see

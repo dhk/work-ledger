@@ -89,6 +89,26 @@ where token counts become dollars (`estimate_cost_usd`), keyed by model
 id off a hardcoded rate table (`RATES`) — this is also the one place a
 model-pricing change (see #47) needs to be reflected.
 
+Being a hardcoded table makes a *missing* entry the failure mode to
+design against, not a wrong number: an unpriced model renders `?` while
+every other column stays fully populated, so the cost half of the tool
+can go blank behind a UI that still looks healthy. That is exactly what
+`claude-opus-5`'s absence did for weeks (#104). Two structural
+consequences, both in `pricing.py`:
+
+- **Unpriced models are named, not just counted.** Parsing records
+  *which* model id had no rate (`Unit.own_unpriced_model` →
+  `Turn.unpriced_models` → `TranscriptTailer.unpriced_models()`), and
+  every surface's "some models unpriced" note names it. A note that says
+  only *that* something is unpriced reads identically whether 0.1% or
+  99% of turns are affected — which is why the gap survived so long.
+- **A variant id never silently inherits the base rate.** A
+  context-window variant (`claude-opus-5[1m]`) resolves only for models
+  flagged `flat_long_context`, i.e. confirmed to serve their full context
+  window at standard pricing. Anything else stays unpriced, because
+  billing a long-context or fast-mode turn at the base rate would
+  understate cost while looking exactly like a real figure.
+
 ## Caching and persistence
 
 - **Chapter cache** (`chapters.py`, `_cache_path`) — one

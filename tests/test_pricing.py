@@ -9,6 +9,7 @@ from work_ledger.pricing import (
     SONNET_5_INTRO_PRICING_CUTOFF,
     estimate_cost_usd,
     rate_for,
+    unpriced_model_label,
 )
 
 
@@ -34,6 +35,58 @@ def test_rate_for_strips_dated_snapshot_suffix():
 
 def test_rate_for_strips_latest_suffix():
     assert rate_for("claude-haiku-4-5-latest") == rate_for("claude-haiku-4-5")
+
+
+def test_rate_for_opus_5_is_priced():
+    """Regression test for #104: `claude-opus-5` was missing from RATES
+    while it was the default model, so ~99% of turns on a current machine
+    showed "?" for cost - the tool's whole premise blank behind a UI that
+    otherwise looked fully populated."""
+    rate = rate_for("claude-opus-5")
+    assert rate is not None
+    assert rate.input_per_mtok == 5.00
+    assert rate.output_per_mtok == 25.00
+
+
+def test_rate_for_context_variant_resolves_when_no_long_context_premium():
+    """"claude-opus-5[1m]" prices at the base rate because Opus 5 serves
+    its full context window at standard pricing."""
+    assert rate_for("claude-opus-5[1m]") == rate_for("claude-opus-5")
+
+
+def test_rate_for_context_variant_unpriced_without_a_confirmed_flat_rate():
+    """The opposite case, and the reason this isn't just a strip-the-suffix
+    fallback: where a long-context premium exists (or nobody has confirmed
+    one doesn't), the variant stays unpriced and shows "?" rather than
+    billing at the base rate, which would understate cost while looking
+    exactly like a real figure."""
+    assert rate_for("claude-sonnet-4-5") is not None
+    assert rate_for("claude-sonnet-4-5[1m]") is None
+
+
+def test_rate_for_non_context_bracket_suffix_is_never_priced():
+    """Only a token-count marker counts as a context variant. A bracketed
+    suffix meaning something else - "[fast]" being the obvious one, since
+    fast mode is priced well above the standard rate - must not resolve to
+    the base model's rate."""
+    assert rate_for("claude-opus-5[fast]") is None
+
+
+def test_rate_for_context_variant_of_dated_snapshot():
+    """The two suffix rules compose: strip the bracketed variant, then the
+    dated-snapshot suffix underneath it."""
+    assert rate_for("claude-opus-5-20260101[1m]") == rate_for("claude-opus-5")
+
+
+def test_unpriced_model_label_falls_back_for_a_missing_id():
+    assert unpriced_model_label("claude-opus-9") == "claude-opus-9"
+    assert unpriced_model_label("") == "(no model id)"
+    assert unpriced_model_label(None) == "(no model id)"
+
+
+def test_estimate_cost_opus_5_prices_a_real_usage_block():
+    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
+    assert estimate_cost_usd("claude-opus-5", usage) == approx(30.00)
 
 
 def test_estimate_cost_unknown_model_returns_none_not_zero():

@@ -398,6 +398,54 @@ def test_unknown_model_flagged_not_silently_zero(transcript_path):
     assert turn.cost_usd == 0.0
 
 
+def test_unpriced_model_is_named_not_just_flagged(transcript_path):
+    """#104: knowing *that* a model is unpriced isn't actionable - knowing
+    *which* one turns the fix into a one-line RATES entry. `claude-opus-5`
+    was missing for weeks precisely because every surface said only that
+    some model was unpriced."""
+    entries = [
+        user_entry("p1", "do something"),
+        *assistant_lines("msg-1", "some-brand-new-model", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert tailer.unpriced_models() == ["some-brand-new-model"]
+    assert tailer.ordered_turns()[0].unpriced_models == {"some-brand-new-model"}
+
+
+def test_priced_model_names_nothing_unpriced(transcript_path):
+    entries = [
+        user_entry("p1", "do something"),
+        *assistant_lines("msg-1", "claude-opus-5", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert tailer.has_unknown_model() is False
+    assert tailer.unpriced_models() == []
+    assert tailer.total_cost_usd() > 0
+
+
+def test_empty_model_id_gets_a_readable_label(transcript_path):
+    """Transcripts do carry `"model": ""` entries; the note has to say
+    something better than an empty string there."""
+    entries = [
+        user_entry("p1", "do something"),
+        *assistant_lines("msg-1", "", {"input_tokens": 10, "output_tokens": 5}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert tailer.unpriced_models() == ["(no model id)"]
+
+
 def _rate_limit_entry(timestamp: str, reset_label: str) -> dict:
     """The exact synthetic rate_limit shape from
     docs/recommend-workflow-efficiency-design.md's Validation section - no
