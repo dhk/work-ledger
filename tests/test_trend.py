@@ -132,6 +132,10 @@ def test_build_trend_flags_unknown_model_cost(tmp_path):
 
     assert result.buckets[0].unknown_model_cost is True
     assert result.buckets[0].cost_usd == 0.0
+    # #104: a run of "?" periods is exactly where "which model is missing a
+    # rate?" gets asked, so the bucket names it rather than only flagging it.
+    assert result.buckets[0].unpriced_models == {"some-future-model-not-in-rates"}
+    assert result.unpriced_models == ["some-future-model-not-in-rates"]
 
 
 def test_cost_bucket_and_trend_result_defaults():

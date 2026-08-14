@@ -1049,8 +1049,13 @@ def build_trend_report_html(
     ]
     data_json = json.dumps(data)
 
+    # Name the offending models, not just their existence (#104) - the same
+    # reason the CLI's note does: a report showing a run of "?" periods is
+    # exactly where "which model do I need to add a rate for?" gets asked.
+    unpriced_named = sorted(set().union(*(b.unpriced_models for b in buckets)) if buckets else set())
     unknown_note = (
         "Some periods include unpriced models - their cost is a floor, not exact (marked below)."
+        + (f" Unpriced: {', '.join(unpriced_named)}." if unpriced_named else "")
         if any_unknown
         else "Every period's cost is priced (no unpriced models encountered)."
     )

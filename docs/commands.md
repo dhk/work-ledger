@@ -183,6 +183,22 @@ roughly 2-4x on any multi-block response. Costs are now deduped by
 `message.id` so each real API call is counted exactly once — cost estimates
 from before this fix should be treated as inflated.
 
+**Unpriced models show `?`, and say which model.** Cost comes from a
+hardcoded rate table (`work_ledger/pricing.py`), so a model released after
+your installed version has no rate. Those turns render `?` rather than a
+silent `$0.00`, and every total carries a "some models unpriced" note whose
+caption names the model ids involved — the fix is then a one-line `RATES`
+entry (or `work-ledger cycle` to pick up a newer version that already has
+it). If you see `?` across recent sessions while older ones are priced,
+that's this, not a parsing failure. `claude-opus-5` was missing this way for
+weeks (issue #104), which is why the note names names.
+
+A **context-window variant id** (`claude-opus-5[1m]`) prices at the base
+model's rate only where that model serves its full context window at
+standard pricing. Where that isn't confirmed, the variant is deliberately
+left unpriced and shows `?` — quietly billing it at the base rate would
+understate cost while looking exactly like a real figure.
+
 ## Chapters (semantic grouping)
 
 See [example-session.md](example-session.md) for real, checked-in output from a live run

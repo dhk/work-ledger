@@ -20,6 +20,8 @@ from work_ledger.cli import (
     _threshold_note,
     _turns_cost,
     _turns_unknown,
+    _unpriced_caption,
+    _unpriced_note,
     _validate_min_cost,
     _validate_other_threshold,
     _validate_top,
@@ -67,6 +69,65 @@ def test_cost_bar_never_exceeds_width():
 def test_turns_unknown_false_if_none_unknown():
     turns = [_turn("p1"), _turn("p2")]
     assert _turns_unknown(turns) is False
+
+
+def test_unpriced_note_stays_short_for_the_narrow_cost_column():
+    """The names deliberately don't go here - the cost column is ~12 chars
+    wide, so a model name in the cell gets ellipsized into uselessness.
+    They go in the caption instead."""
+    assert _unpriced_note(True) == " (some models unpriced)"
+    assert _unpriced_note(False) == ""
+
+
+def test_unpriced_caption_names_the_models():
+    """#104's actual payoff: the table tells you which RATES entry to add."""
+    caption = _unpriced_caption(["claude-opus-5"])
+    assert caption is not None
+    assert "claude-opus-5" in caption
+
+
+def test_unpriced_caption_sorts_and_dedupes_names():
+    caption = _unpriced_caption(["claude-opus-5", "claude-fable-9", "claude-opus-5"])
+    assert caption.endswith("claude-fable-9, claude-opus-5")
+
+
+def test_unpriced_caption_is_none_when_nothing_to_name():
+    """None (not "") so it can be assigned straight to Table.caption. Also
+    covers cost being unknown for a reason that names no model - an
+    unreadable subagent transcript."""
+    assert _unpriced_caption([]) is None
+
+
+def test_build_table_captions_the_unpriced_model(transcript_path):
+    """End to end through the real table builder: an unpriced model is
+    named in the caption, where it has room to render in full."""
+    entries = [
+        user_entry("p1", "priced turn"),
+        *assistant_lines("m1", "claude-opus-5", {"input_tokens": 100, "output_tokens": 10}, [{"type": "text", "text": "a"}]),
+        user_entry("p2", "unpriced turn"),
+        *assistant_lines("m2", "claude-opus-99", {"input_tokens": 100, "output_tokens": 10}, [{"type": "text", "text": "b"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    table = cli.build_table(tailer, "session-a.jsonl")
+
+    assert "claude-opus-99" in table.caption
+    # The priced model is not called out - only the one that needs a rate.
+    assert "claude-opus-5," not in table.caption
+
+
+def test_build_table_has_no_caption_when_everything_is_priced(transcript_path):
+    entries = [
+        user_entry("p1", "priced turn"),
+        *assistant_lines("m1", "claude-opus-5", {"input_tokens": 100, "output_tokens": 10}, [{"type": "text", "text": "a"}]),
+    ]
+    write_jsonl(transcript_path, entries)
+    tailer = TranscriptTailer(transcript_path)
+    tailer.poll()
+
+    assert cli.build_table(tailer, "session-a.jsonl").caption is None
 
 
 def _chapters():
