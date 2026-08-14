@@ -13,8 +13,11 @@ Releasing is one manual action, gated by automated checks.
    `MAJOR.MINOR.PATCH`, still `0.x`: new commands or meaningful new
    behavior bump the minor, fixes bump the patch.
 2. **Move the changelog's `[Unreleased]` items** into a section for the
-   new version in `CHANGELOG.md`, and write the entry for anyone reading
-   it cold — what changed for them, not which commits landed.
+   new version in `CHANGELOG.md`, headed `## [X.Y.Z] — YYYY-MM-DD` with
+   the date you're actually publishing. Write the entry for anyone
+   reading it cold — what changed for them, not which commits landed.
+   This section gets pasted into the GitHub Release body verbatim, so a
+   leftover placeholder in the heading ships as published release notes.
 3. **Merge that to `main`** through the normal PR flow, and let CI go
    green.
 4. **Cut a GitHub Release** whose tag is the bare version — `0.2.0`, not
@@ -57,9 +60,19 @@ OIDC or permissions error, that configuration is where to look first.
 
 ## After publishing
 
+Check what PyPI actually serves:
+
 ```sh
-pip index versions work-ledger        # or: curl -s https://pypi.org/pypi/work-ledger/json
+curl -s https://pypi.org/pypi/work-ledger/json \
+  | python3 -c "import json, sys; print(json.load(sys.stdin)['info']['version'])"
 ```
+
+The JSON API rather than an installer subcommand, deliberately: `pip index
+versions` warns that it's experimental and may be removed without notice,
+and `uv` has no equivalent at all — `uv pip index` doesn't exist, and a
+deliberately-unsatisfiable pin (`uv pip install "work-ledger==99.99.99"`)
+reports only that nothing matched, without listing what's available. The
+API answers the same question for anyone regardless of installer.
 
 Then install it somewhere clean and run `work-ledger about` — it reports
 the version actually installed, which is the number a user would get.
