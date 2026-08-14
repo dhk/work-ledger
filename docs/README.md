@@ -16,6 +16,8 @@ Start with the repository [README](../README.md). Use this index when you need t
 
 - [Command reference](commands.md) — complete CLI usage
 - [Installation](../INSTALL.md) — install choices, extras, upgrades, and troubleshooting
+- [Changelog](../CHANGELOG.md) — what changed per released version
+- [Releasing](../RELEASING.md) — how a release is cut, what gates it, and the drift alarm
 - [Pattern contribution guide](../CONTRIBUTING-patterns.md) — format and review rules for pattern entries
 - [Pattern backend](../backend/README.md) — optional personal backend deployment
 

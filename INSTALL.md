@@ -46,6 +46,14 @@ Want the unreleased tip of `main` instead of the latest release?
 pip install --user "git+https://github.com/dhk/work-ledger.git"
 ```
 
+**Check what you got:** `work-ledger about` reports the installed version.
+The full command set documented here needs **0.2.0 or newer** — `0.1.0`
+predates `serve`, `activity`, `timeline`, `trend`, `sessions`, `waste`,
+`rollup`, `miso`, `history`, `session`, `cycle`, and `about`, most of
+which need no credentials at all. If PyPI still has only the older
+release, use the git URL above or Option C until the next release lands
+(see [RELEASING.md](RELEASING.md)).
+
 ## Option C: clone and install editable (for reading/modifying the code)
 
 ```sh

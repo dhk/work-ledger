@@ -40,3 +40,5 @@ cd backend && npm test         # backend JavaScript
 Commands that need real transcripts, credentials, browsers, or deployed services should be tested only when you control those inputs. Otherwise verify their help, parsing, and failure/fallback paths. For documentation, check relative links, shell snippets, command names, privacy claims, and install steps against the current code.
 
 Before opening a pull request, run the full Python and backend suites from a clean checkout or environment. In the pull request, summarize the change, user impact, and exact validation performed.
+
+If your change adds or alters a user-visible command or behavior, add an entry under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md) — that entry is what a released version's notes get built from. Cutting the release itself is a separate, deliberate action: see [RELEASING.md](RELEASING.md).

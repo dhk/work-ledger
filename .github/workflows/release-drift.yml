@@ -1,0 +1,82 @@
+name: release-drift
+
+# Issue #103's actual root cause. The release machinery works - the 0.1.0
+# GitHub Release published to PyPI 14 minutes after it was cut - but it is
+# entirely manual and nothing ever asks for it. So `main` quietly pulled 97
+# commits and twelve new subcommands ahead of the published package while
+# the README kept telling people to `pip install work-ledger`. Nobody
+# noticed for a month because nothing was watching.
+#
+# This is the thing that watches. It is deliberately NOT a pull-request
+# check: release drift is a property of time, not of any individual PR, and
+# blocking someone's unrelated bugfix because a release is overdue is the
+# wrong coupling. A failing scheduled run shows up in the Actions tab and
+# emails the repo owner, which is enough to break the silence.
+#
+# Same forcing-function idea as tests/test_pricing.py's dated Sonnet 5
+# cutoff test: fail loudly on a schedule so a stale assumption gets a
+# second look, rather than trusting that someone will remember.
+
+on:
+  schedule:
+    # Mondays at 15:00 UTC - a weekly nudge, not a daily nag.
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    env:
+      # Commits on main past the last release tag before this is treated as
+      # drift worth acting on. Not a rule about how often to release - a
+      # quiet month is fine - just the point past which "is the published
+      # package still the tool we describe?" deserves an actual answer.
+      # #103 was 97 commits and twelve missing commands.
+      MAX_COMMITS_BEHIND: "30"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags and full history: `git describe` and the commit count both
+          # need them, and actions/checkout fetches a shallow clone with no
+          # tags by default.
+          fetch-depth: 0
+
+      - name: Compare main against the last release tag
+        run: |
+          set -euo pipefail
+
+          # Release tags are bare X.Y.Z (the 0.1.0 convention); the v-prefixed
+          # form is matched too so a future v0.3.0 tag still counts.
+          latest_tag="$(git tag --list '[0-9]*' 'v[0-9]*' --sort=-v:refname | head -n 1)"
+
+          if [ -z "$latest_tag" ]; then
+            commits_behind="$(git rev-list --count HEAD)"
+            reference="the start of history (no release tag exists)"
+          else
+            commits_behind="$(git rev-list --count "${latest_tag}..HEAD")"
+            reference="$latest_tag"
+          fi
+
+          project_version="$(python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+
+          echo "Last release tag: ${reference}"
+          echo "pyproject.toml version: ${project_version}"
+          echo "Commits on main since then: ${commits_behind} (threshold ${MAX_COMMITS_BEHIND})"
+
+          {
+            echo "### Release drift"
+            echo ""
+            echo "- Last release tag: \`${reference}\`"
+            echo "- \`pyproject.toml\` version: \`${project_version}\`"
+            echo "- Commits since: **${commits_behind}** (threshold ${MAX_COMMITS_BEHIND})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$commits_behind" -gt "$MAX_COMMITS_BEHIND" ]; then
+            echo "::error::main is ${commits_behind} commits past the last release (${reference}). The package on PyPI is what users get from 'pip install work-ledger' - see RELEASING.md to cut a release, or raise MAX_COMMITS_BEHIND deliberately if this gap is intended."
+            exit 1
+          fi
+
+          echo "Within threshold - no action needed."
