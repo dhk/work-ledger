@@ -1,6 +1,11 @@
 [project]
 name = "work-ledger"
-version = "0.1.0"
+# Keep in sync with CHANGELOG.md's top entry and the GitHub Release tag
+# that triggers .github/workflows/release.yml (bare `X.Y.Z`, no leading
+# `v` - matching the existing 0.1.0 tag). release.yml verifies the two
+# agree before publishing. PyPI refuses to overwrite an existing version,
+# so shipping anything new always starts here - see RELEASING.md.
+version = "0.2.0"
 description = "Lightweight, near-real-time Claude Code usage/cost tracker for individuals"
 readme = "README.md"
 requires-python = ">=3.10"

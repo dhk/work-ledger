@@ -114,6 +114,7 @@ rather than left untracked.
 
 | Issue | What |
 |---|---|
+| [#103](https://github.com/dhk/work-ledger/issues/103) | **The published package drifted 97 commits behind `main`** — PyPI had only `0.1.0` (2026-07-13), missing twelve subcommands the README told people to run, most of them the credential-free ones. Root cause wasn't missing machinery: the release workflow worked (`0.1.0` published 14 minutes after its GitHub Release) but was entirely manual and unprompted, so nothing ever asked for a second release. Addressed with a version bump + `CHANGELOG.md`, release-workflow gates (tag/version match, tests, and a built-wheel CLI check that would have caught this exact failure), `RELEASING.md`, and a weekly release-drift alarm — scheduled rather than per-PR, since drift is a property of time, not of any one PR. **Publishing itself is still the owner's action:** cut a GitHub Release tagged `0.2.0` |
 | [#80](https://github.com/dhk/work-ledger/issues/80) | Audit and rebalance CLAUDE.md across all 12 repos this account works in: extend the 7 with none, link out the heaviest inlined content instead of duplicating docs that already exist elsewhere |
 | [#81](https://github.com/dhk/work-ledger/issues/81) | Add the same CLAUDE.md/AGENTS.md scaffolding to `dhk/repo-template`, so new repos start thin instead of needing #80's retrofit — pending migration to that repo's own tracker |
 

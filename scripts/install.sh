@@ -37,6 +37,12 @@ echo
 echo "Installed. Try it:"
 echo "  work-ledger --once"
 echo "  work-ledger limits --once   - rolling-window token tracking, no credentials needed"
+echo "  work-ledger about           - which version you actually got"
+echo
+echo "The documented command set (serve, activity, timeline, trend, waste,"
+echo "rollup, ...) needs 0.2.0 or newer. If 'work-ledger about' reports"
+echo "something older, PyPI hasn't got the current release yet - install"
+echo "from source instead: https://github.com/dhk/work-ledger/blob/main/INSTALL.md"
 echo
 echo "work-ledger chapters calls the Anthropic API directly (separate from"
 echo "your Claude Code session) to group prompts into initiatives via Haiku,"

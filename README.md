@@ -23,6 +23,17 @@ python3 -m pip install --user work-ledger
 
 Inside an active virtual environment, omit `--user`.
 
+The commands below need **work-ledger 0.2.0 or newer**; `work-ledger about`
+reports the version you actually have. If you end up on something older,
+install from a source checkout instead — `uv` or `pipx` is the smoother
+path, since `python3 -m venv` fails on a stock Ubuntu box without
+`python3-venv` installed:
+
+```sh
+git clone https://github.com/dhk/work-ledger.git
+cd work-ledger && uv venv && uv pip install -e .
+```
+
 Reviewed convenience installer:
 
 ```sh
