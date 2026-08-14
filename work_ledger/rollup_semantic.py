@@ -71,11 +71,22 @@ NO_CREDENTIALS_MESSAGE = (
     "`ant auth login` if you have the Anthropic CLI."
 )
 
-# A batch of short titles - generous but bounded, same non-streaming-HTTP-
-# timeout reasoning chapters.py's MAX_TOKENS documents. No batch-size
-# chunking (see the design doc's Open Questions #2): one call regardless of
-# how many singleton titles there are, untested at very large counts.
-MAX_TOKENS = 4096
+# Matches chapters.py's MAX_TOKENS exactly - "the safe non-streaming
+# ceiling for this API (higher risks HTTP timeouts without switching to
+# streaming)" is a property of the API's non-streaming behavior in
+# general, not specific to chaptering's own prompt shape, so the same
+# ceiling applies here. Issue #101: originally set to a much more
+# conservative 4096 on the (wrong) assumption that a titles-only payload
+# would stay small regardless of count - a real run with 213 singleton
+# titles proved otherwise (every title gets copied back into its
+# group's JSON in the response, so output size scales with count, not
+# just per-title length) and hit a mid-string truncation. Still no
+# batch-size chunking (see the design doc's Open Questions #2): one call
+# regardless of how many singleton titles there are. This raises the
+# ceiling where truncation was actually observed rather than solving
+# "arbitrarily many titles" in general - a singleton set large enough to
+# exceed even this needs real chunking, not a bigger constant.
+MAX_TOKENS = 16000
 
 SYSTEM_PROMPT = """You are given a numbered list of initiative titles, each summarizing a \
 distinct coding-session chapter (an initiative or task, e.g. "Build the v1 dashboard", \
