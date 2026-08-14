@@ -12,7 +12,7 @@ Releasing is a deliberate, tagged action — see [RELEASING.md](RELEASING.md).
 
 _Nothing yet._
 
-## [0.2.0] — unreleased until tagged
+## [0.2.0] — 2026-08-14
 
 The first release since `0.1.0` (2026-07-13), and a large one: **twelve
 new subcommands**, most of which need no Anthropic credentials at all.
