@@ -1,0 +1,191 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>work-ledger rollup — every local session found</title>
+<style>
+  .viz-root {
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --border:         rgba(11,11,11,0.10);
+    --series-1: #2a78d6;
+    --series-2: #1baf7a;
+    --series-3: #eda100;
+    --series-4: #008300;
+    --series-5: #4a3aa7;
+    --series-6: #e34948;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --border:         rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #199e70;
+    --series-3: #c98500;
+    --series-4: #008300;
+    --series-5: #9085e9;
+    --series-6: #e66767;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .viz-root {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 40px 20px 64px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+
+  h1 { font-size: 22px; font-weight: 650; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin: 0 0 28px; }
+  code.path { color: var(--text-muted); font-size: 12px; }
+
+  .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 32px; }
+  .stat-tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .stat-label { font-size: 12px; color: var(--text-secondary); margin: 0 0 6px; }
+  .stat-value { font-size: 26px; font-weight: 650; font-variant-numeric: proportional-nums; }
+  .stat-note { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 24px 24px 8px; }
+  .panel h2 { font-size: 15px; font-weight: 650; margin: 0 0 4px; }
+  .panel .caption { font-size: 12px; color: var(--text-secondary); margin: 0 0 20px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px 20px; font-size: 12px; color: var(--text-secondary); margin-bottom: 22px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+  .chapter { margin-bottom: 22px; }
+  .chapter-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 12px; }
+  .chapter-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .chapter-title .swatch { width: 11px; height: 11px; border-radius: 3px; }
+  .chapter-figs { font-size: 12.5px; color: var(--text-secondary); white-space: nowrap; }
+  .chapter-figs b { color: var(--text-primary); font-weight: 650; }
+
+  .bar-track { position: relative; height: 22px; background: var(--gridline); border-radius: 4px; overflow: visible; display: flex; }
+  .bar-seg { height: 100%; position: relative; cursor: default; }
+  .bar-seg + .bar-seg { margin-left: 2px; }
+  .bar-seg:first-child { border-radius: 4px 0 0 4px; }
+  .bar-seg:last-child { border-radius: 0 4px 4px 0; }
+  .bar-seg:only-child { border-radius: 4px; }
+
+  .tooltip {
+    position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+    background: var(--text-primary); color: var(--page); font-size: 11.5px; line-height: 1.4;
+    padding: 7px 10px; border-radius: 6px; white-space: nowrap; opacity: 0; pointer-events: none;
+    transition: opacity 0.1s ease; z-index: 5;
+  }
+  .tooltip b { font-weight: 650; }
+  .bar-seg:hover .tooltip { opacity: 1; }
+
+  .sections { margin-top: 8px; padding-left: 2px; }
+  .section-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; font-size: 12px; color: var(--text-secondary); padding: 3px 0; align-items: center; }
+  .section-row .name { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .section-row .name span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .section-row .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .section-row .val { color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .footnote { font-size: 11.5px; color: var(--text-muted); margin-top: 24px; line-height: 1.6; }
+  .footnote code { color: var(--text-secondary); }
+
+  .ledger-footer { font-size: 11px; color: var(--text-muted); margin-top: 10px; opacity: 0.8; }
+  .ledger-footer a { color: inherit; }
+</style>
+<style>
+  .viz-root { --overflow: #898781; }
+  @media (prefers-color-scheme: dark) { .viz-root { --overflow: #898781; } }
+  .cum-note { color: var(--text-muted); font-size: 11px; margin-left: 6px; }
+</style>
+</head>
+<body>
+<div style="margin:0 0 1.25rem;padding:.7rem .95rem;border:1px solid rgba(214,158,46,.6);background:rgba(236,178,46,.14);border-radius:6px;font-size:.85rem;line-height:1.5;color:inherit;"><strong>Illustrative data.</strong> Every figure below is fabricated for illustration. No real session, prompt, or repository is represented here.</div>
+<div class="viz-root">
+  <div class="wrap">
+    <h1>work-ledger rollup</h1>
+    <p class="subtitle">Cost by recurring initiative, clustered across sessions — every local session found.</p>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <p class="stat-label">Total cost (est.)</p>
+        <div class="stat-value">$8.38</div>
+        <p class="stat-note">across 6 initiatives</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Sessions included</p>
+        <div class="stat-value">5</div>
+        <p class="stat-note">every session in range</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Recurring initiatives</p>
+        <div class="stat-value">2</div>
+        <p class="stat-note">touched more than one session</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Cost by initiative, most expensive first</h2>
+      <p class="caption">Same title recurring across sessions is clustered into one bar — the repeated-pattern signal itself.</p>
+      <div id="chapters"></div>
+    </div>
+
+    <p class="footnote">
+      Reuses whatever chapters are already cached per session — never triggers a new
+      chaptering pass. Deterministic title-normalization matching by default; opt in to a
+      batched semantic pass with <code>WORK_LEDGER_ROLLUP_MATCHING=semantic</code> (issue #68).
+      Generated by <code>work-ledger rollup --report</code>.
+    </p>
+    <p class="ledger-footer">work-ledger v0.2.0 &middot; 618704f &middot; <a href="https://github.com/dhk/work-ledger">github.com/dhk/work-ledger</a></p>
+  </div>
+</div>
+
+<script>
+const data = [{"label": "Add rate limiting to the public API", "cost": 2.9180000000000006, "sessions": 2, "chapters": 2, "cumPct": 34.83243307768063}, {"label": "Migrate auth to short-lived tokens", "cost": 2.3492500000000005, "sessions": 2, "chapters": 2, "cumPct": 62.875645349010725}, {"label": "Fix the flaky integration suite", "cost": 1.1807500000000002, "sessions": 1, "chapters": 1, "cumPct": 76.97036617028262}, {"label": "Rebuild the settings page", "cost": 0.9072500000000001, "sessions": 1, "chapters": 1, "cumPct": 87.80029245874243}, {"label": "Fix checkout test flakiness", "cost": 0.5900000000000001, "sessions": 1, "chapters": 1, "cumPct": 94.84317646005552}, {"label": "Document the limiter for downstream teams", "cost": 0.43200000000000005, "sessions": 1, "chapters": 1, "cumPct": 100.0}];
+const seriesColor = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)", "var(--series-6)"];
+const grandTotal = data.reduce((s, c) => s + c.cost, 0) || 1;
+const maxCost = Math.max(...data.map(c => c.cost), 1e-9);
+
+const root = document.getElementById("chapters");
+
+data.forEach((c, i) => {
+  const pct = (c.cost / grandTotal) * 100;
+  const widthPct = (c.cost / maxCost) * 100;
+
+  const wrap = document.createElement("div");
+  wrap.className = "chapter";
+
+  const head = document.createElement("div");
+  head.className = "chapter-head";
+  head.innerHTML = `
+    <div class="chapter-title"><span class="swatch" style="background:${seriesColor[i]}"></span>${c.label}</div>
+    <div class="chapter-figs"><b>$${c.cost.toFixed(2)}</b> &nbsp;(${pct.toFixed(0)}%)<span class="cum-note">cum ${c.cumPct.toFixed(0)}%</span></div>
+  `;
+  wrap.appendChild(head);
+
+  const track = document.createElement("div");
+  track.className = "bar-track";
+  track.style.width = widthPct.toFixed(1) + "%";
+
+  const seg = document.createElement("div");
+  seg.className = "bar-seg";
+  seg.style.width = "100%";
+  seg.style.background = seriesColor[i];
+  seg.innerHTML = `<div class="tooltip"><b>${c.label}</b><br>$${c.cost.toFixed(2)} · ${pct.toFixed(1)}% of total (cumulative ${c.cumPct.toFixed(1)}%)<br>${c.sessions} session${c.sessions === 1 ? "" : "s"} · ${c.chapters} chapter${c.chapters === 1 ? "" : "s"}</div>`;
+  track.appendChild(seg);
+  wrap.appendChild(track);
+
+  root.appendChild(wrap);
+});
+</script>
+</body>
+</html>

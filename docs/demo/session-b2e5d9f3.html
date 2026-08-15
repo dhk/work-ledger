@@ -1,0 +1,282 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>work-ledger — b2e5d9f3-demo-4c8b-8d42-000000000002 — 2026-08-05 · 09:12–09:26</title>
+<style>
+  .viz-root {
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --border:         rgba(11,11,11,0.10);
+    --series-1: #2a78d6;
+    --series-2: #1baf7a;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --border:         rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #199e70;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .viz-root {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 40px 20px 64px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+
+  h1 { font-size: 22px; font-weight: 650; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin: 0 0 28px; }
+  code.path { color: var(--text-muted); font-size: 12px; }
+
+  .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 32px; }
+  .stat-tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .stat-label { font-size: 12px; color: var(--text-secondary); margin: 0 0 6px; }
+  .stat-value { font-size: 26px; font-weight: 650; font-variant-numeric: proportional-nums; }
+  .stat-note { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 24px 24px 8px; }
+  .panel h2 { font-size: 15px; font-weight: 650; margin: 0 0 4px; }
+  .panel .caption { font-size: 12px; color: var(--text-secondary); margin: 0 0 20px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px 20px; font-size: 12px; color: var(--text-secondary); margin-bottom: 22px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+  .chapter { margin-bottom: 22px; }
+  .chapter-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 12px; }
+  .chapter-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .chapter-title .swatch { width: 11px; height: 11px; border-radius: 3px; }
+  .chapter-figs { font-size: 12.5px; color: var(--text-secondary); white-space: nowrap; }
+  .chapter-figs b { color: var(--text-primary); font-weight: 650; }
+
+  .bar-track { position: relative; height: 22px; background: var(--gridline); border-radius: 4px; overflow: visible; display: flex; }
+  .bar-seg { height: 100%; position: relative; cursor: default; }
+  .bar-seg + .bar-seg { margin-left: 2px; }
+  .bar-seg:first-child { border-radius: 4px 0 0 4px; }
+  .bar-seg:last-child { border-radius: 0 4px 4px 0; }
+  .bar-seg:only-child { border-radius: 4px; }
+
+  .tooltip {
+    position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+    background: var(--text-primary); color: var(--page); font-size: 11.5px; line-height: 1.4;
+    padding: 7px 10px; border-radius: 6px; white-space: nowrap; opacity: 0; pointer-events: none;
+    transition: opacity 0.1s ease; z-index: 5;
+  }
+  .tooltip b { font-weight: 650; }
+  .bar-seg:hover .tooltip { opacity: 1; }
+
+  .sections { margin-top: 8px; padding-left: 2px; }
+  .section-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; font-size: 12px; color: var(--text-secondary); padding: 3px 0; align-items: center; }
+  .section-row .name { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .section-row .name span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .section-row .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .section-row .val { color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .footnote { font-size: 11.5px; color: var(--text-muted); margin-top: 24px; line-height: 1.6; }
+  .footnote code { color: var(--text-secondary); }
+
+  .ledger-footer { font-size: 11px; color: var(--text-muted); margin-top: 10px; opacity: 0.8; }
+  .ledger-footer a { color: inherit; }
+</style>
+<style>
+
+  .back-link { color: var(--text-secondary); font-size: 13px; text-decoration: none; }
+  .back-link:hover { text-decoration: underline; }
+
+  .sort-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 12.5px; }
+  .sort-bar span.label { color: var(--text-secondary); }
+  .sort-btn {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    border-radius: 999px; padding: 4px 12px; cursor: pointer; font: inherit;
+  }
+  .sort-btn.active { background: var(--text-primary); color: var(--page); border-color: var(--text-primary); }
+
+  details.chapter-d { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+  details.chapter-d > summary.chapter-summary {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 12px 14px; cursor: pointer; list-style: none; background: var(--surface-1);
+  }
+  details.chapter-d > summary.chapter-summary::-webkit-details-marker { display: none; }
+  details.chapter-d[open] > summary.chapter-summary { border-bottom: 1px solid var(--border); }
+  .category-badge {
+    font-size: 10.5px; font-weight: 500; color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: 1px 8px; margin-left: 8px;
+  }
+  .session-badge {
+    font-size: 10.5px; font-weight: 500; color: var(--text-secondary); background: var(--surface-1);
+    border-radius: 999px; padding: 1px 8px; margin-left: 8px; font-variant-numeric: tabular-nums;
+  }
+
+  .sections { padding: 6px 14px 10px 30px; }
+  details.section-d { margin: 6px 0; }
+  summary.section-summary {
+    display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary);
+    cursor: pointer; list-style: none; padding: 4px 0;
+  }
+  summary.section-summary::-webkit-details-marker { display: none; }
+  summary.section-summary .t { flex: 1; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  summary.section-summary .val { white-space: nowrap; }
+
+  .turns { padding: 2px 0 4px 20px; }
+  details.turn-d { margin: 2px 0; }
+  summary.turn-summary {
+    display: flex; align-items: center; gap: 10px; font-size: 12px; cursor: pointer;
+    list-style: none; padding: 5px 8px; border-radius: 6px;
+  }
+  summary.turn-summary:hover { background: var(--gridline); }
+  summary.turn-summary::-webkit-details-marker { display: none; }
+  summary.turn-summary .time { color: var(--text-muted); width: 64px; flex: none; font-variant-numeric: tabular-nums; }
+  summary.turn-summary .t { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  summary.turn-summary .val { color: var(--text-secondary); white-space: nowrap; flex: none; }
+  .ref-badge {
+    flex: none; font-size: 10.5px; font-weight: 600; border-radius: 4px; padding: 1px 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .ref-badge a { color: inherit; text-decoration: none; }
+  .ref-badge a:hover { text-decoration: underline; }
+  .ref-ticket { color: #4a3aa7; background: rgba(74, 58, 167, 0.12); }
+  .ref-pr { color: #1a7f5a; background: rgba(26, 127, 90, 0.12); }
+
+  .commit-row {
+    display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 6px 4px;
+    border-bottom: 1px solid var(--gridline);
+  }
+  .commit-row:last-child { border-bottom: none; }
+  .commit-sha { flex: none; color: var(--text-muted); font-size: 11px; }
+  .commit-sha a { color: inherit; }
+  .commit-row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .commit-row .val { flex: none; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  .units { padding: 2px 0 6px 74px; }
+  .unit-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--text-secondary); padding: 3px 0; }
+  .unit-row .kind {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; border-radius: 4px;
+    padding: 1px 6px; flex: none; color: var(--page); background: var(--text-muted);
+  }
+  .unit-row .kind-skill { background: #4a3aa7; }
+  .unit-row .kind-subagent { background: #e34948; }
+  .unit-row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .unit-row .val { white-space: nowrap; flex: none; }
+
+</style>
+</head>
+<body>
+<div style="margin:0 0 1.25rem;padding:.7rem .95rem;border:1px solid rgba(214,158,46,.6);background:rgba(236,178,46,.14);border-radius:6px;font-size:.85rem;line-height:1.5;color:inherit;"><strong>Illustrative data.</strong> Every figure below is fabricated for illustration. No real session, prompt, or repository is represented here.</div>
+<div class="viz-root">
+  <div class="wrap">
+    <p><a class="back-link" href="sessions.html">&larr; All sessions</a></p>
+    <h1>-home-dev-acme-api</h1>
+    <p class="subtitle">Session <code class="path">b2e5d9f3-demo-4c8b-8d42-000000000002</code> — 2026-08-05 · 09:12–09:26</p>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <p class="stat-label">Total cost (est.)</p>
+        <div class="stat-value">$1.40</div>
+        <p class="stat-note">across 3 turns</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Chapters</p>
+        <div class="stat-value">2</div>
+        <p class="stat-note">2 chapters cached</p>
+      </div>
+      <div class="stat-tile">
+        <p class="stat-label">Not yet chaptered</p>
+        <div class="stat-value">0</div>
+        <p class="stat-note">turns outside any cached chapter</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Chapters &rarr; turns &rarr; units</h2>
+      <p class="caption" id="tree-sort-caption">Click a chapter, then a section, then a turn to drill down - same grouping as chapters --detail, browsable instead of flag-driven.</p>
+      <div class="sort-bar"><span class="label">Sort by:</span><div id="tree-sort-buttons"></div></div>
+      <div class="chapters-root" id="chapters-root">
+      <details class="chapter-d" data-time="0" data-calls="2" data-cost="0.968750"><summary class="chapter-summary"><span class="chapter-title"><span class="swatch" style="background:var(--series-1)"></span>Add rate limiting to the public API<span class="category-badge">feature-build</span></span><span class="chapter-figs"><b>$0.9688</b>&nbsp;(69%)</span></summary><div class="sections"><details class="section-d" data-time="0" data-calls="2" data-cost="0.968750" open><summary class="section-summary"><span class="dot" style="background:var(--series-1)"></span><span class="t">Per-tenant limits</span><span class="val">2 turns · $0.9688</span></summary><div class="turns"><details class="turn-d" data-time="0" data-calls="1" data-cost="0.545500"><summary class="turn-summary"><span class="time">09:12:00</span><span class="t">extend the rate limiter to per-tenant buckets</span><span class="val">1 call · $0.5455</span></summary><div class="units"><div class="unit-row" data-time="0" data-calls="1" data-cost="0.545500"><span class="kind kind-text">text</span><span class="t">Working on: extend the rate limiter to per-tenant buckets</span><span class="val">2,600 in / 3,400 out · $0.5455</span></div></div></details><details class="turn-d" data-time="1" data-calls="1" data-cost="0.423250"><summary class="turn-summary"><span class="time">09:19:00</span><span class="t">what happens when a tenant is deleted mid-window?</span><span class="val">1 call · $0.4233</span></summary><div class="units"><div class="unit-row" data-time="0" data-calls="1" data-cost="0.423250"><span class="kind kind-text">text</span><span class="t">Working on: what happens when a tenant is deleted mid-windo…</span><span class="val">1,500 in / 1,600 out · $0.4233</span></div></div></details></div></details></div></details><details class="chapter-d" data-time="1" data-calls="1" data-cost="0.432000"><summary class="chapter-summary"><span class="chapter-title"><span class="swatch" style="background:var(--series-2)"></span>Document the limiter for downstream teams<span class="category-badge">documentation</span></span><span class="chapter-figs"><b>$0.4320</b>&nbsp;(31%)</span></summary><div class="sections"><details class="section-d" data-time="0" data-calls="1" data-cost="0.432000" open><summary class="section-summary"><span class="dot" style="background:var(--series-2)"></span><span class="t">Write it up</span><span class="val">1 turn · $0.4320</span></summary><div class="turns"><details class="turn-d" data-time="0" data-calls="1" data-cost="0.432000"><summary class="turn-summary"><span class="time">09:26:00</span><span class="t">write the rate limiting docs for downstream teams</span><span class="val">1 call · $0.4320</span></summary><div class="units"><div class="unit-row" data-time="0" data-calls="1" data-cost="0.432000"><span class="kind kind-text">text</span><span class="t">Working on: write the rate limiting docs for downstream tea…</span><span class="val">1,900 in / 2,600 out · $0.4320</span></div></div></details></div></details></div></details>
+      </div>
+    </div>
+    
+    <div class="panel">
+      <h2>Commits during this session</h2>
+      <p class="caption">1 commit landed in this repo during this session's time window - a time-window match, not proof they came from this session specifically (someone else committing to the same repo in that window would show up too).</p>
+      <div class="commit-row"><code class="commit-sha">1bcdef0</code><span class="t">Per-tenant rate limit buckets (#418)</span><span class="ref-badge ref-pr">#418</span><span class="val">2026-08-05 10:32</span></div>
+    </div>
+
+    <p class="footnote">
+      Read-only - nothing here edits the transcript or its chapter cache, and viewing this page
+      never triggers a chaptering API call. Served locally by <code>work-ledger serve</code>;
+      never leaves 127.0.0.1.
+    </p>
+    <p class="ledger-footer">work-ledger v0.2.0 &middot; 618704f &middot; <a href="https://github.com/dhk/work-ledger">github.com/dhk/work-ledger</a></p>
+  </div>
+</div>
+
+<script>
+const treeSortFields = [["time", "Time"], ["calls", "Calls"], ["cost", "$"]];  // [[key, label], ...]
+let currentTreeField = "cost";
+const defaultTreeCaption = "Click a chapter, then a section, then a turn to drill down - same grouping as chapters --detail, browsable instead of flag-driven.";
+
+function sortTreeContainer(container, field) {
+  // Every direct child of a chapters-root/.sections/.turns/.units container
+  // carries data-time/data-calls/data-cost (see _chapter_block/
+  // _section_block/_turn_block/_unit_row) - sort in place and re-append in
+  // the new order. appendChild *moves* existing nodes rather than cloning,
+  // so an open <details> stays open across a re-sort.
+  const children = Array.from(container.children).filter((el) => el.dataset && el.dataset.time !== undefined);
+  if (children.length < 2) return;
+  children.sort((a, b) => {
+    if (field === "time") return parseFloat(a.dataset.time) - parseFloat(b.dataset.time);
+    if (field === "calls") return parseFloat(b.dataset.calls) - parseFloat(a.dataset.calls);
+    return parseFloat(b.dataset.cost) - parseFloat(a.dataset.cost);
+  });
+  children.forEach((el) => container.appendChild(el));
+}
+
+function applyTreeSort(field) {
+  currentTreeField = field;
+  const buttonsRoot = document.getElementById("tree-sort-buttons");
+  [...buttonsRoot.children].forEach((btn) => btn.classList.toggle("active", btn.dataset.field === field));
+
+  const caption = document.getElementById("tree-sort-caption");
+  const fieldLabel = treeSortFields.find(([k]) => k === field)[1];
+  caption.textContent = field === "time"
+    ? defaultTreeCaption
+    : `Sorted by ${fieldLabel}, most first, at every level (chapters, sections, turns, and calls). ${defaultTreeCaption}`;
+
+  // Same sort key cascades through every nesting level at once, not just
+  // the top-level chapter list - "most expensive first" should hold true
+  // whichever level you drill into next.
+  document.querySelectorAll(".chapters-root, .sections, .turns, .units").forEach((c) => sortTreeContainer(c, field));
+}
+
+const treeButtonsRoot = document.getElementById("tree-sort-buttons");
+treeSortFields.forEach(([field, label]) => {
+  const btn = document.createElement("button");
+  btn.className = "sort-btn" + (field === currentTreeField ? " active" : "");
+  btn.type = "button";
+  btn.dataset.field = field;
+  btn.textContent = label;
+  btn.addEventListener("click", () => applyTreeSort(field));
+  treeButtonsRoot.appendChild(btn);
+});
+
+applyTreeSort(currentTreeField);
+</script>
+
+</body>
+</html>
