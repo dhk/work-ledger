@@ -13,6 +13,18 @@ flowchart LR
 
 Today, the strongest surfaces **show** what happened: live usage, costs, activity, chapters, timelines, trends, rollups, and repeated-work signals. Recommendations are an early **Tell** layer. **Do** automation is deliberately not presented as mature or automatic.
 
+## What it looks like
+
+`work-ledger serve` — drill from a session into its chapters, sections, turns, and individual calls, with cost at every level:
+
+![The serve UI: a session's chapters expanded into sections, turns, and per-call costs, alongside the commits that landed during the session](docs/demo/session-detail.png)
+
+`work-ledger rollup --report` — the same initiative totalled across every session it touched:
+
+![A rollup bar chart: cost by recurring initiative, most expensive first, with cumulative percentages](docs/demo/rollup.png)
+
+**Every figure in these images is fabricated for illustration** — no real session is shown. They're generated from the real renderers by [`scripts/build_demo.py`](scripts/build_demo.py), so they can't drift from what the tool actually produces. Browsable versions, including the sessions landing page, are in [`docs/demo/`](docs/demo/) — open the HTML files directly, no install needed.
+
 ## Install
 
 Published package:
