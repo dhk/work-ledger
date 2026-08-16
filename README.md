@@ -4,6 +4,8 @@
 
 work-ledger turns one person's local Claude Code transcripts into attributable usage, recurring-work trends, and evidence for improving how they work. It is a reader, not session instrumentation or a team observability platform.
 
+The current implementation begins with one person's local corpus. The broader product vision is work-centric: understand how work happens and changes, identify reusable practice, and eventually help teams learn from one another without reducing people to productivity scores. See [CONSTITUTION.md](CONSTITUTION.md), [PRODUCT_VISION.md](PRODUCT_VISION.md), and [PRODUCT_STRATEGY.md](PRODUCT_STRATEGY.md).
+
 ```mermaid
 flowchart LR
     A["Local Claude Code transcripts"] --> B["Attributable work<br/>cost, tokens, tools, chapters"]
@@ -95,11 +97,17 @@ flowchart LR
 
 Failures in optional calls degrade to local results; they do not block the core views. The exhaustive, authoritative list and persisted-data model are in [docs/architecture.md](docs/architecture.md#network-calls-the-exhaustive-list).
 
-## Scope and maturity
+## Product governance, scope, and maturity
 
-work-ledger is for an individual inspecting their own usage. It is not a team/org governance product, and the optional pattern backend remains personal-only and self-hosted. Cost estimates use a hardcoded pricing table and should be treated as estimates; Claude subscription limit thresholds are calibrated approximations.
+The repository separates enduring product intent from current implementation:
 
-See [PRODUCT_BRIEF.md](PRODUCT_BRIEF.md) for product boundaries, [ROADMAP.md](ROADMAP.md) for maturity, and [CONTRIBUTING.md](CONTRIBUTING.md) to make changes.
+> **[Constitution](CONSTITUTION.md) → [Product Vision](PRODUCT_VISION.md) → [Product Strategy](PRODUCT_STRATEGY.md) → [Roadmap](ROADMAP.md) → Issues and PRs**
+
+The shipped product today is for an individual inspecting their own usage. It is not currently a team/org governance product, and the optional pattern backend remains personal-only and self-hosted. The vision deliberately looks beyond that current boundary toward consented cross-person learning; that future scope must earn its way onto the roadmap through the evidence and governance requirements in the Constitution and Product Strategy.
+
+Cost estimates use a hardcoded pricing table and should be treated as estimates; Claude subscription limit thresholds are calibrated approximations.
+
+See [ROADMAP.md](ROADMAP.md) for current intent and maturity, and [CONTRIBUTING.md](CONTRIBUTING.md) to make changes. `PRODUCT_BRIEF.md` remains as a compatibility pointer for older links.
 
 ## License
 
