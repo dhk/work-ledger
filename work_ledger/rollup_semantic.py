@@ -185,6 +185,50 @@ def propose_merges(titles: list[str]) -> SemanticMergeResult:
     if len(titles) < 2:
         return SemanticMergeResult(groups=[])
 
+    # Route through the same backend selection as chapters.get_chapters so that
+    # WORK_LEDGER_CHAPTER_BACKEND=ollama is honoured here too (issue #111).
+    # When the backend is Anthropic we need the anthropic package; when it is
+    # Ollama we need that instead.  Import lazily so neither is a hard dep.
+    from work_ledger.chapters import _select_backend  # noqa: PLC0415
+
+    try:
+        backend = _select_backend()
+    except Exception as e:
+        return SemanticMergeResult(
+            groups=[],
+            fallback_reason=(
+                f"backend selection failed ({e}); semantic matching skipped, "
+                "falling back to deterministic-only clustering"
+            ),
+        )
+
+    # For Anthropic backend we use the existing hosted path; for every other
+    # backend we call it via the shared ChapterBackend protocol.
+    from work_ledger.chapters import AnthropicBackend  # noqa: PLC0415
+
+    if not isinstance(backend, AnthropicBackend):
+        # Non-Anthropic backend: build a minimal outline-style prompt and
+        # delegate through the backend's call() interface.
+        try:
+            import anthropic  # still needed for exception types below
+        except ImportError:
+            pass  # non-Anthropic path doesn't need the package
+
+        try:
+            raw = backend.call(
+                outline=_build_prompt(titles),
+                prior_chapter_titles=[],
+            )
+            import json as _json  # noqa: PLC0415
+            data = _json.loads(raw.content) if isinstance(raw.content, str) else {}
+            groups = [m["indices"] for m in data.get("merges", [])]
+            return SemanticMergeResult(groups=groups)
+        except Exception as e:
+            return SemanticMergeResult(
+                groups=[],
+                fallback_reason=f"local-backend semantic call failed ({e}); falling back to deterministic clustering",
+            )
+
     try:
         import anthropic  # imported lazily - only needed when semantic matching actually runs
     except ImportError as e:
