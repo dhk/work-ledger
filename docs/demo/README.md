@@ -45,9 +45,18 @@ Two consequences worth knowing:
   rather than as a screenshot that silently becomes fiction.
 
 ```sh
-python scripts/build_demo.py          # HTML only
-python scripts/build_demo.py --png    # also the PNG stills used in the README
+python3.12 scripts/build_demo.py          # HTML only
+python3.12 scripts/build_demo.py --png    # also the PNG stills used in the README
 ```
+
+**Use Python 3.12** — the version CI regenerates with. Python 3.12 changed
+`sum()` to use Neumaier compensated summation for floats, so the same
+costs summed on 3.11 and 3.12 differ in their last bits, and those totals
+are embedded at full precision in each page's JSON. Regenerating on
+another version rewrites files that are otherwise unchanged and fails
+`demo-drift` for a reason unrelated to the renderers. Nothing visible
+changes either way — the stills come out byte-identical, since the
+difference sits fifteen decimal places below anything displayed.
 
 PNG rendering needs the `report` extra (`pip install "work-ledger[report]"`
 plus `playwright install chromium`). Without it the HTML is still written

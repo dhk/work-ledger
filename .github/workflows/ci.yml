@@ -68,6 +68,13 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
+          # Load-bearing, not incidental. Python 3.12 changed sum() to use
+          # Neumaier compensated summation for floats, so identical costs
+          # summed on 3.11 vs 3.12 differ in their last bits - and those
+          # totals are embedded at full precision in each page's JSON
+          # payload. Regenerate locally on anything else and this job fails
+          # over a fifteenth decimal place. scripts/build_demo.py says the
+          # same thing to whoever runs it.
           python-version: "3.12"
 
       - name: Install work-ledger

@@ -28,8 +28,22 @@ Two rules make this worth having rather than a liability:
 
 Usage:
 
-    python scripts/build_demo.py            # HTML only
-    python scripts/build_demo.py --png      # also render PNG stills
+    python3.12 scripts/build_demo.py          # HTML only
+    python3.12 scripts/build_demo.py --png    # also render PNG stills
+
+**Regenerate with Python 3.12** - the version `demo-drift` uses in CI.
+This isn't fussiness: Python 3.12 changed `sum()` to use Neumaier
+compensated summation for floats, so the same costs summed on 3.11 and
+3.12 differ in their last bits (`3.130000000000001` vs
+`3.1300000000000003`). Those totals are embedded at full precision in
+each page's JSON payload, so regenerating on another version rewrites
+files that are otherwise unchanged, and `demo-drift` fails for a reason
+that has nothing to do with the renderers.
+
+Nothing visible differs - the stills render byte-identical either way,
+since the discrepancy is fifteen decimal places below anything displayed.
+It is purely a byte-exactness concern, and it only exists because the
+check is byte-exact.
 
 PNG rendering needs the `report` extra (`pip install "work-ledger[report]"`
 plus `playwright install chromium`); without it the HTML is still written
