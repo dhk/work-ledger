@@ -45,6 +45,56 @@ jobs:
       - name: Run tests
         run: pytest --cov=work_ledger --cov-report=term-missing --cov-fail-under=65
 
+  demo-drift:
+    # docs/demo/ is rendered by report.py's real functions (see
+    # scripts/build_demo.py), and it's what docs/index.html - the published
+    # GitHub Pages site - shows people who haven't installed anything. A
+    # rendering change that doesn't reach the demo turns it into a picture
+    # of a version that no longer exists. That is exactly how PR #41's
+    # "matches actual product output" asset went stale for a hundred
+    # commits, and it's issue #109's core ask: make staleness impossible
+    # rather than merely unlikely.
+    #
+    # Scope, stated honestly: this regenerates the HTML only. The PNG
+    # stills need a real Chromium the Python matrix above deliberately
+    # doesn't install (see its "report extra" comment). HTML drift is a
+    # good proxy - both come from the same renderers, so a change that
+    # would alter a still almost always alters the HTML first - but if this
+    # job fails, regenerate with `--png` so the images move too, rather
+    # than committing HTML that no longer matches the pictures beside it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Load-bearing, not incidental. Python 3.12 changed sum() to use
+          # Neumaier compensated summation for floats, so identical costs
+          # summed on 3.11 vs 3.12 differ in their last bits - and those
+          # totals are embedded at full precision in each page's JSON
+          # payload. Regenerate locally on anything else and this job fails
+          # over a fifteenth decimal place. scripts/build_demo.py says the
+          # same thing to whoever runs it.
+          python-version: "3.12"
+
+      - name: Install work-ledger
+        run: python -m pip install -e .
+
+      - name: Regenerate the demo pages
+        run: python scripts/build_demo.py
+
+      - name: Fail if the checked-in demo is stale
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- docs/demo; then
+            echo "docs/demo is up to date with the current renderers."
+            exit 0
+          fi
+          echo "::error::docs/demo is stale - regenerating it here produced a different result than what's committed. Run 'python scripts/build_demo.py --png' and commit the result. See docs/demo/README.md."
+          git diff --stat -- docs/demo
+          git diff -- docs/demo | head -100
+          exit 1
+
   backend-test:
     # backend/ (the Vercel + Upstash counter/findings service - see #45) is
     # a separate deployable with its own tiny test suite (route-level smoke

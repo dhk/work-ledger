@@ -45,15 +45,38 @@ Two consequences worth knowing:
   rather than as a screenshot that silently becomes fiction.
 
 ```sh
-python scripts/build_demo.py          # HTML only
-python scripts/build_demo.py --png    # also the PNG stills used in the README
+python3.12 scripts/build_demo.py          # HTML only
+python3.12 scripts/build_demo.py --png    # also the PNG stills used in the README
 ```
+
+**Use Python 3.12** — the version CI regenerates with. Python 3.12 changed
+`sum()` to use Neumaier compensated summation for floats, so the same
+costs summed on 3.11 and 3.12 differ in their last bits, and those totals
+are embedded at full precision in each page's JSON. Regenerating on
+another version rewrites files that are otherwise unchanged and fails
+`demo-drift` for a reason unrelated to the renderers. Nothing visible
+changes either way — the stills come out byte-identical, since the
+difference sits fifteen decimal places below anything displayed.
 
 PNG rendering needs the `report` extra (`pip install "work-ledger[report]"`
 plus `playwright install chromium`). Without it the HTML is still written
 and the PNG step explains why it skipped. If you have a Chromium that
 playwright can't locate, point `WORK_LEDGER_CHROMIUM` at it.
 
-See [issue #109](https://github.com/dhk/work-ledger/issues/109) for the
-remaining work — chiefly a CI check that regenerating produces no diff,
-which is what would make staleness impossible rather than merely unlikely.
+## Staleness is enforced, not hoped for
+
+CI regenerates these pages on every pull request and fails if the result
+differs from what's committed (`demo-drift` in
+`.github/workflows/ci.yml`). A rendering change that doesn't reach the
+demo can't merge quietly.
+
+That check covers the **HTML only** — the PNG stills need a real Chromium
+that CI deliberately doesn't install. Both come from the same renderers,
+so a change big enough to alter a still almost always alters the HTML
+first; treat a `demo-drift` failure as the signal to regenerate with
+`--png` so the images move with the markup rather than drifting apart
+from it.
+
+See [issue #109](https://github.com/dhk/work-ledger/issues/109) for what
+remains: which `--report` outputs the demo should cover beyond `serve`
+and `rollup`.
