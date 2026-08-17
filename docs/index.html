@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>work-ledger — first run</title>
+<meta name="description" content="work-ledger turns your own Claude Code transcripts into attributable cost, activity mix, and recurring-work signals. MIT licensed, runs entirely on your machine." />
+<meta name="color-scheme" content="light dark" />
+<link rel="canonical" href="https://dhk.github.io/work-ledger/" />
+
+<!-- Inline SVG favicon: no external request, and no binary asset to keep in
+     sync with the page. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%92%3C/text%3E%3C/svg%3E" />
+
+<meta property="og:type" content="website" />
+<meta property="og:title" content="work-ledger — first run" />
+<meta property="og:description" content="See where your Claude Code time and money actually went. MIT licensed, local-only, and explicit about all five of its network paths." />
+<meta property="og:url" content="https://dhk.github.io/work-ledger/" />
+<meta property="og:image" content="https://dhk.github.io/work-ledger/demo/session-detail.png" />
+<meta name="twitter:card" content="summary_large_image" />
+
+<style>
+  :root {
+    --paper:      #F4F6F8;
+    --surface:    #FFFFFF;
+    --surface-2:  #EAEEF3;
+    --ink:        #14202E;
+    --muted:      #5A6B7D;
+    --rule:       #D6DDE5;
+    --accent:     #B3243B;
+    --accent-bg:  #FBEAED;
+    --free:       #12705A;
+    --free-bg:    #E4F1EC;
+    --term-bg:    #16202B;
+    --term-ink:   #D3DDE7;
+    --term-dim:   #7E93A6;
+    --shadow:     0 1px 2px rgba(20,32,46,.06), 0 8px 24px rgba(20,32,46,.06);
+
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #0E141B;
+      --surface:   #161E27;
+      --surface-2: #1D2732;
+      --ink:       #E6ECF2;
+      --muted:     #93A3B4;
+      --rule:      #263140;
+      --accent:    #FF7387;
+      --accent-bg: #2C1820;
+      --free:      #46C6A0;
+      --free-bg:   #10261F;
+      --term-bg:   #090D12;
+      --term-ink:  #C9D5E0;
+      --term-dim:  #6D8195;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:     #0E141B;
+    --surface:   #161E27;
+    --surface-2: #1D2732;
+    --ink:       #E6ECF2;
+    --muted:     #93A3B4;
+    --rule:      #263140;
+    --accent:    #FF7387;
+    --accent-bg: #2C1820;
+    --free:      #46C6A0;
+    --free-bg:   #10261F;
+    --term-bg:   #090D12;
+    --term-ink:  #C9D5E0;
+    --term-dim:  #6D8195;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    padding: clamp(1.5rem, 5vw, 4.5rem) clamp(1rem, 5vw, 2rem) 5rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 46rem;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3.25rem;
+  }
+
+  a { color: var(--accent); text-underline-offset: 3px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  /* ---- masthead ---- */
+  .masthead { display: flex; flex-direction: column; gap: 1rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .75rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(2rem, 6vw, 2.9rem);
+    letter-spacing: -.03em;
+    line-height: 1.05;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: 1.15rem;
+    color: var(--muted);
+    margin: 0;
+    max-width: 34rem;
+    text-wrap: pretty;
+  }
+
+  .masthead-rule {
+    height: 3px;
+    background: var(--ink);
+    border: 0;
+    margin: .5rem 0 0;
+  }
+
+  /* ---- sections ---- */
+  section { display: flex; flex-direction: column; gap: 1.1rem; }
+
+  h2 {
+    font-family: var(--mono);
+    font-size: 1.3rem;
+    letter-spacing: -.02em;
+    margin: 0;
+    padding-bottom: .6rem;
+    border-bottom: 1px solid var(--rule);
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--mono);
+    font-size: 1rem;
+    letter-spacing: -.01em;
+    margin: 0;
+  }
+
+  p { margin: 0; text-wrap: pretty; }
+
+  ul, ol { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: .5rem; }
+  li::marker { color: var(--muted); }
+  .paths li::marker { font-family: var(--mono); font-size: .85rem; color: var(--accent); }
+  .paths li { font-size: .95rem; }
+  .paths strong { color: var(--ink); }
+
+  code {
+    font-family: var(--mono);
+    font-size: .875em;
+    background: var(--surface-2);
+    padding: .12em .38em;
+    border-radius: 3px;
+  }
+
+  /* ---- terminal ---- */
+  .term {
+    background: var(--term-bg);
+    color: var(--term-ink);
+    font-family: var(--mono);
+    font-size: .82rem;
+    line-height: 1.7;
+    padding: 1rem 1.1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0;
+    box-shadow: var(--shadow);
+    tab-size: 2;
+  }
+  .term .c { color: var(--term-dim); }
+  .term .p { color: var(--free); }
+
+  /* ---- chips ---- */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: .18em .5em;
+    border-radius: 3px;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .chip-free { background: var(--free-bg); color: var(--free); }
+  .chip-key  { background: var(--accent-bg); color: var(--accent); }
+
+  /* ---- steps ---- */
+  .steps { display: flex; flex-direction: column; gap: 1.75rem; counter-reset: step; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 2.4rem 1fr;
+    gap: 0 1rem;
+    align-items: baseline;
+  }
+  .step::before {
+    counter-increment: step;
+    content: counter(step, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--accent);
+    font-weight: 600;
+    padding-top: .15rem;
+  }
+  .step-body { display: flex; flex-direction: column; gap: .6rem; min-width: 0; }
+  .step-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+  .step-head code { background: none; padding: 0; font-size: 1rem; font-weight: 600; }
+
+  /* ---- table ---- */
+  .table-scroll { overflow-x: auto; box-shadow: var(--shadow); border-radius: 6px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    background: var(--surface);
+    font-size: .92rem;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td {
+    text-align: left;
+    padding: .6rem .85rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td code { white-space: nowrap; }
+
+  /* ---- callout ---- */
+  .note {
+    background: var(--surface);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    padding: .9rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    box-shadow: var(--shadow);
+  }
+  .note h3 { color: var(--accent); }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 1rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+
+  /* ---- figures ---- */
+  figure {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: .55rem;
+  }
+  figure picture { display: block; }
+  figure img {
+    display: block;
+    width: 100%;
+    height: auto;
+    /* These are full-page screenshots, tall enough to push everything
+       below them off the first screen. Show the top of each - which is
+       where the substance is - and let the caption's link take anyone
+       who wants the whole thing to the live page. */
+    max-height: 26rem;
+    object-fit: cover;
+    object-position: top center;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    box-shadow: var(--shadow);
+    background: var(--surface);
+  }
+  figcaption {
+    font-size: .85rem;
+    color: var(--muted);
+    text-wrap: pretty;
+  }
+
+  .repo-link {
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--muted);
+    text-decoration: none;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: .25rem .7rem;
+    align-self: flex-start;
+    background: var(--surface);
+  }
+  .repo-link:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ---- pillars ---- */
+  .pillars {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+    gap: 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .pillar {
+    padding: 1.1rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: .45rem;
+    border-top: 3px solid var(--ink);
+    box-shadow: inset 1px 0 0 var(--rule);
+  }
+  .pillar:first-child { box-shadow: none; }
+  .pillar p:not(.pillar-label) { font-size: .93rem; color: var(--muted); }
+  .pillar-label {
+    font-family: var(--mono);
+    font-size: .74rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  dl { margin: 0; display: flex; flex-direction: column; gap: .8rem; }
+  dt { font-family: var(--mono); font-size: .88rem; font-weight: 600; }
+  dd { margin: .15rem 0 0; color: var(--muted); font-size: .95rem; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.25rem;
+    color: var(--muted);
+    font-size: .85rem;
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+  }
+  footer .mono { font-family: var(--mono); font-size: .78rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Walkthrough · first run</p>
+    <h1>work-ledger</h1>
+    <p class="standfirst">Turn your own Claude Code transcripts into attributable cost, activity mix, and recurring-work signals. MIT licensed, runs entirely on your machine, and roughly ten minutes from install to seeing your real numbers.</p>
+    <a class="repo-link" href="https://github.com/dhk/work-ledger">github.com/dhk/work-ledger →</a>
+    <hr class="masthead-rule" />
+  </header>
+
+  <section>
+    <figure>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="demo/session-detail-dark.png" />
+        <img src="demo/session-detail.png" alt="The work-ledger serve UI: one session's chapters expanded into sections, turns and per-call costs, with a panel listing the commits that landed during the session." />
+      </picture>
+      <figcaption><code>work-ledger serve</code> — drill from a session into chapters, sections, turns and individual calls, with cost at every level. <a href="demo/sessions.html">Open the live demo</a> — no install, nothing to configure. <strong>Every figure in it is fabricated</strong>; no real session is shown.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Three things worth knowing up front</h2>
+    <div class="pillars">
+      <div class="pillar">
+        <p class="pillar-label">MIT licensed</p>
+        <p>Read it, fork it, use it at work. No tiers, no seats, no telemetry-for-free-usage bargain. The whole thing is ~11k lines of Python you can audit in an afternoon.</p>
+      </div>
+      <div class="pillar">
+        <p class="pillar-label">Privacy first</p>
+        <p>It reads files already on your disk and does the math locally. Nothing is uploaded by default. <code>export</code> writes a local file and has no upload flag — deliberately, and there's no setting to add one.</p>
+      </div>
+      <div class="pillar">
+        <p class="pillar-label">Transparent</p>
+        <p>Exactly five network paths exist, all documented and enumerated. Cost figures say when they're estimates, and show <code>?</code> rather than a confident wrong number when a model has no known rate.</p>
+      </div>
+    </div>
+    <p>Those aren't marketing lines — they're written into the project's stated non-goals, which include <em>"no undisclosed network behavior"</em> and an exhaustive network-call contract kept in the architecture doc. The <a href="#boundary">boundary section</a> below lists all five paths.</p>
+  </section>
+
+  <section>
+    <h2>What it is</h2>
+    <p>work-ledger reads the session transcripts Claude Code already writes to <code>~/.claude/projects/</code> and reports what your work actually cost, where the time and tokens went, and which patterns keep recurring.</p>
+    <p>It is a <strong>reader</strong>. It doesn't instrument your sessions, doesn't run a collector, and doesn't need a service. Everything below runs against files that already exist on your disk.</p>
+    <div class="card">
+      <h3>What it deliberately isn't</h3>
+      <p>Not a team or org observability product — it's scoped to one person inspecting their own usage. Cost figures are estimates from a pricing table, not itemized billing; Anthropic doesn't expose per-run dollars for plan-included usage.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The one thing to know first</h2>
+    <p>Almost all of work-ledger needs <strong>no API key at all</strong>. Exactly one feature does: <em>chaptering</em>, the pass that groups your prompts into named initiatives by sending short snippets to Haiku.</p>
+    <p>That distinction shapes your whole first hour, so every command in this document is marked:</p>
+    <div class="grid-2">
+      <div class="card">
+        <span class="chip chip-free">Free</span>
+        <p>Reads local files, does local math. No network call, no credentials, no cost. This is most of the tool.</p>
+      </div>
+      <div class="card">
+        <span class="chip chip-key">Needs key</span>
+        <p>Makes a Haiku call using <em>your</em> credentials. Fractions of a cent to a few cents per session, and the CLI prints what each pass cost.</p>
+      </div>
+    </div>
+    <p>You can satisfy the credential requirement four ways: an <code>ANTHROPIC_API_KEY</code>, an <code>ANTHROPIC_AUTH_TOKEN</code>, an <code>ant auth login</code> profile on disk — <strong>a subscription credential works; you don't have to paste an API key</strong> — or you can skip the hosted API entirely by running chaptering against a local Ollama model, where cost is always $0 and snippets never leave your machine.</p>
+  </section>
+
+  <section>
+    <h2>Install</h2>
+    <p>Needs Python 3.10+ and some existing Claude Code transcripts to read.</p>
+    <pre class="term"><span class="c"># published package</span>
+<span class="p">$</span> python3 -m pip install --user work-ledger
+
+<span class="c"># inside an active venv, drop --user</span></pre>
+    <div class="note">
+      <h3>Check your version before anything else</h3>
+      <p>You need <strong>0.2.0 or newer</strong>. The <code>0.1.0</code> release predates twelve of the commands below — including most of the credential-free ones — so on <code>0.1.0</code> half this document describes a CLI you don't have.</p>
+      <pre class="term"><span class="p">$</span> work-ledger about   <span class="c"># reports the version you actually installed</span></pre>
+      <p>If you land on something older, install from source instead. Use <code>uv</code> or <code>pipx</code> rather than <code>python3 -m venv</code>, which fails on a stock Ubuntu box without <code>python3-venv</code>:</p>
+      <pre class="term"><span class="p">$</span> git clone https://github.com/dhk/work-ledger.git
+<span class="p">$</span> cd work-ledger &amp;&amp; uv venv &amp;&amp; uv pip install -e .</pre>
+    </div>
+  </section>
+
+  <section>
+    <h2>The tour</h2>
+    <p>In this order — cheapest orientation first, strongest surface second. All six are free and need no credentials.</p>
+
+    <div class="steps">
+
+      <div class="step">
+        <div class="step-body">
+          <div class="step-head"><code>work-ledger sessions --top 10</code> <span class="chip chip-free">Free</span></div>
+          <p>Start here. A cost-ranked table of every session on your machine: project, last active, turns, first and last prompt, cost. It's how you find the session you actually care about before drilling into anything.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body">
+          <div class="step-head"><code>work-ledger serve</code> <span class="chip chip-free">Free</span></div>
+          <p>The strongest surface, and the one to show someone if you only show them one thing. A local read-only web UI, bound to <code>127.0.0.1</code> — there is no <code>--host</code> flag, by design.</p>
+          <p>Browse sessions → chapters → turns → units, sortable by cost, recency, duration or tokens, with the sort cascading through every level. It also correlates each session's working directory against your local <code>git log</code> to show <em>"Commits during this session"</em> — no GitHub API, no token.</p>
+          <pre class="term"><span class="p">$</span> work-ledger serve --port 8791 --top 20</pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body">
+          <div class="step-head"><code>work-ledger activity</code> <span class="chip chip-free">Free</span></div>
+          <p>Cost grouped by <em>kind of work</em> rather than by initiative — <code>Tool: Bash</code>, <code>Tool: Read</code>, <code>Direct response (no tool call)</code>. The fastest way to see whether your spend is going into thinking or into mechanical tool loops. Add <code>--report</code> to write a standalone HTML file.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body">
+          <div class="step-head"><code>work-ledger trend</code> <span class="chip chip-free">Free</span></div>
+          <p>Cost bucketed by day or week across every session, with a sparkline. This is the "is my spend going up" view.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body">
+          <div class="step-head"><code>work-ledger timeline --summary</code> <span class="chip chip-free">Free</span></div>
+          <p>A different axis from cost: how your <em>practice</em> changed. Tool, skill and subagent mix over time, plus a plain-language narrative of what shifted. The approach-mix panel stays empty until you've run chaptering — it'll point you at <code>timeline backfill</code>.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-body">
+          <div class="step-head"><code>work-ledger limits --once</code> <span class="chip chip-free">Free</span></div>
+          <p>Rolling 5-hour token totals across all sessions — the "why did I hit my session limit" view that started the project. Honest about itself: the threshold is a self-calibrated estimate, not an official number. Next time Claude Code tells you you've hit the limit, check this and save the reading with <code>--set-threshold</code>.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Then, if you want initiatives</h2>
+    <p>Everything above answers "what did this <em>cost</em>". Chaptering answers "what was I <em>working on</em>" — and it's the one axis that needs credentials, because grouping prompts into initiatives is a judgement call, not arithmetic.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Command</th><th>What it gives you</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>chapters</code></td>
+            <td>Your session grouped into named initiatives, with cost per initiative</td>
+            <td><span class="chip chip-key">Needs key</span></td>
+          </tr>
+          <tr>
+            <td><code>rollup</code></td>
+            <td>The same initiative clustered <em>across</em> sessions — total cost per recurring piece of work</td>
+            <td><span class="chip chip-key">Needs key</span></td>
+          </tr>
+          <tr>
+            <td><code>waste --cross-session</code></td>
+            <td>Repeated reads and near-identical work compared across every session of an initiative</td>
+            <td><span class="chip chip-key">Needs key</span></td>
+          </tr>
+          <tr>
+            <td><code>waste</code></td>
+            <td>The same recurring-work mining, but within a single session</td>
+            <td><span class="chip chip-free">Free</span></td>
+          </tr>
+          <tr>
+            <td><code>miso</code></td>
+            <td>"Make it so" — chaptering plus reports end-to-end in one command</td>
+            <td><span class="chip chip-key">Needs key</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <figure>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="demo/rollup-dark.png" />
+        <img src="demo/rollup.png" alt="A work-ledger rollup: cost by recurring initiative, most expensive first, each with its share of total spend and a running cumulative percentage." />
+      </picture>
+      <figcaption><code>rollup --report</code> — the same initiative totalled across every session it touched. <a href="demo/rollup.html">Open it</a>. Illustrative figures.</figcaption>
+    </figure>
+    <p>Chapter results are <strong>cached and frozen</strong> per session in a <code>&lt;session-id&gt;.chapters.json</code> file beside the transcript. Re-runs only pay for genuinely new turns, and an existing chapter is never re-titled or re-charged — even if later turns show it was mislabeled.</p>
+    <div class="note">
+      <h3>Commands that spend money if a key happens to be set</h3>
+      <p><code>chapters</code>, <code>miso</code>, <code>timeline backfill</code>, and <code>rollup --semantic</code> all make a paid call — expected from the names. The one that catches people is <strong><code>recommend</code>, which runs a chaptering pass too.</strong></p>
+      <p>It does tell you: the banner reads <em>"local-only heuristics … no extra API call beyond chaptering itself"</em> — and chaptering itself is the paid part. Accurate, but easy to read as "this is free." It prints what the pass cost afterward.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Honest caveats</h2>
+    <dl>
+      <dt>Costs are estimates</dt>
+      <dd>Computed from a hardcoded per-model pricing table, not from billing. Sonnet 5's introductory pricing isn't modeled, so estimates run slightly high during that window.</dd>
+
+      <dt>A <code>?</code> in the cost column means "no rate for this model"</dt>
+      <dd>Not a parsing failure and not zero — the tool refuses to silently report <code>$0.00</code> for a model it can't price. The note under the table names which model, so the fix is one line. Worth knowing because <code>claude-opus-5</code> was missing this way until 0.2.0, which left ~99% of recent turns unpriced.</dd>
+
+      <dt>Subagent attribution can under-count</dt>
+      <dd>On installs that inline subagent activity as <code>isSidechain</code> entries rather than separate files, those entries are skipped — the tool prints a <code>Warning:</code> line when this happens. Skill follow-on work is also only attributed to the invoking call, not to everything the skill drove.</dd>
+
+      <dt>The limit threshold is yours to calibrate</dt>
+      <dd>Anthropic doesn't publish the exact rolling-window threshold, so the percentage is meaningless until you set it from a real limit hit.</dd>
+
+      <dt>PNG reports need an extra</dt>
+      <dd><code>pip install "work-ledger[report]"</code> then <code>playwright install chromium</code>. HTML needs nothing, and <code>--format png</code> fails with a clear message rather than silently degrading.</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>What it touches on your machine</h2>
+    <p>Worth knowing before you run it, and enough to clean up afterward.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Path</th><th>What</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>&lt;session&gt;.chapters.json</code></td><td>Frozen chapter cache, written beside each transcript under <code>~/.claude/projects/</code></td></tr>
+          <tr><td><code>~/.config/work-ledger/history.db</code></td><td>Local sqlite session history (only when you run <code>history sync</code>)</td></tr>
+          <tr><td><code>~/.config/work-ledger/limits_threshold.json</code></td><td>Your calibrated limit threshold</td></tr>
+          <tr><td><code>~/.config/work-ledger/rollup_presets.json</code></td><td>Saved <code>rollup</code> flag bundles</td></tr>
+          <tr><td><code>./work-ledger-*.html</code></td><td>Generated reports, written to the current directory</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3 id="boundary" style="margin-top:.5rem">Network boundary — all five paths</h3>
+    <p>Parsing, cost math, activity, trends, deterministic rollups, exports, reports and the local web UI are all local computation. The complete list of ways anything leaves your machine:</p>
+    <ol class="paths">
+      <li><strong>Hosted Haiku chaptering</strong> — sends prompt and unit snippets, using your credentials. The default, and the only one on by default.</li>
+      <li><strong>Local Ollama chaptering</strong> — same snippets to a server you run, localhost by default. Opt-in, replaces path 1.</li>
+      <li><strong>Pattern counters</strong> — anonymous recommended/used counts to your own self-hosted backend. Requires <code>patterns enable</code> plus configuration.</li>
+      <li><strong>Findings submission</strong> — review text, only on an explicit MCP call, and only with a separate token set.</li>
+      <li><strong>Semantic rollup matching</strong> — unmatched initiative titles to hosted Haiku. Off unless you pass <code>--semantic</code>.</li>
+    </ol>
+    <p>Content only ever leaves in paths 1, 2 and 5 (snippets) and 4 (findings text). Paths 3–5 are off until you turn them on. <code>export</code> writes a local file and has no upload flag at all.</p>
+  </section>
+
+  <footer>
+    <p><strong>Repo:</strong> <a href="https://github.com/dhk/work-ledger">github.com/dhk/work-ledger</a> · <a href="https://github.com/dhk/work-ledger/blob/main/LICENSE">MIT licensed</a> · <a href="https://github.com/dhk/work-ledger/blob/main/docs/commands.md">full CLI reference</a> · <a href="https://github.com/dhk/work-ledger/blob/main/INSTALL.md">install detail</a> · <a href="https://github.com/dhk/work-ledger/blob/main/docs/architecture.md#network-calls-the-exhaustive-list">the exhaustive network contract</a> · <a href="https://github.com/dhk/work-ledger/blob/main/CHANGELOG.md">changelog</a></p>
+    <p class="mono">Walkthrough written against work-ledger 0.2.0. Run <code>work-ledger about</code> for the version, commit and build date of whatever you actually have.</p>
+  </footer>
+
+</div>
+
+</body>
+</html>

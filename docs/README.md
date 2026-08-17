@@ -1,6 +1,6 @@
 # Documentation
 
-Start with the repository [README](../README.md). Use this index when you need the deeper source of truth.
+Start with the [first-run walkthrough](https://dhk.github.io/work-ledger/) (this folder's `index.html`, published via GitHub Pages) or the repository [README](../README.md). Use this index when you need the deeper source of truth.
 
 ## Product truth
 
