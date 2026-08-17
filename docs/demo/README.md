@@ -54,6 +54,20 @@ plus `playwright install chromium`). Without it the HTML is still written
 and the PNG step explains why it skipped. If you have a Chromium that
 playwright can't locate, point `WORK_LEDGER_CHROMIUM` at it.
 
-See [issue #109](https://github.com/dhk/work-ledger/issues/109) for the
-remaining work — chiefly a CI check that regenerating produces no diff,
-which is what would make staleness impossible rather than merely unlikely.
+## Staleness is enforced, not hoped for
+
+CI regenerates these pages on every pull request and fails if the result
+differs from what's committed (`demo-drift` in
+`.github/workflows/ci.yml`). A rendering change that doesn't reach the
+demo can't merge quietly.
+
+That check covers the **HTML only** — the PNG stills need a real Chromium
+that CI deliberately doesn't install. Both come from the same renderers,
+so a change big enough to alter a still almost always alters the HTML
+first; treat a `demo-drift` failure as the signal to regenerate with
+`--png` so the images move with the markup rather than drifting apart
+from it.
+
+See [issue #109](https://github.com/dhk/work-ledger/issues/109) for what
+remains: which `--report` outputs the demo should cover beyond `serve`
+and `rollup`.
