@@ -355,6 +355,19 @@ def _localize(html: str, session_ids: list[str]) -> str:
         html = html.replace(f'href="/session/{sid}"', f'href="session-{sid[:8]}.html"')
     html = html.replace('href="/"', 'href="sessions.html"')
 
+    # Drop the commit SHA from the about-block footer. It's the right thing
+    # on a report a user generates - that's what #75's about block is for -
+    # but here it resolves to whatever HEAD was at generation time, so every
+    # single commit would change all seven checked-in pages. That's churn in
+    # every diff, and it would make issue #109's "regenerate and fail on a
+    # diff" CI check fail on literally every PR. The version is kept, which
+    # is the part that actually says which renderer produced this.
+    html = re.sub(
+        r"(work-ledger v[^\s<]+)\s*&middot;\s*[0-9a-f]{7,40}\s*&middot;",
+        r"\1 &middot;",
+        html,
+    )
+
     banner = f'<div style="{_BANNER_CSS}"><strong>Illustrative data.</strong> {_BANNER_SENTENCE}</div>'
     # Inside the page's own container so it inherits the report's width and
     # theme, rather than floating full-bleed above it.
@@ -364,7 +377,7 @@ def _localize(html: str, session_ids: list[str]) -> str:
     return html
 
 
-def _render_png(html: str, dst: Path, width: int = 1000) -> str | None:
+def _render_png(html: str, dst: Path, width: int = 1000, color_scheme: str = "light") -> str | None:
     """Screenshot `html` to `dst`. Returns None on success, or a reason
     string if it couldn't.
 
@@ -375,8 +388,16 @@ def _render_png(html: str, dst: Path, width: int = 1000) -> str | None:
     good browser installed at a build number the installed playwright
     doesn't expect, which is a tooling mismatch rather than a missing
     browser. Set WORK_LEDGER_CHROMIUM to point at one.
+
+    `color_scheme="dark"` always takes the direct path: `render_png` has
+    no theme control, and rightly so - a user's own report is viewed in
+    their own browser, in whatever theme they're already using. Only the
+    checked-in stills need both, because docs/index.html serves a
+    theme-matched one to each reader.
     """
     try:
+        if color_scheme != "light":
+            raise report.ReportRenderError("dark stills use the direct path (see docstring)")
         report.render_png(html, dst, width=width)
         return None
     except report.ReportRenderError as primary:
@@ -394,7 +415,9 @@ def _render_png(html: str, dst: Path, width: int = 1000) -> str | None:
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(executable_path=executable)
-                page = browser.new_page(viewport={"width": width, "height": 800})
+                page = browser.new_page(
+                    viewport={"width": width, "height": 800}, color_scheme=color_scheme
+                )
                 page.goto(tmp_html.resolve().as_uri())
                 page.screenshot(path=str(dst), full_page=True)
                 browser.close()
@@ -486,21 +509,25 @@ def main() -> int:
             # of a closed tree can't show the drill-down that's the point of
             # it. Expand the first chapter for the still only; the checked-in
             # HTML keeps the real default so the demo behaves like `serve`.
-            stills = [
-                (OUT_DIR / "sessions.html", OUT_DIR / "sessions.png", False),
-                (OUT_DIR / f"session-{SESSIONS[0]['id'][:8]}.html", OUT_DIR / "session-detail.png", True),
-                (OUT_DIR / "rollup.html", OUT_DIR / "rollup.png", False),
+            pages = [
+                (OUT_DIR / "sessions.html", "sessions", False),
+                (OUT_DIR / f"session-{SESSIONS[0]['id'][:8]}.html", "session-detail", True),
+                (OUT_DIR / "rollup.html", "rollup", False),
             ]
-            for src, dst, expand in stills:
+            # Light and dark of each: docs/index.html is theme-aware, and a
+            # light screenshot on a dark page reads as a bright slab.
+            for src, stem, expand in pages:
                 html = src.read_text(encoding="utf-8")
                 if expand:
                     html = html.replace('<details class="chapter-d"', '<details open class="chapter-d"', 1)
-                reason = _render_png(html, dst)
-                if reason is not None:
-                    print(f"\nPNG rendering skipped: {reason}", file=sys.stderr)
-                    return 0
-                print(f"wrote {dst.relative_to(REPO_ROOT)}")
-                dst.with_suffix(".tmp.html").unlink(missing_ok=True)
+                for scheme, suffix in (("light", ""), ("dark", "-dark")):
+                    dst = OUT_DIR / f"{stem}{suffix}.png"
+                    reason = _render_png(html, dst, color_scheme=scheme)
+                    if reason is not None:
+                        print(f"\nPNG rendering skipped: {reason}", file=sys.stderr)
+                        return 0
+                    print(f"wrote {dst.relative_to(REPO_ROOT)}")
+                    dst.with_suffix(".tmp.html").unlink(missing_ok=True)
 
     return 0
 

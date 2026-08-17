@@ -13,6 +13,8 @@ flowchart LR
 
 Today, the strongest surfaces **show** what happened: live usage, costs, activity, chapters, timelines, trends, rollups, and repeated-work signals. Recommendations are an early **Tell** layer. **Do** automation is deliberately not presented as mature or automatic.
 
+**[Read the first-run walkthrough →](https://dhk.github.io/work-ledger/)** — what to run, in what order, what needs an API key (almost nothing does), and what it touches on your machine.
+
 ## What it looks like
 
 `work-ledger serve` — drill from a session into its chapters, sections, turns, and individual calls, with cost at every level:
