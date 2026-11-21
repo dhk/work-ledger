@@ -10,7 +10,9 @@ Releasing is a deliberate, tagged action — see [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
-_Nothing yet._
+- Fixed #111: local and unknown chapter-backend settings now skip hosted
+  semantic matching for rollup and cross-session waste, with a visible
+  deterministic fallback and no initiative-title disclosure to Anthropic.
 
 ## [0.2.0] — 2026-08-14
 

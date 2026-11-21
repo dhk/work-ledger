@@ -38,6 +38,30 @@ def test_max_tokens_matches_chapters_safe_ceiling():
     assert MAX_TOKENS == CHAPTERS_MAX_TOKENS == 16000
 
 
+@pytest.mark.parametrize("backend", ["ollama", "  OLLAMA  ", "unknown", ""])
+def test_non_hosted_backend_skips_before_sdk_import(monkeypatch, backend):
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", backend)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+
+    result = propose_merges(["First initiative", "Second initiative"])
+
+    assert result.groups == []
+    assert result.cost_usd == 0.0
+    assert "no titles were sent to Anthropic" in result.fallback_reason
+    assert "deterministic-only" in result.fallback_reason
+
+
+def test_backend_selection_is_read_fresh_each_call(monkeypatch):
+    _install_fake_anthropic(monkeypatch, response=_fake_response(_MergesOut(groups=[])))
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "ollama")
+    assert propose_merges(["A", "B"]).fallback_reason is not None
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "  ANTHROPIC  ")
+    assert propose_merges(["A", "B"]).fallback_reason is None
+    monkeypatch.delenv("WORK_LEDGER_CHAPTER_BACKEND")
+    assert propose_merges(["A", "B"]).fallback_reason is None
+
+
 # --- matching_mode / is_semantic_enabled ------------------------------------
 
 

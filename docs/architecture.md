@@ -181,7 +181,12 @@ silent:
    `WORK_LEDGER_ROLLUP_MATCHING=semantic`, default `deterministic` — #68)
    — a single batched Haiku call proposing merges among whatever
    `rollup.py`'s deterministic title-normalization pass left as singleton
-   clusters, sent only when that env var is set. Same disclosure standard
+   clusters. The pass requires semantic matching to be enabled and
+   `WORK_LEDGER_CHAPTER_BACKEND` to be unset (default `anthropic`) or
+   explicitly `anthropic`. Local (`ollama`) and unknown backend settings
+   skip the hosted call before client construction, returning deterministic
+   clustering with a visible fallback reason (#111); no titles are sent.
+   There is no separate hosted override. Same disclosure standard
    as #2's Ollama addition: never silent, and the deterministic pass (and
    everything downstream of it — `rollup`, `waste --cross-session`) keeps
    working exactly as before if this call fails for any reason (no

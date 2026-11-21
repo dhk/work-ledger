@@ -1893,6 +1893,54 @@ def _make_singleton_session(root, project, name, prompt_id, title):
     return path
 
 
+@pytest.mark.parametrize("command", ["rollup", "miso", "waste"])
+@pytest.mark.parametrize("has_credentials", [False, True])
+def test_local_backend_semantic_commands_never_construct_hosted_client(
+    isolated_transcripts_root, capsys, monkeypatch, tmp_path, command, has_credentials
+):
+    from work_ledger.rollup import build_rollup, build_rollup_result
+
+    monkeypatch.setenv("WORK_LEDGER_CHAPTER_BACKEND", "ollama")
+    monkeypatch.setenv("WORK_LEDGER_ROLLUP_MATCHING", "semantic")
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    if has_credentials:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-test-key")
+    else:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    calls = []
+
+    def forbidden_client(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("Local backend must not construct a hosted client")
+
+    monkeypatch.setattr("anthropic.Anthropic", forbidden_client)
+    paths = [
+        _make_singleton_session(isolated_transcripts_root, "proj", "a", "p1", "First initiative"),
+        _make_singleton_session(isolated_transcripts_root, "proj", "b", "p2", "Second initiative"),
+    ]
+    result = build_rollup_result(paths)
+    assert result.clusters == build_rollup(paths)
+    assert result.semantic_merges == []
+    assert result.semantic_fallback_reason is not None
+
+    import sys
+
+    args = {
+        "rollup": ["rollup", "--semantic"],
+        "miso": ["rollup", "--miso", "--out", str(tmp_path / "rollup.html")],
+        "waste": ["waste", "--cross-session"],
+    }[command]
+    monkeypatch.setattr(sys, "argv", ["work-ledger", *args])
+    cli.main()
+
+    assert calls == []
+    out = _norm(capsys.readouterr().out)
+    assert "hosted-only" in out
+    assert "no titles were sent to Anthropic" in out
+    assert "deterministic-only" in out
+
+
 def test_run_rollup_default_env_prints_no_semantic_note(isolated_transcripts_root, capsys, monkeypatch):
     """Env var unset (the default): no semantic-matching note of any kind,
     even with --confirm passed - this is the "byte-for-byte unchanged
