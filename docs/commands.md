@@ -729,6 +729,16 @@ cluster, sorted most-expensive-first.
 
 ### Optional semantic matching (`WORK_LEDGER_ROLLUP_MATCHING=semantic`, issue #68)
 
+**Local-backend privacy boundary (#111):** semantic matching currently supports
+only the hosted Anthropic backend. With `WORK_LEDGER_CHAPTER_BACKEND=ollama`
+(or any unrecognized backend value), it is skipped before creating a hosted
+client. `rollup` and `waste --cross-session` retain deterministic clustering
+and print a fallback note; no initiative titles are sent to Anthropic.
+This also applies to `rollup --semantic`, `--miso`, and saved presets.
+There is no separate hosted override. Leaving the chapter backend unset or
+explicitly selecting `anthropic` preserves the existing opt-in hosted behavior.
+
+
 Run against real usage, v1's deterministic clustering above came back
 almost entirely singletons — chapters describing the same obviously
 recurring work, worded differently each time, never clustered together at

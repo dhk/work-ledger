@@ -55,7 +55,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel
 
-from work_ledger.chapters import CHAPTER_MODEL
+from work_ledger.chapters import CHAPTER_MODEL, DEFAULT_BACKEND
 from work_ledger.pricing import estimate_cost_usd
 
 ROLLUP_MATCHING_ENV_VAR = "WORK_LEDGER_ROLLUP_MATCHING"
@@ -184,6 +184,19 @@ def propose_merges(titles: list[str]) -> SemanticMergeResult:
     handling shape - never raises."""
     if len(titles) < 2:
         return SemanticMergeResult(groups=[])
+
+    # This pass only implements a hosted backend. A local (or unknown)
+    # chapter backend must never silently fall through to a hosted call,
+    # even when semantic matching was explicitly requested (#111).
+    backend = os.environ.get("WORK_LEDGER_CHAPTER_BACKEND", DEFAULT_BACKEND).strip().lower()
+    if backend != "anthropic":
+        return SemanticMergeResult(
+            fallback_reason=(
+                f"WORK_LEDGER_CHAPTER_BACKEND={backend!r}: semantic matching is "
+                "hosted-only and was skipped; no titles were sent to Anthropic. "
+                "Falling back to deterministic-only clustering."
+            ),
+        )
 
     try:
         import anthropic  # imported lazily - only needed when semantic matching actually runs
